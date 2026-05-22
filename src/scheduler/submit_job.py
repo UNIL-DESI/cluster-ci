@@ -397,7 +397,18 @@ def wait_for_job(headnode_url, job_id):
                 if exit_code == -99:
                     print(f"\n❌ Job {job_id} failed: Worker became unreachable (timeout/offline). The job was orphaned.")
                 elif exit_code == -98:
-                    print(f"\n❌ Job {job_id} failed: Worker restarted while the job was running/assigned.")
+                    print(f"\n❌ Job {job_id} failed: Worker restarted while the job was running/assigned. (OOM or System Crash)")
+                    if worker_url:
+                        try:
+                            crash_resp = requests.get(f"{worker_url}/crash_report", timeout=5)
+                            if crash_resp.status_code == 200:
+                                dmesg = crash_resp.json().get('dmesg', '').strip()
+                                if dmesg:
+                                    print("\n--- SYSTEM CRASH REPORT (dmesg) ---")
+                                    print(dmesg)
+                                    print("-----------------------------------")
+                        except Exception:
+                            pass
                 elif exit_code == 137 or oom_detected:
                     print(f"\n❌ Job {job_id} failed: Out of Memory (OOM Kill detected).")
                 else:

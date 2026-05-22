@@ -263,12 +263,19 @@ def execute_job(job):
                 logger.error(f"Failed to read commit hash file: {e}")
 
         if exit_code == 137:
-            # Docker returns 137 when OOM-killed or externally killed (e.g. by JIT Watchdog)
-            # We'll rely on the exit code 124 being set by the headnode or reported later if we detect it was a timeout.
-            # For now, we report 137. If it was a zombie kill, the script exit code should be 137 anyway.
             error_msg = f"❌ [CLUSTER INTERRUPTED] Execution interrupted (Exit code 137). This usually means an OOM (Out of Memory) or a Zombie Job Cleanup.\n"
             sys.stderr.write(error_msg)
             sys.stderr.flush()
+            log_file.write(error_msg)
+            try:
+                res = subprocess.run("sudo dmesg -T | grep -i -E 'oom|kill' | tail -n 30", shell=True, capture_output=True, text=True)
+                if res.stdout.strip():
+                    log_file.write("\n--- SYSTEM DMESG (Kernel OOM Logs) ---\n")
+                    log_file.write(res.stdout)
+                    log_file.write("--------------------------------------\n")
+            except:
+                pass
+            log_file.flush()
             update_job_status(job_id, 'failed', 137, commit_hash=commit_hash)
         elif exit_code == 0:
             update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash)
@@ -457,6 +464,25 @@ def get_viewer_logs():
         return jsonify({"logs": content[-2000:] if len(content) > 2000 else content})
     except Exception as e:
         return jsonify({"logs": f"Error reading dvc-viewer.log: {e}"}), 500
+
+@app.route('/crash_report', methods=['GET'])
+def get_crash_report():
+    """Return recent kernel OOM/kill logs to help diagnose -98 errors."""
+    try:
+        res = subprocess.run(
+            "sudo dmesg -T | grep -i -E 'oom|kill' | tail -n 50",
+            shell=True, capture_output=True, text=True
+        )
+        syslog = subprocess.run(
+            "sudo journalctl -u cluster-worker -n 50 --no-pager",
+            shell=True, capture_output=True, text=True
+        )
+        return jsonify({
+            "dmesg": res.stdout,
+            "syslog": syslog.stdout
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/fetch_artifact/<path:file_path>', methods=['GET'])
 def fetch_artifact(file_path):

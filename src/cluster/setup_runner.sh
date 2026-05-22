@@ -120,7 +120,7 @@ fi
 echo "🔐 Configuring sudoers for cluster-ci CI privileges..."
 cat <<EOF | sudo tee /etc/sudoers.d/cluster-ci > /dev/null
 Defaults:$USER !requiretty
-$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-scheduler-loop, /bin/systemctl restart cluster-worker, /usr/bin/systemctl restart cluster-runner-manager, /usr/bin/systemctl restart cluster-scheduler, /usr/bin/systemctl restart cluster-scheduler-loop, /usr/bin/systemctl restart cluster-worker
+$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-scheduler-loop, /bin/systemctl restart cluster-worker, /usr/bin/systemctl restart cluster-runner-manager, /usr/bin/systemctl restart cluster-scheduler, /usr/bin/systemctl restart cluster-scheduler-loop, /usr/bin/systemctl restart cluster-worker, /usr/bin/dmesg, /bin/dmesg, /usr/bin/journalctl, /bin/journalctl
 EOF
 sudo chmod 0440 /etc/sudoers.d/cluster-ci
 echo "✅ Sudoers configured."
@@ -211,7 +211,6 @@ EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
 Restart=always
 RestartSec=10
-WatchdogSec=120
 
 [Install]
 WantedBy=multi-user.target
