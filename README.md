@@ -1,7 +1,7 @@
 # Cluster CI
 
 L'orchestrateur GitOps minimaliste et décentralisé pour le traitement de données et l'entraînement de modèles.
-**État actuel** : Système opérationnel. Le réseau de workers ARM64 NVIDIA Blackwell est fonctionnel avec le conteneur NGC `nvcr.io/nvidia/pytorch:26.04-py3` (Python 3.12, PyTorch 2.12, CUDA 13.2). Support natif du streaming de logs en direct en temps réel ligne par ligne sans perte (via une attente active et un émulateur de terminal virtuel en Python 160x24 pour éliminer les bruits de TTY/tmux).
+**État actuel** : Système opérationnel. Le réseau de workers ARM64 NVIDIA Blackwell est fonctionnel avec le conteneur NGC `nvcr.io/nvidia/pytorch:26.04-py3` (Python 3.12, PyTorch 2.12, CUDA 13.2). Support natif du streaming de logs en direct en temps réel ligne par ligne sans perte (via une attente active et un émulateur de terminal virtuel en Python 160x24 pour éliminer les bruits de TTY/tmux). Support d'un tableau de bord interactif et transparent de la file d'attente pour les chercheurs (position de file d'attente, statut détaillé des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante) et homogénéisation complète inter-workers (liaison SSH RSA et synchronisation automatique du cache de modèles).
 
 Asynchronous continuous integration system for research pipelines, designed as a pull-based replacement for the legacy SlurmRay push-based architecture. This repository hosts the scripts necessary to configure a GitHub Actions Self-Hosted Runner on the target Ubuntu machine, orchestrating `uv run dvc repro` executions in local environments and managing silent authentication with Google Drive. It also provides the client script allowing any research repository to interface with this cluster.
 
@@ -131,7 +131,8 @@ cluster-ci/
 
 | Command | Description |
 |----------|-------------|
-| `src/scheduler/submit_job.py` | Client-side script (CLI) to manually submit a job to the Headnode |
+| `src/scheduler/submit_job.py` | Client-side script (CLI) to manually submit a job, track queue status with interactive dashboard & resource diagnostics |
+| `src/scheduler/headnode_service.py` | Headnode HTTP API exposing scheduler routes (including public `/scheduler_status`) |
 | `src/scheduler/runner_manager.py` | Manages the lifecycle of ephemeral GitHub Actions runners (slot1, slot2) |
 | `scripts/self_update_deferred.sh` | GitOps auto-update script (Pull & Defer pattern): pulls code, signals workers, schedules deferred headnode restart |
 | `update_cluster.sh` | Updates the Headnode and Workers via SSH, uses an `.env` file to store credentials |
@@ -185,6 +186,9 @@ cluster-ci/
 - [x] Fix Bug: Streaming des logs en direct — Résolution de la détection du `job_id` via le shadow commit hash transmis de bout en bout par GHA au scheduler dans la table `jobs` SQLite.
 - [x] Fix Bug: Auto-Update — Fiabilisation du script `self_update_deferred.sh` pour cibler également le dossier de production global `/home/henri/cluster-ci`, les dépendances via `uv sync` et sa base de données lors des déploiements (ainsi que la normalisation universelle des fins de lignes en format LF).
 - [x] Support Windows Universel & PATH Automatique (PowerShell/CMD) : Détection et enregistrement automatique de `~/.local/bin` dans le PATH Windows User via PowerShell, wrappers natifs, résolution définitive du bug de figeage du terminal et fin de tâche instantanée dès la complétion du run.
+- [x] Transparence de la file d'attente (Interactive Queue Dashboard) : Position dans la file d'attente, logs interactifs en direct des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante dans `submit_job.py`.
+- [x] Homogénéisation complète inter-workers : Liaison inter-worker SSH RSA robuste sans mot de passe et synchronisation automatisée du cache des modèles Ollama (Gemma-4-31B de 20 Go) via rsync.
 - [ ] [Implémenter un Global Execution Timeout pour empêcher le gel du worker sur un job bloqué](https://github.com/UNIL-DESI/cluster-ci/issues/63)
+
 
 
