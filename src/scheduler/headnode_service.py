@@ -237,7 +237,7 @@ def scheduler_status():
         
         for w in workers_list:
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, started_at
+                SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at
                 FROM jobs
                 WHERE worker_id = ? AND status IN ('running', 'assigned')
                 LIMIT 1

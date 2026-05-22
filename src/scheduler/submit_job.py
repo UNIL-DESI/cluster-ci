@@ -241,6 +241,9 @@ def wait_for_job(headnode_url, job_id):
                             online_workers = [w for w in workers if w["status"] == "online"]
                             max_ram = max([w["total_ram_gb"] for w in online_workers]) if online_workers else 0.0
                             
+                            # Filter compatible workers physically capable of running the job
+                            compatible_workers = [w for w in online_workers if (w["total_ram_gb"] - 2.0) >= ram_required]
+                            
                             # Format details
                             print("\n" + "═"*55)
                             print(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
@@ -254,6 +257,47 @@ def wait_for_job(headnode_url, job_id):
                                 print(f"   ⚠️  CRITIQUE : Votre tâche demande {ram_required:.1f} GB de RAM.")
                                 print(f"      Mais la capacité maximale des machines en ligne (moins 2GB de marge OS) est de {max_ram - 2.0:.1f} GB.")
                                 print(f"      Ce job ne pourra JAMAIS démarrer ! Veuillez baisser REQUIRED_RAM dans .cluster-ci.")
+                            elif online_workers and not compatible_workers:
+                                print(f"   ⚠️  ATTENTE : Aucune machine actuellement en ligne ne dispose d'assez de RAM physique ({ram_required:.1f} GB requis).")
+                                print(f"      En attente qu'un worker avec une capacité suffisante vienne s'enregistrer.")
+                            elif online_workers and compatible_workers:
+                                # Check if all compatible workers are busy
+                                all_busy = all([w.get("active_job") is not None for w in compatible_workers])
+                                if all_busy:
+                                    print(f"   ⚠️  ATTENTE : Toutes les machines compatibles avec vos besoins en RAM ({ram_required:.1f} GB) sont occupées.")
+                                    
+                                    # Calculate remaining times
+                                    remaining_times = []
+                                    for w in compatible_workers:
+                                        active_job = w["active_job"]
+                                        started_at = active_job.get("started_at")
+                                        max_hours = active_job.get("max_runtime_hours", 24.0) or 24.0
+                                        if started_at:
+                                            try:
+                                                from datetime import datetime
+                                                import datetime as dt
+                                                start_t = datetime.strptime(started_at.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                                                now_utc = dt.datetime.utcnow()
+                                                diff = now_utc - start_t
+                                                elapsed_secs = diff.total_seconds()
+                                                max_secs = max_hours * 3600
+                                                rem_secs = max(0.0, max_secs - elapsed_secs)
+                                                remaining_times.append(rem_secs)
+                                            except Exception:
+                                                pass
+                                                
+                                    if remaining_times:
+                                        if own_position == 1:
+                                            min_rem = min(remaining_times)
+                                            rem_mins, rem_secs = divmod(min_rem, 60)
+                                            rem_hours, rem_mins = divmod(rem_mins, 60)
+                                            if rem_hours > 0:
+                                                time_str = f"{int(rem_hours)}h {int(rem_mins)}m"
+                                            else:
+                                                time_str = f"{int(rem_mins)}m {int(rem_secs)}s"
+                                            print(f"      👉 Temps d'attente maximum estimé : ~{time_str} (dès que le premier worker compatible se libère)")
+                                        else:
+                                            print(f"      👉 Temps d'attente : Estimé après libération et traitement de {own_position - 1} job(s) devant vous.")
                             
                             # Current running jobs details on each machine
                             print("\n   🖥️  Statut des machines du cluster :")
@@ -262,9 +306,15 @@ def wait_for_job(headnode_url, job_id):
                             else:
                                 for w in online_workers:
                                     active_job = w.get("active_job")
+                                    is_compatible = (w["total_ram_gb"] - 2.0) >= ram_required
+                                    comp_str = "Compatible" if is_compatible else "RAM insuffisante"
+                                    
                                     if active_job:
                                         duration_str = "en cours"
+                                        remaining_str = "indéterminé"
                                         started_at = active_job.get("started_at")
+                                        max_hours = active_job.get("max_runtime_hours", 24.0) or 24.0
+                                        
                                         if started_at:
                                             try:
                                                 from datetime import datetime
@@ -272,17 +322,31 @@ def wait_for_job(headnode_url, job_id):
                                                 start_t = datetime.strptime(started_at.split(".")[0], "%Y-%m-%d %H:%M:%S")
                                                 now_utc = dt.datetime.utcnow()
                                                 diff = now_utc - start_t
-                                                mins, secs = divmod(diff.total_seconds(), 60)
+                                                elapsed_secs = diff.total_seconds()
+                                                
+                                                # Elapsed time format
+                                                mins, secs = divmod(elapsed_secs, 60)
                                                 hours, mins = divmod(mins, 60)
                                                 if hours > 0:
                                                     duration_str = f"{int(hours)}h {int(mins)}m"
                                                 else:
                                                     duration_str = f"{int(mins)}m {int(secs)}s"
+                                                    
+                                                # Remaining time format
+                                                max_secs = max_hours * 3600
+                                                rem_secs = max(0.0, max_secs - elapsed_secs)
+                                                rem_mins, rem_secs = divmod(rem_secs, 60)
+                                                rem_hours, rem_mins = divmod(rem_mins, 60)
+                                                if rem_hours > 0:
+                                                    remaining_str = f"{int(rem_hours)}h {int(rem_mins)}m max"
+                                                else:
+                                                    remaining_str = f"{int(rem_mins)}m max"
                                             except Exception:
                                                 pass
-                                        print(f"      ● Machine {w['hostname']} : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] lancée par [{active_job['username']}] (depuis {duration_str}, utilise {active_job['ram_required_gb']:.1f} GB)")
+                                                
+                                        print(f"      ● Machine {w['hostname']} ({comp_str}) : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] par [{active_job['username']}] (depuis {duration_str}, reste au max {remaining_str} | utilise {active_job['ram_required_gb']:.1f} GB)")
                                     else:
-                                        print(f"      ○ Machine {w['hostname']} : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
+                                        print(f"      ○ Machine {w['hostname']} ({comp_str}) : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
                                         
                             # Waiting queue list
                             if len(queue) > 1:
