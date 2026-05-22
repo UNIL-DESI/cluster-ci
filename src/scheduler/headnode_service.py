@@ -218,6 +218,50 @@ def list_workers():
         workers = [dict(row) for row in cursor.fetchall()]
     return jsonify(workers)
 
+@app.route('/scheduler_status', methods=['GET'])
+def scheduler_status():
+    """
+    Exposes a detailed public view of the cluster scheduler state:
+    - Active workers with their current running/assigned jobs.
+    - Pending jobs queue with resource requirements and waiting times.
+    """
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Fetch all workers and dynamically attach any active job currently running or assigned
+        cursor.execute('''
+            SELECT worker_id, hostname, service_url, total_ram_gb, status, last_seen
+            FROM workers
+        ''')
+        workers_list = [dict(row) for row in cursor.fetchall()]
+        
+        for w in workers_list:
+            cursor.execute('''
+                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, started_at
+                FROM jobs
+                WHERE worker_id = ? AND status IN ('running', 'assigned')
+                LIMIT 1
+            ''', (w['worker_id'],))
+            job = cursor.fetchone()
+            if job:
+                w['active_job'] = dict(job)
+            else:
+                w['active_job'] = None
+                
+        # 2. Fetch the pending queue ordered by FIFO priority
+        cursor.execute('''
+            SELECT job_id, repo, branch, username, ram_required_gb, status, created_at
+            FROM jobs
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+        ''')
+        pending_queue = [dict(row) for row in cursor.fetchall()]
+        
+    return jsonify({
+        "workers": workers_list,
+        "queue": pending_queue
+    })
+
 @app.route('/job_status/<job_id>', methods=['GET'])
 def job_status(job_id):
     with get_db_conn() as conn:

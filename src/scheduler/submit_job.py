@@ -208,6 +208,7 @@ def wait_for_job(headnode_url, job_id):
     log_offset = 0
     status_printed = False
     oom_detected = False
+    last_queue_check = 0
 
     while True:
         try:
@@ -216,6 +217,90 @@ def wait_for_job(headnode_url, job_id):
             job = resp.json()
             status = job['status']
             worker_url = job.get('worker_service_url')
+            ram_required = job.get('ram_required_gb', 2.0)
+
+            if status == 'pending':
+                now = time.time()
+                if now - last_queue_check >= 10:
+                    last_queue_check = now
+                    try:
+                        status_resp = requests.get(f"{headnode_url}/scheduler_status", timeout=5)
+                        if status_resp.status_code == 200:
+                            data = status_resp.json()
+                            workers = data.get("workers", [])
+                            queue = data.get("queue", [])
+                            
+                            # 1. Find own position in queue
+                            own_position = -1
+                            for idx, q_job in enumerate(queue):
+                                if q_job["job_id"] == job_id:
+                                    own_position = idx + 1
+                                    break
+                            
+                            # 2. Check physical RAM capacity of the cluster
+                            online_workers = [w for w in workers if w["status"] == "online"]
+                            max_ram = max([w["total_ram_gb"] for w in online_workers]) if online_workers else 0.0
+                            
+                            # Format details
+                            print("\n" + "═"*55)
+                            print(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
+                            if own_position != -1:
+                                print(f"   👉 Position dans la file : {own_position} / {len(queue)}")
+                            else:
+                                print(f"   👉 Position dans la file : En cours d'analyse par le scheduler...")
+                            
+                            # Diagnostic if RAM required exceeds maximum physical capacity in the cluster
+                            if online_workers and ram_required > (max_ram - 2.0):
+                                print(f"   ⚠️  CRITIQUE : Votre tâche demande {ram_required:.1f} GB de RAM.")
+                                print(f"      Mais la capacité maximale des machines en ligne (moins 2GB de marge OS) est de {max_ram - 2.0:.1f} GB.")
+                                print(f"      Ce job ne pourra JAMAIS démarrer ! Veuillez baisser REQUIRED_RAM dans .cluster-ci.")
+                            
+                            # Current running jobs details on each machine
+                            print("\n   🖥️  Statut des machines du cluster :")
+                            if not online_workers:
+                                print("      ❌ Aucune machine n'est actuellement en ligne ou active.")
+                            else:
+                                for w in online_workers:
+                                    active_job = w.get("active_job")
+                                    if active_job:
+                                        duration_str = "en cours"
+                                        started_at = active_job.get("started_at")
+                                        if started_at:
+                                            try:
+                                                from datetime import datetime
+                                                import datetime as dt
+                                                start_t = datetime.strptime(started_at.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                                                now_utc = dt.datetime.utcnow()
+                                                diff = now_utc - start_t
+                                                mins, secs = divmod(diff.total_seconds(), 60)
+                                                hours, mins = divmod(mins, 60)
+                                                if hours > 0:
+                                                    duration_str = f"{int(hours)}h {int(mins)}m"
+                                                else:
+                                                    duration_str = f"{int(mins)}m {int(secs)}s"
+                                            except Exception:
+                                                pass
+                                        print(f"      ● Machine {w['hostname']} : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] lancée par [{active_job['username']}] (depuis {duration_str}, utilise {active_job['ram_required_gb']:.1f} GB)")
+                                    else:
+                                        print(f"      ○ Machine {w['hostname']} : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
+                                        
+                            # Waiting queue list
+                            if len(queue) > 1:
+                                print("\n   📋 Jobs en attente devant vous :")
+                                count = 0
+                                for q_job in queue:
+                                    if q_job["job_id"] == job_id:
+                                        break
+                                    count += 1
+                                    if count <= 3:
+                                        print(f"      #{count} : Job [{q_job['repo'].split('/')[-1]}] par [{q_job['username']}] (demande {q_job['ram_required_gb']:.1f} GB)")
+                                if len(queue) - 1 > count:
+                                    print(f"      ... et {len(queue) - 1 - count} autre(s) job(s)")
+                                    
+                            print("═"*55 + "\n")
+                    except Exception as e:
+                        # Fallback silently to prevent blocking the execution loop
+                        pass
 
             if worker_url:
                 try:
