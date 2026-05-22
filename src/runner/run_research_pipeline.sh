@@ -231,6 +231,13 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT="2"
 log_info "RAM limit detected: ${RAM_LIMIT}GB"
 
+# Extract GPU requirement from .cluster-ci
+CLUSTER_CI_GPU_REQUIRED=$(grep -oE -e 'CLUSTER_CI_GPU_REQUIRED=[0-9]+' .cluster-ci | cut -d= -f2 | head -n 1)
+[ -z "$CLUSTER_CI_GPU_REQUIRED" ] && CLUSTER_CI_GPU_REQUIRED="0"
+export CLUSTER_CI_GPU_REQUIRED
+log_info "GPU requirement detected: ${CLUSTER_CI_GPU_REQUIRED}"
+
+
 
 # Configuration Docker
 DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
