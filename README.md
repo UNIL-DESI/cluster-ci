@@ -18,7 +18,7 @@ Asynchronous continuous integration system for research pipelines, designed as a
 | **PyTorch** | 2.12 (CUDA 13.2) |
 | **Storage** | ~3.2 TB |
 
-## Installation
+# Installation
 
 ### 1. Client Installation (Projet de recherche)
 
@@ -76,7 +76,7 @@ cd ~/cluster-ci
 ./src/cluster/uninstall_runner.sh owner/repo
 ```
 
-## Detailed Description
+# Description détaillée
 
 Cluster CI is based on GitOps principles. Instead of the agent trying to maintain a continuous interactive session on the remote machine (a structural issue with the Joules Agent on long research jobs), execution is delegated to a self-hosted GitHub Actions runner installed as a `systemd` service on the machine.
 
@@ -92,11 +92,11 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
     - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
     - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
    Une fois alloué, le conteneur a accès à 100% de la RAM hôte pour éviter les limites artificielles.
-## Main Results
+# Principaux résultats
 
 - **Status**: Operational & secured against zombie processes (Last updated: 21 May 2026). The system replaces the legacy synchronous network approach with a robust asynchronous CI/CD loop.
 
-## Documentation Index
+# Documentation Index
 
 | Title (Link) | Description |
 |--------------|-------------|
@@ -104,9 +104,10 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 | [Dashboard Index](docs/index_dashboard.md) | Spécifications du dashboard de monitoring premium et de l'explorateur d'artefacts bidirectionnel |
 | [Pre-flight Index](docs/index_preflight.md) | Validation scanner and pre-commit logic |
 | [Security Index](docs/index_security.md) | Sécurité, analyses de risques et failles connues |
+| [Tasks Index](docs/index_tasks.md) | Index des spécifications et suivi des tâches de développement |
 | [vLLM Index](docs/index_vllm.md) | Technical resolution of C++ ABI incompatibilities under NVIDIA NGC PyTorch containers |
 
-## Repository Layout
+# Plan du repo
 
 ```text
 cluster-ci/
@@ -119,7 +120,7 @@ cluster-ci/
     └── scheduler/  # Headnode API, Worker Agent, and Persistence (SQLite)
 ```
 
-## Main Entry Scripts
+# Scripts d'entrée principaux
 
 | Command | Description |
 |----------|-------------|
@@ -127,7 +128,7 @@ cluster-ci/
 | `src/cluster/setup_runner.sh` | Installs and configures the GitHub Actions runner as a `systemd` service |
 | `src/cluster/uninstall_runner.sh` | Completely uninstalls the runner (Systemd, GitHub, local) |
 
-## Secondary Executable Scripts & Utilities
+# Scripts exécutables secondaires & Utilitaires
 
 | Command | Description |
 |----------|-------------|
@@ -138,7 +139,7 @@ cluster-ci/
 | `update_cluster.sh` | Updates the Headnode and Workers via SSH, uses an `.env` file to store credentials |
 | `scripts/get_worker_details.py` | Audit et collecte des caractéristiques matérielles et logicielles des workers distants via SSH |
 
-## Roadmap
+# Roadmap
 
 **Phase 1 (Foundation — Completed)**
 - [x] [Orchestrator Runner Setup](docs/tasks/setup_orchestrator.md)
@@ -188,7 +189,7 @@ cluster-ci/
 - [x] Support Windows Universel & PATH Automatique (PowerShell/CMD) : Détection et enregistrement automatique de `~/.local/bin` dans le PATH Windows User via PowerShell, wrappers natifs, résolution définitive du bug de figeage du terminal et fin de tâche instantanée dès la complétion du run.
 - [x] Transparence de la file d'attente (Interactive Queue Dashboard) : Position dans la file d'attente, logs interactifs en direct des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante dans `submit_job.py`.
 - [x] Homogénéisation complète inter-workers : Liaison inter-worker SSH RSA robuste sans mot de passe et synchronisation automatisée du cache des modèles Ollama (Gemma-4-31B de 20 Go) via rsync.
-- [ ] [Implémenter un Global Execution Timeout pour empêcher le gel du worker sur un job bloqué](https://github.com/UNIL-DESI/cluster-ci/issues/63)
+- [ ] [Global Execution Timeout](docs/tasks/global_timeout.md) : Empêcher le gel du worker sur un job bloqué (arrêt Docker propre et notification chercheur).
 
 
 
