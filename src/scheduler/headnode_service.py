@@ -191,6 +191,16 @@ def submit_job():
 
     with get_db_conn() as conn:
         cursor = conn.cursor()
+        
+        # 1. AUTO-CANCELLATION: Automatically fail any existing 'pending' jobs for the same user and branch
+        if username and branch and repo:
+            cursor.execute('''
+                UPDATE jobs 
+                SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP 
+                WHERE status = 'pending' AND repo = ? AND branch = ? AND username = ?
+            ''', (repo, branch, username))
+            
+        # 2. Insert new job
         cursor.execute('''
             INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
