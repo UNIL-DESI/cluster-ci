@@ -62,11 +62,11 @@ COMMON_LABELS="--label cluster-ci-job=${JOB_ID} --label cluster-ci-repo=${TARGET
 if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     echo "🌐 Delegation Mode enabled. Submitting job to scheduler..."
 if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
     fi
-    exit $?
+    exit ${PIPESTATUS[0]}
 fi
 
 REPO_WORK_DIR="repositories/$TARGET_REPO"
@@ -499,7 +499,7 @@ fi
 
 log_info "🚀 Live Terminal Streaming enabled. Piping logs to server..."
 set +e
-docker_exec "${EXEC_CMD}" 2>&1 | stdbuf -oL -eL tee tmate_execution.log >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
+docker_exec "${EXEC_CMD}" 2>&1 | stdbuf -oL -eL tee tmate_execution.log
 EXEC_RET=${PIPESTATUS[0]}
 set -e
 
