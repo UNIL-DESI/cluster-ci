@@ -329,6 +329,42 @@ def update_job_status():
         conn.commit()
     return jsonify({"status": "ok"})
 
+@app.route('/clean_ghosts', methods=['POST'])
+def clean_ghosts():
+    """Cleans up ghost jobs (jobs that are pending in DB but their GH workflow is completed/cancelled)"""
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status = 'pending' AND gh_run_id IS NOT NULL")
+        pending_jobs = cursor.fetchall()
+        
+        cleaned = 0
+        gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
+        headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
+        
+        for job in pending_jobs:
+            url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
+            try:
+                resp = requests.get(url, headers=headers, timeout=5)
+                if resp.status_code == 200:
+                    run_data = resp.json()
+                    status = run_data.get('status')
+                    conclusion = run_data.get('conclusion')
+                    if status == 'completed' or conclusion is not None:
+                        app.logger.info(f"Ghost job detected: {job['job_id']}. Marking as failed.")
+                        cursor.execute("UPDATE jobs SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?", (job['job_id'],))
+                        cleaned += 1
+                elif resp.status_code == 404:
+                    app.logger.info(f"Ghost job detected (404): {job['job_id']}. Marking as failed.")
+                    cursor.execute("UPDATE jobs SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?", (job['job_id'],))
+                    cleaned += 1
+            except Exception as e:
+                app.logger.error(f"Error checking ghost job {job['job_id']}: {e}")
+        
+        if cleaned > 0:
+            conn.commit()
+            
+    return jsonify({"status": "ok", "cleaned_jobs": cleaned})
+
 @app.route('/check_space', methods=['GET'])
 def check_space():
     # Use the root of the repositories directory if it exists, else use current dir

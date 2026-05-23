@@ -61,7 +61,12 @@ COMMON_LABELS="--label cluster-ci-job=${JOB_ID} --label cluster-ci-repo=${TARGET
 # delegate the task to the scheduler via submit_job.py
 if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     echo "🌐 Delegation Mode enabled. Submitting job to scheduler..."
-if [ -n "$GH_TOKEN" ]; then
+    
+    # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)
+    # This ensures the python script receives the signal and completes its graceful cancellation HTTP call.
+    trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."' TERM INT
+
+    if [ -n "$GH_TOKEN" ]; then
         python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
     else
         python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
