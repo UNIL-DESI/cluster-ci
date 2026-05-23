@@ -175,7 +175,8 @@ def wait_for_job(headnode_url, job_id):
     print(f"⏳ Waiting for job {job_id} to complete...")
 
     def signal_handler(sig, frame):
-        print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating cancellation...")
+        worker_url = None
+        cancel_error = None
         try:
             resp = requests.get(f"{headnode_url}/job_status/{job_id}")
             resp.raise_for_status()
@@ -183,11 +184,7 @@ def wait_for_job(headnode_url, job_id):
             worker_url = job.get('worker_service_url')
 
             if worker_url:
-                print(f"📡 Sending cancellation to worker: {worker_url}")
                 requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
-                print("✅ Cancellation signal sent.")
-            else:
-                print("⚠️ Job was not yet assigned to a worker or worker info missing.")
 
             # Mark job as failed/cancelled on headnode
             token = os.environ.get("CLUSTER_TOKEN")
@@ -199,7 +196,21 @@ def wait_for_job(headnode_url, job_id):
             }, headers=headers)
 
         except Exception as e:
-            print(f"⚠️ Error during cancellation: {e}")
+            cancel_error = e
+
+        try:
+            print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating cancellation...")
+            if cancel_error:
+                print(f"⚠️ Error during cancellation: {cancel_error}")
+            else:
+                if worker_url:
+                    print(f"📡 Sending cancellation to worker: {worker_url}")
+                    print("✅ Cancellation signal sent.")
+                else:
+                    print("⚠️ Job was not yet assigned to a worker or worker info missing.")
+        except Exception:
+            pass
+
         sys.exit(128 + sig)
 
     signal.signal(signal.SIGINT, signal_handler)

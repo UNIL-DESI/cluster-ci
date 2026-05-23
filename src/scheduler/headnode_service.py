@@ -887,6 +887,16 @@ def cleanup_inactive_viewers():
             for repo_name in to_delete:
                 del local_viewers[repo_name]
 
+def periodic_clean_ghosts():
+    """Background task to periodically clean ghost jobs."""
+    while True:
+        time.sleep(60)
+        try:
+            with app.app_context():
+                clean_ghosts()
+        except Exception as e:
+            app.logger.error(f"Error in background clean_ghosts: {e}")
+
 @app.route('/view/<owner>/<repo>/')
 @app.route('/view/<owner>/<repo>/<path:path>')
 def view_project(owner, repo, path=''):
@@ -1265,4 +1275,5 @@ if __name__ == '__main__':
     init_db()
     # Start cleanup thread
     threading.Thread(target=cleanup_inactive_viewers, daemon=True).start()
+    threading.Thread(target=periodic_clean_ghosts, daemon=True).start()
     app.run(host='0.0.0.0', port=5000)
