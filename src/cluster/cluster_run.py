@@ -285,6 +285,87 @@ def cleanup():
         print(f"🧹 Deleting remote branch origin/{BRANCH}...")
         subprocess.run(["git", "push", "origin", "--delete", BRANCH, "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def display_clean_queue_status(run_id):
+    """Fetches GHA logs, parses them to find the latest queue/scheduler status block,
+    clears the terminal screen, and prints a clean, non-duplicated view.
+    """
+    try:
+        # Run gh run view --log and capture the output
+        res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            return False
+
+        lines = res.stdout.splitlines()
+        log_lines = []
+        for line in lines:
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                content = parts[2]
+                # Clean GHA noise
+                content = content.replace("\ufeff", "")
+                content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
+                content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
+                log_lines.append(content.rstrip())
+            elif len(parts) == 1:
+                # Sometimes logs don't have tabs if they are already formatted or from fallback
+                content = parts[0]
+                content = content.replace("\ufeff", "")
+                content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
+                log_lines.append(content.rstrip())
+
+        # Find the latest queue block
+        # A queue block is delimited by lines with '════' or '═══' (at least 20 '=' or '═')
+        # Let's extract the last occurrence of such a block
+        queue_start_idx = -1
+        queue_end_idx = -1
+        
+        # Let's scan from the end to find the last queue block
+        for i in range(len(log_lines) - 1, -1, -1):
+            line = log_lines[i]
+            if "⏳ FILE D'ATTENTE CLUSTER-CI" in line:
+                queue_start_idx = i
+                # Look for the preceding boundary or just use i-1
+                if i > 0 and ("═" in log_lines[i-1] or "===" in log_lines[i-1]):
+                    queue_start_idx = i - 1
+                break
+
+        if queue_start_idx != -1:
+            # Look for the end of this block
+            for j in range(queue_start_idx + 1, len(log_lines)):
+                if "═" in log_lines[j] and len(log_lines[j].strip()) >= 20:
+                    queue_end_idx = j
+                    break
+            if queue_end_idx == -1:
+                queue_end_idx = len(log_lines) - 1
+
+        # Clear screen properly on Windows and Linux/macOS
+        os.system('cls' if os.name == 'nt' else 'clear')
+
+        print("═"*80)
+        print(f"  🖥️  CLUSTER-CI DYNAMIC QUEUE MONITOR (Run ID: {run_id})")
+        print(f"  Last updated: {time.strftime('%H:%M:%S')} (Auto-refreshes every 15s)")
+        print("═"*80)
+
+        if queue_start_idx != -1:
+            # Print the extracted block
+            for idx in range(queue_start_idx, queue_end_idx + 1):
+                print(log_lines[idx])
+        else:
+            # If no queue block found, print the last 20 lines of log to show startup
+            print("⏳ Initializing environment on the cluster... (no queue data yet)")
+            print("\n--- Recent Logs ---")
+            start_idx = max(0, len(log_lines) - 20)
+            for idx in range(start_idx, len(log_lines)):
+                print(log_lines[idx])
+            print("-------------------")
+        
+        print("═"*80)
+        print("💡 TIP: Press Ctrl+C to cancel the job and clean up the remote branch.")
+        return True
+    except Exception as e:
+        # Fallback to simple print if something goes wrong
+        return False
+
 def stream_logs(run_id, commit_sha):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
     repo_name = get_repo_full_name()
@@ -319,10 +400,9 @@ def stream_logs(run_id, commit_sha):
                     pass
 
                 # If the job is active but ppng.io is not receiving data (e.g. still in queue)
-                # Fetch recent logs from GitHub every 20 seconds to show queue/startup status
-                if time.time() - last_gh_log_time > 20:
-                    print("\n⏳ Fetching recent queue/startup logs from GitHub...")
-                    subprocess.run(["gh", "run", "view", str(run_id), "--log"])
+                # Fetch recent logs from GitHub every 15 seconds to show queue/startup status dynamically on-place
+                if time.time() - last_gh_log_time > 15:
+                    display_clean_queue_status(run_id)
                     last_gh_log_time = time.time()
 
                 # Start curl process to stream from ppng.io
