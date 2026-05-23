@@ -154,6 +154,7 @@ function cleanup_job_resources() {
     done
 
     [ -n "$DVC_VIEWER_PID" ] && kill -9 "$DVC_VIEWER_PID" 2>/dev/null || true
+    [ -n "$WATCHDOG_PID" ] && kill -9 "$WATCHDOG_PID" 2>/dev/null || true
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
@@ -482,6 +483,10 @@ docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_he
 echo "===STAGE:setup:END==="
 echo "===STAGE:dvc_repro:BEGIN==="
 
+log_info "Starting DVC Watchdog (background)..."
+bash "$BASE_DIR/src/runner/dvc_watchdog.sh" "${MAIN_CONTAINER_NAME}" > dvc_watchdog.log 2>&1 &
+WATCHDOG_PID=$!
+
 log_info "Launching: dvc repro $DVC_ARGS via Docker"
 # Smart dependency installation: only re-install if pyproject.toml/uv.lock changed.
 # The smart_install.sh script hashes dependency files and caches the result in the
@@ -500,6 +505,12 @@ set -e
 
 echo "===STAGE:dvc_repro:END==="
 echo "===STAGE:sync:BEGIN==="
+
+if [ -n "$WATCHDOG_PID" ]; then
+    log_info "Stopping DVC Watchdog..."
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+fi
 
 if [ $EXEC_RET -ne 0 ]; then
     OOM_KILLED=$(docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
