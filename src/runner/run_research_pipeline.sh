@@ -502,7 +502,13 @@ echo "===STAGE:dvc_repro:END==="
 echo "===STAGE:sync:BEGIN==="
 
 if [ $EXEC_RET -ne 0 ]; then
-    log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
+    OOM_KILLED=$(docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
+    if [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
+        EXEC_RET=137
+        log_error "Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
+    else
+        log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
+    fi
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
@@ -533,6 +539,10 @@ if [ -n "$GITHUB_STEP_SUMMARY" ]; then
 fi
 
 if [ $EXEC_RET -ne 0 ]; then
-    log_error "Exiting with error code $EXEC_RET due to previous failure."
+    if [ $EXEC_RET -eq 137 ]; then
+        log_error "Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
+    else
+        log_error "Exiting with error code $EXEC_RET due to previous failure."
+    fi
     exit $EXEC_RET
 fi
