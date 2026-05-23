@@ -525,7 +525,8 @@ fi
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
 docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync failed."
 
-# Step 4 (Data Router) removed in favor of Post-Flight Lazy Transfer GC.
+# Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
+# Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
 
 echo "=========================================================================="
 log_success "CLUSTER-CI: GitOps execution completed successfully."
