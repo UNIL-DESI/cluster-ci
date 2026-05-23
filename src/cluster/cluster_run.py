@@ -296,9 +296,12 @@ def stream_logs(run_id, commit_sha):
         print("⚡ Capturing real-time logs from runner (streaming to your terminal)...")
         print("==========================================================================")
         
+        last_gh_log_time = 0
         try:
             while True:
                 # Prior check of GHA run status
+                status = "queued"
+                conclusion = None
                 try:
                     res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                     if res.returncode == 0:
@@ -314,6 +317,13 @@ def stream_logs(run_id, commit_sha):
                             break
                 except Exception:
                     pass
+
+                # If the job is active but ppng.io is not receiving data (e.g. still in queue)
+                # Fetch recent logs from GitHub every 20 seconds to show queue/startup status
+                if time.time() - last_gh_log_time > 20:
+                    print("\n⏳ Fetching recent queue/startup logs from GitHub...")
+                    subprocess.run(["gh", "run", "view", str(run_id), "--log"])
+                    last_gh_log_time = time.time()
 
                 # Start curl process to stream from ppng.io
                 proc = subprocess.Popen(["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"])
@@ -624,7 +634,25 @@ def main():
                 print("Usage: cluster-run view <run_id>", file=sys.stderr)
                 sys.exit(1)
         
-        subprocess.run(["gh", "run", "view", run_id, "--log"])
+        # Check run status and headSha to determine if we can stream live logs
+        try:
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,headSha"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if res.returncode == 0:
+                info = json.loads(res.stdout)
+                status = info.get("status")
+                head_sha = info.get("headSha")
+                if status in ("in_progress", "queued") and head_sha:
+                    print(f"📺 Run {run_id} is {status}. Resuming live stream...")
+                    try:
+                        stream_logs(run_id, head_sha)
+                    except KeyboardInterrupt:
+                        print("\n🛑 Stream interrupted by user.")
+                    return
+        except Exception as e:
+            pass
+
+        # Fallback to historical logs if completed
+        subprocess.run(["gh", "run", "view", str(run_id), "--log"])
 
     elif args.command == "cancel":
         run_id = args.run_id

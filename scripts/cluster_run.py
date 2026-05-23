@@ -296,9 +296,12 @@ def stream_logs(run_id, commit_sha):
         print("⚡ Capturing real-time logs from runner (streaming to your terminal)...")
         print("==========================================================================")
         
+        last_gh_log_time = 0
         try:
             while True:
                 # Prior check of GHA run status
+                status = "queued"
+                conclusion = None
                 try:
                     res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                     if res.returncode == 0:
@@ -314,6 +317,13 @@ def stream_logs(run_id, commit_sha):
                             break
                 except Exception:
                     pass
+
+                # If the job is active but ppng.io is not receiving data (e.g. still in queue)
+                # Fetch recent logs from GitHub every 20 seconds to show queue/startup status
+                if time.time() - last_gh_log_time > 20:
+                    print("\n⏳ Fetching recent queue/startup logs from GitHub...")
+                    subprocess.run(["gh", "run", "view", str(run_id), "--log"])
+                    last_gh_log_time = time.time()
 
                 # Start curl process to stream from ppng.io
                 proc = subprocess.Popen(["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"])
