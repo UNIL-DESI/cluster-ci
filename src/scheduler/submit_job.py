@@ -410,7 +410,7 @@ def wait_for_job(headnode_url, job_id):
                         except Exception:
                             pass
                 elif exit_code == 137 or oom_detected:
-                    print(f"\n❌ Job {job_id} failed: Out of Memory (OOM Kill detected).")
+                    print(f"\n❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée ({ram_required} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci")
                 else:
                     print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
                 return exit_code
