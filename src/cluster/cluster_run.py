@@ -10,7 +10,6 @@ import os
 import re
 import time
 import json
-import codecs
 import tempfile
 import argparse
 import subprocess
@@ -362,14 +361,12 @@ def display_clean_queue_status(run_id):
         print("═"*80)
         print("💡 TIP: Press Ctrl+C to cancel the job and clean up the remote branch.")
         return True
-    except Exception as e:
+    except Exception:
         # Fallback to simple print if something goes wrong
         return False
 
 def stream_logs(run_id, commit_sha):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
-    repo_name = get_repo_full_name()
-    tmate_connected = False
     
     # 1. Connect to live terminal via piping
     if commit_sha:
@@ -394,7 +391,6 @@ def stream_logs(run_id, commit_sha):
                                 print("✅ Cluster-CI run completed successfully!")
                             else:
                                 print(f"❌ Cluster-CI run finished with status: {conclusion}")
-                            tmate_connected = True
                             break
                 except Exception:
                     pass
@@ -406,7 +402,10 @@ def stream_logs(run_id, commit_sha):
                     last_gh_log_time = time.time()
 
                 # Start curl process to stream from ppng.io
-                proc = subprocess.Popen(["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"])
+                proc = subprocess.Popen(
+                    ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace"
+                )
                 
                 stop_event = threading.Event()
                 
@@ -428,10 +427,18 @@ def stream_logs(run_id, commit_sha):
                 monitor_thread = threading.Thread(target=monitor_run_status, daemon=True)
                 monitor_thread.start()
 
+                # Read character by character and process ANSI codes
+                while True:
+                    char = proc.stdout.read(1)
+                    if not char:
+                        break
+                    process_tmate_char(char)
+                
+                dump_all_remaining()
+
                 # Wait for curl to finish
                 proc.wait()
                 stop_event.set()
-                tmate_connected = True
 
                 # Check GHA status again
                 try:
@@ -580,7 +587,7 @@ def shadow_run(background=False):
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/heads/{BRANCH}", "--force", "--quiet"], check=True)
 
     if background:
-        print(f"✅ Run submitted in background. You can watch it with: cluster-run list")
+        print("✅ Run submitted in background. You can watch it with: cluster-run list")
         return
 
     # Find the triggered GHA run
@@ -728,7 +735,7 @@ def main():
                     except KeyboardInterrupt:
                         print("\n🛑 Stream interrupted by user.")
                     return
-        except Exception as e:
+        except Exception:
             pass
 
         # Fallback to historical logs if completed
