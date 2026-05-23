@@ -1063,7 +1063,8 @@ def proxy_request(target_url, base_href=None):
             cookies=request.cookies,
             allow_redirects=False,
             params=request.args,
-            stream=True
+            stream=True,
+            timeout=10
         )
 
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']

@@ -160,7 +160,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "gh_token": gh_token,
             "env_vars": env_vars,
             "username": os.environ.get("GITHUB_ACTOR", "unknown")
-        }, headers=headers)
+        }, headers=headers, timeout=10)
         resp.raise_for_status()
         job_data = resp.json()
         job_id = job_data['job_id']
@@ -223,7 +223,7 @@ def wait_for_job(headnode_url, job_id):
 
     while True:
         try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}")
+            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
             job = resp.json()
             status = job['status']
