@@ -178,7 +178,7 @@ def wait_for_job(headnode_url, job_id):
         worker_url = None
         cancel_error = None
         try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}")
+            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
             job = resp.json()
             worker_url = job.get('worker_service_url')
@@ -193,7 +193,7 @@ def wait_for_job(headnode_url, job_id):
                 "job_id": job_id,
                 "status": "failed",
                 "exit_code": -signal.SIGTERM
-            }, headers=headers)
+            }, headers=headers, timeout=10)
 
         except Exception as e:
             cancel_error = e
