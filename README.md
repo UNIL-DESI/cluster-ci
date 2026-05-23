@@ -189,6 +189,7 @@ cluster-ci/
 - [x] Support Windows Universel & PATH Automatique (PowerShell/CMD) : Détection et enregistrement automatique de `~/.local/bin` dans le PATH Windows User via PowerShell, wrappers natifs, résolution définitive du bug de figeage du terminal et fin de tâche instantanée dès la complétion du run.
 - [x] Transparence de la file d'attente (Interactive Queue Dashboard) : Position dans la file d'attente, logs interactifs en direct des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante dans `submit_job.py`.
 - [x] Homogénéisation complète inter-workers : Liaison inter-worker SSH RSA robuste sans mot de passe et synchronisation automatisée du cache des modèles Ollama (Gemma-4-31B de 20 Go) via rsync.
+- [x] Fix Bug: Résolution définitive des Ghost Jobs via timeouts explicites et daemon thread de purge.
 - [ ] [Global Execution Timeout](docs/tasks/global_timeout.md) : Empêcher le gel du worker sur un job bloqué (arrêt Docker propre et notification chercheur).
 - [x] [OOM cgroups silencieux : Ajouter un message d'erreur explicite lors du dépassement de REQUIRED_RAM](https://github.com/UNIL-DESI/cluster-ci/issues/91)
 - [x] [Architecture : Implémenter un Watchdog Asynchrone pour la sauvegarde incrémentale de DVC](https://github.com/UNIL-DESI/cluster-ci/issues/92)
