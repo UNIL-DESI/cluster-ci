@@ -698,6 +698,22 @@ def start_webhook_server():
     app.run(host='0.0.0.0', port=AGENT_PORT)
 
 def main_loop():
+    # R4. Worker Startup Docker Reconciliation
+    logger.info("Executing startup Docker reconciliation to clean up any orphan/zombie containers...")
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=15
+        )
+        if res.returncode == 0:
+            containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
+            for container in containers:
+                if container.startswith("cluster-job-") or container.startswith("cluster-viewer-"):
+                    logger.info(f"Purging orphan startup container: {container}")
+                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
+    except Exception as e:
+        logger.error(f"Failed to perform startup Docker reconciliation: {e}")
+
     # Start webhook server in background thread
     threading.Thread(target=start_webhook_server, daemon=True).start()
     
