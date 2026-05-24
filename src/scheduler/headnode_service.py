@@ -143,6 +143,64 @@ def register_worker():
 
     return jsonify({"status": "ok"})
 
+def cancel_job_cleanly(job_id, exit_code=-15):
+    """
+    Cancels a job cleanly:
+    - If pending: updates DB status to failed, exit_code = exit_code.
+    - If assigned or running: contacts worker to kill containers, cancels GH Action (best effort), updates DB status to failed.
+    """
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT j.*, w.service_url
+            FROM jobs j
+            LEFT JOIN workers w ON j.worker_id = w.worker_id
+            WHERE j.job_id = ?
+        ''', (job_id,))
+        job = cursor.fetchone()
+
+    if not job:
+        return False
+
+    status = job['status']
+    if status not in ['pending', 'assigned', 'running']:
+        return False
+
+    # 1. Worker cancellation if active on worker
+    if status in ['assigned', 'running'] and job['service_url']:
+        try:
+            requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
+        except Exception as e:
+            app.logger.error(f"Failed to send cancel to worker {job['service_url']} for job {job_id}: {e}")
+
+    # 2. GHA cancellation (best effort)
+    if job['gh_run_id']:
+        try:
+            repo = job['repo']
+            run_id = job['gh_run_id']
+            gh_token = job['gh_token'] or os.environ.get("GITHUB_PAT")
+            if gh_token:
+                headers = {
+                    "Authorization": f"token {gh_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+                gh_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel"
+                requests.post(gh_url, headers=headers, timeout=5)
+        except Exception as e:
+            app.logger.error(f"Failed to cancel GH Action for job {job_id}: {e}")
+
+    # 3. Update DB
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE jobs
+            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP
+            WHERE job_id = ?
+        ''', (exit_code, job_id))
+        conn.commit()
+
+    return True
+
 @app.route('/submit_job', methods=['POST'])
 def submit_job():
     if MAINTENANCE_MODE:
@@ -189,18 +247,40 @@ def submit_job():
     username = data.get('username')
     commit_hash = data.get('commit_hash')
 
+    # 1. AUTO-CANCELLATION: Automatically cancel active jobs according to branch category
+    jobs_to_cancel = []
+    is_draft = branch.startswith("cluster-draft/") if branch else False
+    if branch and repo:
+        try:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT job_id, branch FROM jobs
+                    WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
+                ''', (repo,))
+                active_jobs = cursor.fetchall()
+                for aj in active_jobs:
+                    aj_branch = aj['branch'] or ''
+                    if is_draft:
+                        if aj_branch == branch:
+                            jobs_to_cancel.append(aj['job_id'])
+                    else:
+                        if not aj_branch.startswith("cluster-draft/"):
+                            jobs_to_cancel.append(aj['job_id'])
+        except Exception as e:
+            app.logger.error(f"Error identifying active jobs to cancel: {e}")
+
+    # Cancel identified jobs cleanly outside the active insertion transaction to prevent SQLite locks
+    for j_id in jobs_to_cancel:
+        try:
+            app.logger.info(f"Auto-cancelling active job {j_id} on {repo} branch {branch} category match")
+            cancel_job_cleanly(j_id, exit_code=-15)
+        except Exception as e:
+            app.logger.error(f"Failed to auto-cancel job {j_id}: {e}")
+
+    # 2. Insert new job
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        
-        # 1. AUTO-CANCELLATION: Automatically fail any existing 'pending' jobs for the same user and branch
-        if username and branch and repo:
-            cursor.execute('''
-                UPDATE jobs 
-                SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP 
-                WHERE status = 'pending' AND repo = ? AND branch = ? AND username = ?
-            ''', (repo, branch, username))
-            
-        # 2. Insert new job
         cursor.execute('''
             INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
@@ -736,57 +816,11 @@ def api_stop_job(job_id):
     if 'user' not in session and not check_token():
         return jsonify({"error": "Unauthorized"}), 401
 
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT j.*, w.service_url
-            FROM jobs j
-            LEFT JOIN workers w ON j.worker_id = w.worker_id
-            WHERE j.job_id = ?
-        ''', (job_id,))
-        job = cursor.fetchone()
-
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-
-    # 1. Cancel on Worker (Safety check: prevent zombie containers)
-    if job['status'] in ['running', 'assigned'] and job['service_url']:
-        try:
-            resp = requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
-            # 200: Success, 404: Job not on worker (safe to proceed)
-            if resp.status_code not in [200, 404]:
-                return jsonify({"error": f"Worker failed to cancel job (HTTP {resp.status_code}): {resp.text}"}), 502
-        except Exception as e:
-            app.logger.error(f"Failed to send cancel to worker: {e}")
-            return jsonify({"error": f"Could not reach worker to verify job cancellation: {str(e)}"}), 504
-
-    # 2. Cancel on GitHub Actions (if run_id exists) - Best effort
-    if job['gh_run_id']:
-        try:
-            repo = job['repo']
-            run_id = job['gh_run_id']
-            gh_token = job['gh_token'] or os.environ.get("GITHUB_PAT")
-            if gh_token:
-                headers = {
-                    "Authorization": f"token {gh_token}",
-                    "Accept": "application/vnd.github.v3+json"
-                }
-                gh_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel"
-                requests.post(gh_url, headers=headers, timeout=5)
-        except Exception as e:
-            app.logger.error(f"Failed to cancel GH Action: {e}")
-
-    # 3. Update Status in DB (Only reached if worker confirmed or unreachable with error returned above)
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE jobs
-            SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP
-            WHERE job_id = ?
-        ''', (job_id,))
-        conn.commit()
-
-    return jsonify({"status": "ok", "message": "Job stopped and verified"})
+    success = cancel_job_cleanly(job_id, exit_code=-1)
+    if success:
+        return jsonify({"status": "ok", "message": "Job stopped and verified"})
+    else:
+        return jsonify({"error": "Job not found or not active"}), 404
 
 @app.route('/api/runs/active', methods=['GET'])
 def api_active_runs():
