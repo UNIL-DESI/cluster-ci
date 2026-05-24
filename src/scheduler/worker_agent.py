@@ -114,18 +114,36 @@ def poll_for_job():
     return None
 
 def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None):
-    try:
-        payload = {"job_id": job_id, "status": status}
-        if exit_code is not None:
-            payload["exit_code"] = exit_code
-        if commit_hash is not None:
-            payload["commit_hash"] = commit_hash
-        if viewer_port is not None:
-            payload["viewer_port"] = viewer_port
-        resp = requests.post(f"{HEADNODE_URL}/update_job_status", json=payload, headers=get_headers(), timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        logger.error(f"Failed to update job status: {e}")
+    payload = {"job_id": job_id, "status": status}
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    if commit_hash is not None:
+        payload["commit_hash"] = commit_hash
+    if viewer_port is not None:
+        payload["viewer_port"] = viewer_port
+
+    delay = 5
+    max_attempts = 7  # 1 initial attempt + up to 6 retries
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.post(f"{HEADNODE_URL}/update_job_status", json=payload, headers=get_headers(), timeout=10)
+            resp.raise_for_status()
+            if attempt > 1:
+                logger.info(f"Successfully updated job status to '{status}' on attempt {attempt}")
+            return
+        except Exception as e:
+            if attempt < max_attempts:
+                logger.warning(
+                    f"Attempt {attempt}/{max_attempts} failed to update job status to '{status}' for job {job_id}: {e}. "
+                    f"Retrying in {delay} seconds..."
+                )
+                time.sleep(delay)
+                delay *= 2
+            else:
+                logger.error(
+                    f"❌ CRITICAL: All {max_attempts} attempts failed to update job status to '{status}' for job {job_id}: {e}"
+                )
+                raise
 
 def execute_job(job):
     global current_job_id, current_process
