@@ -1,11 +1,73 @@
 import time
 import json
 import requests
+import os
+import datetime as dt
+from datetime import datetime
 from persistence import get_db_conn, init_db
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def cancel_job_cleanly(job_id, exit_code=-15):
+    """
+    Cancels a job cleanly from the scheduler loop:
+    - Contacts worker to kill containers (if assigned/running)
+    - Cancels GH Action workflow (best effort)
+    - Updates DB status to failed
+    """
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT j.*, w.service_url
+            FROM jobs j
+            LEFT JOIN workers w ON j.worker_id = w.worker_id
+            WHERE j.job_id = ?
+        ''', (job_id,))
+        job = cursor.fetchone()
+
+    if not job:
+        return False
+
+    status = job['status']
+    if status not in ['pending', 'assigned', 'running']:
+        return False
+
+    # 1. Worker cancellation if active on worker
+    if status in ['assigned', 'running'] and job['service_url']:
+        try:
+            requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
+        except Exception as e:
+            logger.error(f"Failed to send cancel to worker {job['service_url']} for job {job_id}: {e}")
+
+    # 2. GHA cancellation (best effort)
+    if job['gh_run_id']:
+        try:
+            repo = job['repo']
+            run_id = job['gh_run_id']
+            gh_token = job['gh_token'] or os.environ.get("GITHUB_PAT")
+            if gh_token:
+                headers = {
+                    "Authorization": f"token {gh_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+                gh_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel"
+                requests.post(gh_url, headers=headers, timeout=5)
+        except Exception as e:
+            logger.error(f"Failed to cancel GH Action for job {job_id}: {e}")
+
+    # 3. Update DB
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE jobs
+            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP
+            WHERE job_id = ?
+        ''', (exit_code, job_id))
+        conn.commit()
+
+    return True
 
 def schedule_jobs():
     """
@@ -13,6 +75,10 @@ def schedule_jobs():
     """
     while True:
         try:
+                expired_jobs = []
+                pending_jobs = []
+                workers = []
+
                 with get_db_conn() as conn:
                     cursor = conn.cursor()
 
@@ -39,15 +105,38 @@ def schedule_jobs():
                     ''')
                     conn.commit()
 
+                    # 1.5. Sovereign Watchdog: Find running or assigned jobs exceeding max runtime
+                    cursor.execute('''
+                        SELECT job_id, repo, branch, status, started_at, created_at, max_runtime_hours
+                        FROM jobs
+                        WHERE status IN ('running', 'assigned')
+                    ''')
+                    active_jobs = [dict(row) for row in cursor.fetchall()]
+                    
+                    for job in active_jobs:
+                        job_id = job['job_id']
+                        max_hours = job['max_runtime_hours'] or 24.0
+                        start_time_str = job['started_at'] or job['created_at']
+                        if not start_time_str:
+                            continue
+                        try:
+                            # SQLite timestamps are in UTC
+                            start_t = datetime.strptime(start_time_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                            now_utc = dt.datetime.utcnow()
+                            elapsed_seconds = (now_utc - start_t).total_seconds()
+                            limit_seconds = (max_hours * 3600) + 300  # plus 5 minutes grace margin
+                            
+                            if elapsed_seconds > limit_seconds:
+                                logger.warning(f"Watchdog: Job {job_id} ({job['repo']}@{job['branch']}) has exceeded its max runtime of {max_hours} hours. (Elapsed: {elapsed_seconds/3600:.2f} hours)")
+                                expired_jobs.append(job_id)
+                        except Exception as ex:
+                            logger.error(f"Watchdog parsing error for job {job_id}: {ex}")
+
                     # 2. Fetch pending jobs ordered by creation time
                     cursor.execute('SELECT * FROM jobs WHERE status = "pending" ORDER BY created_at ASC')
                     pending_jobs = [dict(row) for row in cursor.fetchall()]
 
-                    if not pending_jobs:
-                        time.sleep(5)
-                        continue
-
-                    # 2. Fetch online workers that are NOT already busy
+                    # 3. Fetch online workers that are NOT already busy
                     # Worker agents are single-threaded: they block in execute_job()
                     # and cannot poll for new jobs until the current one finishes.
                     # We must exclude workers that have a running or assigned job.
@@ -63,6 +152,18 @@ def schedule_jobs():
                         ORDER BY total_ram_gb DESC
                     ''')
                     workers = [dict(row) for row in cursor.fetchall()]
+
+                # Cancel expired jobs cleanly outside the main connection transaction to prevent SQLite locks
+                for job_id in expired_jobs:
+                    try:
+                        logger.warning(f"Watchdog: Forcefully cancelling expired job {job_id}")
+                        cancel_job_cleanly(job_id, exit_code=-15)
+                    except Exception as e:
+                        logger.error(f"Watchdog failed to cancel job {job_id}: {e}")
+
+                if not pending_jobs:
+                    time.sleep(5)
+                    continue
 
                 if not workers:
                     logger.warning("No online workers available.")
