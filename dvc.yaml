@@ -6,8 +6,11 @@ stages:
       - simulate_research.py
     outs:
       - artifacts/data.csv
+    metrics:
       - artifacts/metrics.json
-      - artifacts/plot.png
       - artifacts/random_table.csv
+    plots:
+      - artifacts/plot.png
       - artifacts/random_plot.png
+
 
