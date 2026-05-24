@@ -11,6 +11,8 @@ import threading
 import json
 import tempfile
 import shutil
+import signal
+import datetime
 from flask import Flask, jsonify, send_from_directory, send_file, request, Response
 
 logging.basicConfig(level=logging.INFO)
@@ -715,30 +717,232 @@ def drain_request():
 def start_webhook_server():
     app.run(host='0.0.0.0', port=AGENT_PORT)
 
-def enforce_single_instance():
-    """Scan all running processes on the host and kill any other active worker_agent.py process."""
-    current_pid = os.getpid()
-    logger.info(f"Enforcing single instance of worker_agent.py (Current PID: {current_pid})...")
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), "cluster-worker.lock")
+lock_file = None
+shutdown_requested = False
+
+def acquire_single_instance_lock():
+    global lock_file
+    try:
+        lock_file = open(LOCK_FILE_PATH, "w")
+        if os.name != 'nt':
+            import fcntl
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                logger.error(f"❌ CRITICAL ERROR: Another instance of worker_agent.py is already running on this host (locked via {LOCK_FILE_PATH}). Exiting immediately to prevent conflict.")
+                sys.exit(1)
+        else:
+            import msvcrt
+            try:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            except (IOError, OSError):
+                logger.error(f"❌ CRITICAL ERROR: Another instance of worker_agent.py is already running on this host (locked via {LOCK_FILE_PATH}). Exiting immediately to prevent conflict.")
+                sys.exit(1)
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        logger.info(f"Successfully acquired single instance lock on {LOCK_FILE_PATH} (PID: {os.getpid()})")
+    except Exception as e:
+        logger.error(f"Error while acquiring single instance lock: {e}")
+        if isinstance(e, SystemExit):
+            raise e
+        sys.exit(1)
+
+def release_single_instance_lock():
+    global lock_file
+    if lock_file:
         try:
-            pid = proc.info.get('pid')
-            if pid == current_pid:
-                continue
-            cmdline = proc.info.get('cmdline') or []
-            cmdline_str = " ".join(cmdline)
-            # Match any python execution running worker_agent.py
-            if "worker_agent.py" in cmdline_str:
-                logger.warning(f"Found duplicate/stale worker_agent.py process (PID: {pid}, cmdline: {cmdline}). Force killing it...")
-                proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            if os.name != 'nt':
+                import fcntl
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+            lock_file.close()
+            if os.path.exists(LOCK_FILE_PATH):
+                os.remove(LOCK_FILE_PATH)
+            logger.info("Released single instance lock.")
+        except Exception as e:
+            logger.error(f"Error releasing lock file: {e}")
+
+def cleanup_active_jobs_and_containers():
+    global current_job_id, current_process
+    with job_lock:
+        if current_job_id:
+            logger.warning(f"🧹 Initiating forced cleanup for active job {current_job_id} due to shutdown request...")
+            safe_job_id = current_job_id.replace('/', '-')
+            for prefix in ["cluster-job-", "cluster-viewer-"]:
+                container_name = f"{prefix}{safe_job_id}"
+                logger.info(f"Force-removing container {container_name} on shutdown...")
+                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, timeout=10)
+            
+            if current_process:
+                logger.info(f"Terminating local runner process (PID: {current_process.pid}) tree...")
+                try:
+                    parent = psutil.Process(current_process.pid)
+                    for child in parent.children(recursive=True):
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            
+            try:
+                logger.info(f"Notifying headnode of failure for job {current_job_id}...")
+                update_job_status(current_job_id, 'failed', exit_code=-15)
+            except Exception as e:
+                logger.error(f"Failed to update job status on shutdown: {e}")
+
+def signal_handler(signum, frame):
+    global shutdown_requested
+    signame = signal.Signals(signum).name
+    logger.warning(f"⚠️ Received shutdown signal {signame} ({signum}). Starting graceful shutdown sequence...")
+    shutdown_requested = True
+    
+    try:
+        cleanup_active_jobs_and_containers()
+    except Exception as e:
+        logger.error(f"Error during active jobs cleanup: {e}")
+        
+    try:
+        release_single_instance_lock()
+    except Exception as e:
+        logger.error(f"Error releasing lock: {e}")
+        
+    logger.info("Graceful shutdown sequence complete. Exiting process.")
+    sys.exit(0)
+
+def register_signals():
+    for sig in [signal.SIGTERM, signal.SIGINT]:
+        try:
+            signal.signal(sig, signal_handler)
+            logger.info(f"Registered signal handler for {signal.Signals(sig).name}")
+        except ValueError:
+            pass
+    if hasattr(signal, 'SIGHUP'):
+        try:
+            signal.signal(signal.SIGHUP, signal_handler)
+            logger.info("Registered signal handler for SIGHUP")
+        except ValueError:
             pass
 
-def main_loop():
-    # Enforce single instance first to auto-heal duplicate processes
+def destroy_container_group(safe_job_id, name_list):
+    logger.warning(f"🔥 Forcing autonomous destruction of zombie container group for job {safe_job_id}...")
+    for container in name_list:
+        try:
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
+            logger.info(f"Successfully destroyed zombie container: {container}")
+        except Exception as e:
+            logger.error(f"Failed to destroy zombie container {container}: {e}")
+    kill_dvc_viewer_processes()
+
+def perform_self_healing():
+    global current_job_id
     try:
-        enforce_single_instance()
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=15
+        )
+        if res.returncode != 0:
+            logger.error(f"[Self-Healing] Failed to list docker containers: {res.stderr}")
+            return
+        
+        containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
     except Exception as e:
-        logger.error(f"Failed to enforce single instance: {e}")
+        logger.error(f"[Self-Healing] Error executing docker command: {e}")
+        return
+        
+    if not containers:
+        return
+        
+    job_containers = {}
+    for container in containers:
+        job_id_part = None
+        if container.startswith("cluster-job-"):
+            job_id_part = container.replace("cluster-job-", "")
+        elif container.startswith("cluster-viewer-"):
+            job_id_part = container.replace("cluster-viewer-", "")
+            
+        if job_id_part:
+            if job_id_part not in job_containers:
+                job_containers[job_id_part] = []
+            job_containers[job_id_part].append(container)
+            
+    for safe_job_id, name_list in job_containers.items():
+        is_current = False
+        with job_lock:
+            if current_job_id:
+                current_safe_job_id = current_job_id.replace('/', '-')
+                if safe_job_id == current_safe_job_id:
+                    is_current = True
+                    
+        # Verify absolute maximum runtime limit (24 hours absolute safety)
+        container_age_seconds = 0
+        try:
+            inspect_res = subprocess.run(
+                ["docker", "inspect", "--format", "{{.Created}}", name_list[0]],
+                capture_output=True, text=True, timeout=10
+            )
+            if inspect_res.returncode == 0:
+                created_str = inspect_res.stdout.strip()
+                if '.' in created_str:
+                    created_str = created_str.split('.')[0] + 'Z'
+                elif '+' in created_str:
+                    created_str = created_str.split('+')[0] + 'Z'
+                
+                created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%SZ")
+                created_ts = created_dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+                container_age_seconds = time.time() - created_ts
+        except Exception as ex:
+            logger.warning(f"[Self-Healing] Could not inspect age of container {name_list[0]}: {ex}")
+            
+        if container_age_seconds > 24 * 3600:
+            logger.error(f"❌ [Self-Healing] Container group for job {safe_job_id} exceeded absolute 24h safety limit ({container_age_seconds/3600:.1f}h). Forcing autonomous destruction!")
+            destroy_container_group(safe_job_id, name_list)
+            continue
+            
+        if is_current:
+            continue
+            
+        # It's an orphan or old container, check official database status on Headnode
+        logger.info(f"[Self-Healing] Checking official status of potentially orphan container group for job {safe_job_id}...")
+        try:
+            resp = requests.get(f"{HEADNODE_URL}/job_status/{safe_job_id}", headers=get_headers(), timeout=10)
+            if resp.status_code == 404:
+                logger.warning(f"❌ [Self-Healing] Job status for {safe_job_id} returned 404 (not found). This is a zombie! Destroying immediately...")
+                destroy_container_group(safe_job_id, name_list)
+            elif resp.status_code == 200:
+                job_info = resp.json()
+                status = job_info.get("status")
+                logger.info(f"[Self-Healing] Job {safe_job_id} status on headnode is '{status}'")
+                if status in ["completed", "failed"]:
+                    logger.warning(f"⚠️ [Self-Healing] Job {safe_job_id} is in a terminal state '{status}' but containers are still running. Destroying immediately...")
+                    destroy_container_group(safe_job_id, name_list)
+                elif status in ["pending", "assigned"] and job_info.get("worker_id") != WORKER_ID:
+                    logger.warning(f"⚠️ [Self-Healing] Job {safe_job_id} is '{status}' but assigned to worker {job_info.get('worker_id')} (not us: {WORKER_ID}). Destroying immediately...")
+                    destroy_container_group(safe_job_id, name_list)
+            else:
+                logger.error(f"[Self-Healing] Failed to query job status for {safe_job_id}: HTTP {resp.status_code}")
+        except Exception as e:
+            logger.error(f"[Self-Healing] Network error querying job status for {safe_job_id}: {e}")
+
+def self_healing_loop():
+    logger.info("Starting autonomous self-healing loop...")
+    while not shutdown_requested:
+        try:
+            perform_self_healing()
+        except Exception as e:
+            logger.error(f"Error in self-healing routine: {e}")
+        for _ in range(60):
+            if shutdown_requested:
+                break
+            time.sleep(1)
+
+def main_loop():
+    # Enforce single instance lock first
+    acquire_single_instance_lock()
+    
+    # Register signal handling for graceful shutdown
+    register_signals()
 
     # R4. Worker Startup Docker Reconciliation
     logger.info("Executing startup Docker reconciliation to clean up any orphan/zombie containers...")
@@ -761,20 +965,26 @@ def main_loop():
     
     # Start heartbeat in background thread
     threading.Thread(target=heartbeat_loop, daemon=True).start()
+    
+    # Start autonomous self-healing periodic daemon in background thread
+    threading.Thread(target=self_healing_loop, daemon=True).start()
 
     # Wait for the first heartbeat to be processed before polling for jobs
-    # This prevents a race condition where a job is fetched before the headnode
-    # knows the worker has restarted (which would kill the job with exit code -98).
-    # We add a 5-minute timeout to avoid infinite deadlocks if the headnode is completely unreachable.
     if not startup_heartbeat_event.wait(timeout=300):
         logger.error("Timeout: Failed to synchronize initial heartbeat with headnode after 5 minutes. Shutting down worker.")
+        release_single_instance_lock()
         sys.exit(1)
 
-    while True:
-        job = poll_for_job()
-        if job:
-            execute_job(job)
-        time.sleep(5)
+    try:
+        while not shutdown_requested:
+            job = poll_for_job()
+            if job:
+                execute_job(job)
+            time.sleep(5)
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt caught in main loop.")
+    finally:
+        release_single_instance_lock()
 
 if __name__ == '__main__':
     main_loop()
