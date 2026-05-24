@@ -30,17 +30,62 @@ def get_headers():
         headers["Authorization"] = f"Bearer {CLUSTER_TOKEN}"
     return headers
 
-def kill_dvc_viewer_processes():
-    logger.info("Scanning for remaining dvc-viewer processes on host...")
+def purge_orphan_runners_and_containers(job_id=None):
+    """Performs JIT (Just-In-Time) purge of orphan docker containers and runner processes.
+    
+    If job_id is provided, avoids destroying containers associated with this job.
+    Otherwise, destroys all cluster-job-* and cluster-viewer-* containers.
+    """
+    logger.info(f"🧹 Performing JIT (Just-In-Time) purge of orphan runners and containers (Job ID context: {job_id})")
+    
+    # 1. Docker JIT Container Purge
+    safe_job_id = job_id.replace('/', '-') if job_id else None
+    expected_containers = {f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"} if safe_job_id else set()
+    
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=15
+        )
+        if res.returncode == 0:
+            containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
+            for container in containers:
+                if container not in expected_containers:
+                    logger.warning(f"🔥 JIT Purge: Destroying orphan/zombie container {container}...")
+                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
+        else:
+            logger.error(f"JIT Purge: Failed to list docker containers: {res.stderr}")
+    except Exception as e:
+        logger.error(f"JIT Purge: Error during docker container purge: {e}")
+        
+    # 2. Host Orphan Process Purge (including dvc-viewer and python runners)
+    my_pid = os.getpid()
+    logger.info("Scanning for orphan runner/viewer processes on host...")
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
+            pid = proc.info.get('pid')
+            if pid == my_pid:
+                continue
+            
             cmdline = proc.info.get('cmdline') or []
             cmdline_str = " ".join(cmdline).lower()
-            if "dvc-viewer" in cmdline_str or proc.info.get('name') == "dvc-viewer":
-                logger.info(f"Killing host dvc-viewer process (PID: {proc.info['pid']}, cmd: {cmdline})")
+            name = (proc.info.get('name') or "").lower()
+            
+            is_orphan_runner = False
+            if "cluster-ci-run" in cmdline_str or "gc_orchestrator" in cmdline_str:
+                is_orphan_runner = True
+            if "dvc-viewer" in cmdline_str or name == "dvc-viewer":
+                is_orphan_runner = True
+            
+            if is_orphan_runner:
+                logger.warning(f"🔥 JIT Purge: Killing host orphan process (PID: {pid}, name: {name}, cmd: {cmdline})")
                 proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
+
+def kill_dvc_viewer_processes():
+    # Deprecated wrapper: delegate to our robust purge function
+    purge_orphan_runners_and_containers()
 
 # Generate or load a persistent worker ID
 WORKER_ID_FILE = "worker_id.txt"
@@ -159,7 +204,7 @@ def execute_job(job):
     env_vars = job.get('env_vars')
 
     logger.info(f"Executing job {job_id} for {repo}@{branch} with {ram_limit_gb}GB limit")
-    kill_dvc_viewer_processes()
+    purge_orphan_runners_and_containers(job_id)
     update_job_status(job_id, 'running')
 
     with job_lock:
@@ -825,117 +870,7 @@ def register_signals():
         except ValueError:
             pass
 
-def destroy_container_group(safe_job_id, name_list):
-    logger.warning(f"🔥 Forcing autonomous destruction of zombie container group for job {safe_job_id}...")
-    for container in name_list:
-        try:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
-            logger.info(f"Successfully destroyed zombie container: {container}")
-        except Exception as e:
-            logger.error(f"Failed to destroy zombie container {container}: {e}")
-    kill_dvc_viewer_processes()
-
-def perform_self_healing():
-    global current_job_id
-    try:
-        res = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=15
-        )
-        if res.returncode != 0:
-            logger.error(f"[Self-Healing] Failed to list docker containers: {res.stderr}")
-            return
-        
-        containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
-    except Exception as e:
-        logger.error(f"[Self-Healing] Error executing docker command: {e}")
-        return
-        
-    if not containers:
-        return
-        
-    job_containers = {}
-    for container in containers:
-        job_id_part = None
-        if container.startswith("cluster-job-"):
-            job_id_part = container.replace("cluster-job-", "")
-        elif container.startswith("cluster-viewer-"):
-            job_id_part = container.replace("cluster-viewer-", "")
-            
-        if job_id_part:
-            if job_id_part not in job_containers:
-                job_containers[job_id_part] = []
-            job_containers[job_id_part].append(container)
-            
-    for safe_job_id, name_list in job_containers.items():
-        is_current = False
-        with job_lock:
-            if current_job_id:
-                current_safe_job_id = current_job_id.replace('/', '-')
-                if safe_job_id == current_safe_job_id:
-                    is_current = True
-                    
-        # Verify absolute maximum runtime limit (24 hours absolute safety)
-        container_age_seconds = 0
-        try:
-            inspect_res = subprocess.run(
-                ["docker", "inspect", "--format", "{{.Created}}", name_list[0]],
-                capture_output=True, text=True, timeout=10
-            )
-            if inspect_res.returncode == 0:
-                created_str = inspect_res.stdout.strip()
-                if '.' in created_str:
-                    created_str = created_str.split('.')[0] + 'Z'
-                elif '+' in created_str:
-                    created_str = created_str.split('+')[0] + 'Z'
-                
-                created_dt = datetime.datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%SZ")
-                created_ts = created_dt.replace(tzinfo=datetime.timezone.utc).timestamp()
-                container_age_seconds = time.time() - created_ts
-        except Exception as ex:
-            logger.warning(f"[Self-Healing] Could not inspect age of container {name_list[0]}: {ex}")
-            
-        if container_age_seconds > 24 * 3600:
-            logger.error(f"❌ [Self-Healing] Container group for job {safe_job_id} exceeded absolute 24h safety limit ({container_age_seconds/3600:.1f}h). Forcing autonomous destruction!")
-            destroy_container_group(safe_job_id, name_list)
-            continue
-            
-        if is_current:
-            continue
-            
-        # It's an orphan or old container, check official database status on Headnode
-        logger.info(f"[Self-Healing] Checking official status of potentially orphan container group for job {safe_job_id}...")
-        try:
-            resp = requests.get(f"{HEADNODE_URL}/job_status/{safe_job_id}", headers=get_headers(), timeout=10)
-            if resp.status_code == 404:
-                logger.warning(f"❌ [Self-Healing] Job status for {safe_job_id} returned 404 (not found). This is a zombie! Destroying immediately...")
-                destroy_container_group(safe_job_id, name_list)
-            elif resp.status_code == 200:
-                job_info = resp.json()
-                status = job_info.get("status")
-                logger.info(f"[Self-Healing] Job {safe_job_id} status on headnode is '{status}'")
-                if status in ["completed", "failed"]:
-                    logger.warning(f"⚠️ [Self-Healing] Job {safe_job_id} is in a terminal state '{status}' but containers are still running. Destroying immediately...")
-                    destroy_container_group(safe_job_id, name_list)
-                elif status in ["pending", "assigned"] and job_info.get("worker_id") != WORKER_ID:
-                    logger.warning(f"⚠️ [Self-Healing] Job {safe_job_id} is '{status}' but assigned to worker {job_info.get('worker_id')} (not us: {WORKER_ID}). Destroying immediately...")
-                    destroy_container_group(safe_job_id, name_list)
-            else:
-                logger.error(f"[Self-Healing] Failed to query job status for {safe_job_id}: HTTP {resp.status_code}")
-        except Exception as e:
-            logger.error(f"[Self-Healing] Network error querying job status for {safe_job_id}: {e}")
-
-def self_healing_loop():
-    logger.info("Starting autonomous self-healing loop...")
-    while not shutdown_requested:
-        try:
-            perform_self_healing()
-        except Exception as e:
-            logger.error(f"Error in self-healing routine: {e}")
-        for _ in range(60):
-            if shutdown_requested:
-                break
-            time.sleep(1)
+# Background self-healing loop has been retired and replaced by deterministic JIT purges at job execution and worker startup.
 
 def main_loop():
     # Enforce single instance lock first
@@ -944,30 +879,18 @@ def main_loop():
     # Register signal handling for graceful shutdown
     register_signals()
 
-    # R4. Worker Startup Docker Reconciliation
-    logger.info("Executing startup Docker reconciliation to clean up any orphan/zombie containers...")
+    # R4. Worker Startup Docker & Process Reconciliation
+    logger.info("Executing startup JIT Docker and process reconciliation to clean up any orphan/zombie state...")
     try:
-        res = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=15
-        )
-        if res.returncode == 0:
-            containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
-            for container in containers:
-                if container.startswith("cluster-job-") or container.startswith("cluster-viewer-"):
-                    logger.info(f"Purging orphan startup container: {container}")
-                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
+        purge_orphan_runners_and_containers()
     except Exception as e:
-        logger.error(f"Failed to perform startup Docker reconciliation: {e}")
+        logger.error(f"Failed to perform startup reconciliation: {e}")
 
     # Start webhook server in background thread
     threading.Thread(target=start_webhook_server, daemon=True).start()
     
     # Start heartbeat in background thread
     threading.Thread(target=heartbeat_loop, daemon=True).start()
-    
-    # Start autonomous self-healing periodic daemon in background thread
-    threading.Thread(target=self_healing_loop, daemon=True).start()
 
     # Wait for the first heartbeat to be processed before polling for jobs
     if not startup_heartbeat_event.wait(timeout=300):
