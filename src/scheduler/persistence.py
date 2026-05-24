@@ -8,7 +8,9 @@ def get_db_path():
 DB_PATH = get_db_path()
 
 def init_db():
-    conn = sqlite3.connect(get_db_path())
+    conn = sqlite3.connect(get_db_path(), timeout=10.0)
+    conn.execute('pragma journal_mode=wal')
+    conn.execute('pragma synchronous=normal')
     cursor = conn.cursor()
 
     # Workers Table

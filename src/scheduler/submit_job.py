@@ -177,16 +177,24 @@ def wait_for_job(headnode_url, job_id):
     def signal_handler(sig, frame):
         worker_url = None
         cancel_error = None
+        
+        # 1. Network calls first in isolated try-except blocks, before ANY print()
         try:
             resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
             job = resp.json()
             worker_url = job.get('worker_service_url')
+        except Exception as e:
+            cancel_error = e
 
-            if worker_url:
+        if worker_url:
+            try:
                 requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
+            except Exception as e:
+                if not cancel_error:
+                    cancel_error = e
 
-            # Mark job as failed/cancelled on headnode
+        try:
             token = os.environ.get("CLUSTER_TOKEN")
             headers = {"Authorization": f"Bearer {token}"} if token else {}
             requests.post(f"{headnode_url}/update_job_status", json={
@@ -194,10 +202,11 @@ def wait_for_job(headnode_url, job_id):
                 "status": "failed",
                 "exit_code": -signal.SIGTERM
             }, headers=headers, timeout=10)
-
         except Exception as e:
-            cancel_error = e
+            if not cancel_error:
+                cancel_error = e
 
+        # 2. Print statements wrapped in try...except BrokenPipeError
         try:
             print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating cancellation...")
             if cancel_error:
@@ -208,6 +217,8 @@ def wait_for_job(headnode_url, job_id):
                     print("✅ Cancellation signal sent.")
                 else:
                     print("⚠️ Job was not yet assigned to a worker or worker info missing.")
+        except BrokenPipeError:
+            pass
         except Exception:
             pass
 

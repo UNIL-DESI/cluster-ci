@@ -1306,9 +1306,16 @@ def api_artifact_history(repo):
 
     return jsonify(history)
 
-if __name__ == '__main__':
-    init_db()
-    # Start cleanup thread
+# Start background threads at import/WSGI startup (so it works under Gunicorn/uWSGI as well)
+# We protect it to only run once in Werkzeug's reloader if debug is enabled.
+if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    try:
+        init_db()
+    except Exception as e:
+        print(f"Error initializing DB at startup: {e}")
+    
     threading.Thread(target=cleanup_inactive_viewers, daemon=True).start()
     threading.Thread(target=periodic_clean_ghosts, daemon=True).start()
+
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
