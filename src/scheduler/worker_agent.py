@@ -715,7 +715,31 @@ def drain_request():
 def start_webhook_server():
     app.run(host='0.0.0.0', port=AGENT_PORT)
 
+def enforce_single_instance():
+    """Scan all running processes on the host and kill any other active worker_agent.py process."""
+    current_pid = os.getpid()
+    logger.info(f"Enforcing single instance of worker_agent.py (Current PID: {current_pid})...")
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            pid = proc.info.get('pid')
+            if pid == current_pid:
+                continue
+            cmdline = proc.info.get('cmdline') or []
+            cmdline_str = " ".join(cmdline)
+            # Match any python execution running worker_agent.py
+            if "worker_agent.py" in cmdline_str:
+                logger.warning(f"Found duplicate/stale worker_agent.py process (PID: {pid}, cmdline: {cmdline}). Force killing it...")
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
 def main_loop():
+    # Enforce single instance first to auto-heal duplicate processes
+    try:
+        enforce_single_instance()
+    except Exception as e:
+        logger.error(f"Failed to enforce single instance: {e}")
+
     # R4. Worker Startup Docker Reconciliation
     logger.info("Executing startup Docker reconciliation to clean up any orphan/zombie containers...")
     try:
