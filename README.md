@@ -103,6 +103,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 | [Architecture Index](docs/index_architecture.md) | Architecture specifications and design notes |
 | [Dashboard Index](docs/index_dashboard.md) | Spécifications du dashboard de monitoring premium et de l'explorateur d'artefacts bidirectionnel |
 | [Pre-flight Index](docs/index_preflight.md) | Validation scanner and pre-commit logic |
+| [Scheduler Index](docs/index_scheduler.md) | Résilience, chaos-engineering et robustesse du scheduler |
 | [Security Index](docs/index_security.md) | Sécurité, analyses de risques et failles connues |
 | [Tasks Index](docs/index_tasks.md) | Index des spécifications et suivi des tâches de développement |
 | [vLLM Index](docs/index_vllm.md) | Technical resolution of C++ ABI incompatibilities under NVIDIA NGC PyTorch containers |
