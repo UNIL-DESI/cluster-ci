@@ -369,9 +369,59 @@ def stream_logs(run_id, commit_sha):
         sys.stdout.flush()
         time.sleep(3)
 
+def check_gitattributes_safety():
+    """Verify that .gitattributes is safe and doesn't corrupt binary files."""
+    if not os.path.exists(".gitattributes"):
+        return
+
+    try:
+        with open(".gitattributes", "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+
+        has_global_text = False
+        declared_binaries = set()
+
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Check if global text normalization is active
+            if re.match(r"^\*\s+text(\s+|$|=)", line):
+                has_global_text = True
+            
+            # Check for binary file extensions declared
+            match = re.match(r"^([\w\.\*\-\?]+)\s+(binary|-text)", line)
+            if match:
+                pattern = match.group(1)
+                # Normalize extension (e.g. *.png -> .png)
+                ext = pattern.replace("*", "")
+                declared_binaries.add(ext)
+
+        if has_global_text:
+            critical_extensions = {".png", ".jpg", ".jpeg", ".gif", ".npy", ".pkl", ".cluster", ".pt"}
+            missing_extensions = critical_extensions - declared_binaries
+            
+            if missing_extensions:
+                print("⚠️  [SAFETY WARNING] Global text normalization is enabled in .gitattributes (* text),")
+                print("   but the following critical binary file extensions are NOT protected:")
+                print(f"   {', '.join(sorted(missing_extensions))}")
+                print("   This will corrupt these files during automatic Git synchronization from the cluster!")
+                print("   Fixing .gitattributes automatically...")
+                
+                # Append missing protections to .gitattributes
+                with open(".gitattributes", "a", encoding="utf-8") as f:
+                    f.write("\n# Added automatically by cluster-run to prevent binary file corruption under global text normalization\n")
+                    for ext in sorted(missing_extensions):
+                        f.write(f"*{ext} binary\n")
+                
+                print("✅ .gitattributes updated with safety locks for binary files.")
+    except Exception as e:
+        print(f"⚠️  Could not verify .gitattributes safety: {e}")
+
 def shadow_run(background=False):
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
+    check_gitattributes_safety()
     check_gh_auth()
     user = get_current_user()
     BRANCH = f"cluster-draft/{user}"
