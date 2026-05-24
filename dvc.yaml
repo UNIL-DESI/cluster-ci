@@ -1,9 +1,13 @@
 stages:
   research:
     cmd: python3 simulate_research.py
+    always_changed: true
     deps:
       - simulate_research.py
     outs:
       - artifacts/data.csv
       - artifacts/metrics.json
       - artifacts/plot.png
+      - artifacts/random_table.csv
+      - artifacts/random_plot.png
+

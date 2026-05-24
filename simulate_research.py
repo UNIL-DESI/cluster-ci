@@ -3,6 +3,7 @@ import json
 import csv
 import os
 import base64
+import random
 
 print("🚀 Starting simulated research pipeline...")
 
@@ -44,5 +45,19 @@ png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEh
 with open("artifacts/plot.png", "wb") as f:
     f.write(base64.b64decode(png_b64))
 
+print("📊 Step 5: Generating random metrics table (CSV)...")
+with open("artifacts/random_table.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["epoch", "loss", "accuracy"])
+    for epoch in range(1, 11):
+        loss = round(random.uniform(0.01, 0.5), 4)
+        accuracy = round(random.uniform(0.7, 0.99), 4)
+        writer.writerow([epoch, loss, accuracy])
+
+print("🖼️ Step 6: Generating random plot (PNG with random bytes appended)...")
+with open("artifacts/random_plot.png", "wb") as f:
+    f.write(base64.b64decode(png_b64) + os.urandom(16))
+
 print("✅ Research pipeline completed successfully! Artifacts written to artifacts/")
-# Force DVC rerun: 1
+# Force DVC rerun: 2
+
