@@ -424,14 +424,14 @@ def clean_ghosts():
     """Cleans up ghost jobs (jobs that are pending in DB but their GH workflow is completed/cancelled)"""
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status = 'pending' AND gh_run_id IS NOT NULL")
-        pending_jobs = cursor.fetchall()
+        cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND gh_run_id IS NOT NULL")
+        ghost_candidate_jobs = cursor.fetchall()
         
         cleaned = 0
         gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
         headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
         
-        for job in pending_jobs:
+        for job in ghost_candidate_jobs:
             url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
             try:
                 resp = requests.get(url, headers=headers, timeout=5)
