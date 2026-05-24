@@ -220,6 +220,8 @@ def wait_for_job(headnode_url, job_id):
     status_printed = False
     oom_detected = False
     last_queue_check = 0
+    last_status = None
+    last_queue_diagnostic = None
 
     while True:
         try:
@@ -255,27 +257,28 @@ def wait_for_job(headnode_url, job_id):
                             # Filter compatible workers physically capable of running the job
                             compatible_workers = [w for w in online_workers if (w["total_ram_gb"] - 2.0) >= ram_required]
                             
-                            # Format details
-                            print("\n" + "═"*55)
-                            print(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
+                            # Build diagnostic lines
+                            diag_lines = []
+                            diag_lines.append("═"*55)
+                            diag_lines.append(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
                             if own_position != -1:
-                                print(f"   👉 Position dans la file : {own_position} / {len(queue)}")
+                                diag_lines.append(f"   👉 Position dans la file : {own_position} / {len(queue)}")
                             else:
-                                print(f"   👉 Position dans la file : En cours d'analyse par le scheduler...")
+                                diag_lines.append(f"   👉 Position dans la file : En cours d'analyse par le scheduler...")
                             
                             # Diagnostic if RAM required exceeds maximum physical capacity in the cluster
                             if online_workers and ram_required > (max_ram - 2.0):
-                                print(f"   ⚠️  CRITIQUE : Votre tâche demande {ram_required:.1f} GB de RAM.")
-                                print(f"      Mais la capacité maximale des machines en ligne (moins 2GB de marge OS) est de {max_ram - 2.0:.1f} GB.")
-                                print(f"      Ce job ne pourra JAMAIS démarrer ! Veuillez baisser REQUIRED_RAM dans .cluster-ci.")
+                                diag_lines.append(f"   ⚠️  CRITIQUE : Votre tâche demande {ram_required:.1f} GB de RAM.")
+                                diag_lines.append(f"      Mais la capacité maximale des machines en ligne (moins 2GB de marge OS) est de {max_ram - 2.0:.1f} GB.")
+                                diag_lines.append(f"      Ce job ne pourra JAMAIS démarrer ! Veuillez baisser REQUIRED_RAM dans .cluster-ci.")
                             elif online_workers and not compatible_workers:
-                                print(f"   ⚠️  ATTENTE : Aucune machine actuellement en ligne ne dispose d'assez de RAM physique ({ram_required:.1f} GB requis).")
-                                print(f"      En attente qu'un worker avec une capacité suffisante vienne s'enregistrer.")
+                                diag_lines.append(f"   ⚠️  ATTENTE : Aucune machine actuellement en ligne ne dispose d'assez de RAM physique ({ram_required:.1f} GB requis).")
+                                diag_lines.append(f"      En attente qu'un worker avec une capacité suffisante vienne s'enregistrer.")
                             elif online_workers and compatible_workers:
                                 # Check if all compatible workers are busy
                                 all_busy = all([w.get("active_job") is not None for w in compatible_workers])
                                 if all_busy:
-                                    print(f"   ⚠️  ATTENTE : Toutes les machines compatibles avec vos besoins en RAM ({ram_required:.1f} GB) sont occupées.")
+                                    diag_lines.append(f"   ⚠️  ATTENTE : Toutes les machines compatibles avec vos besoins en RAM ({ram_required:.1f} GB) sont occupées.")
                                     
                                     # Calculate remaining times
                                     remaining_times = []
@@ -306,14 +309,14 @@ def wait_for_job(headnode_url, job_id):
                                                 time_str = f"{int(rem_hours)}h {int(rem_mins)}m"
                                             else:
                                                 time_str = f"{int(rem_mins)}m {int(rem_secs)}s"
-                                            print(f"      👉 Temps d'attente maximum estimé : ~{time_str} (dès que le premier worker compatible se libère)")
+                                            diag_lines.append(f"      👉 Temps d'attente maximum estimé : ~{time_str} (dès que le premier worker compatible se libère)")
                                         else:
-                                            print(f"      👉 Temps d'attente : Estimé après libération et traitement de {own_position - 1} job(s) devant vous.")
+                                            diag_lines.append(f"      👉 Temps d'attente : Estimé après libération et traitement de {own_position - 1} job(s) devant vous.")
                             
                             # Current running jobs details on each machine
-                            print("\n   🖥️  Statut des machines du cluster :")
+                            diag_lines.append("   🖥️  Statut des machines du cluster :")
                             if not online_workers:
-                                print("      ❌ Aucune machine n'est actuellement en ligne ou active.")
+                                diag_lines.append("      ❌ Aucune machine n'est actuellement en ligne ou active.")
                             else:
                                 for w in online_workers:
                                     active_job = w.get("active_job")
@@ -355,24 +358,30 @@ def wait_for_job(headnode_url, job_id):
                                             except Exception:
                                                 pass
                                                 
-                                        print(f"      ● Machine {w['hostname']} ({comp_str}) : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] par [{active_job['username']}] (depuis {duration_str}, reste au max {remaining_str} | utilise {active_job['ram_required_gb']:.1f} GB)")
+                                        diag_lines.append(f"      ● Machine {w['hostname']} ({comp_str}) : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] par [{active_job['username']}] (depuis {duration_str}, reste au max {remaining_str} | utilise {active_job['ram_required_gb']:.1f} GB)")
                                     else:
-                                        print(f"      ○ Machine {w['hostname']} ({comp_str}) : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
+                                        diag_lines.append(f"      ○ Machine {w['hostname']} ({comp_str}) : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
                                         
                             # Waiting queue list
                             if len(queue) > 1:
-                                print("\n   📋 Jobs en attente devant vous :")
+                                diag_lines.append("   📋 Jobs en attente devant vous :")
                                 count = 0
                                 for q_job in queue:
                                     if q_job["job_id"] == job_id:
                                         break
                                     count += 1
                                     if count <= 3:
-                                        print(f"      #{count} : Job [{q_job['repo'].split('/')[-1]}] par [{q_job['username']}] (demande {q_job['ram_required_gb']:.1f} GB)")
+                                        diag_lines.append(f"      #{count} : Job [{q_job['repo'].split('/')[-1]}] par [{q_job['username']}] (demande {q_job['ram_required_gb']:.1f} GB)")
                                 if len(queue) - 1 > count:
-                                    print(f"      ... et {len(queue) - 1 - count} autre(s) job(s)")
+                                    diag_lines.append(f"      ... et {len(queue) - 1 - count} autre(s) job(s)")
                                     
-                            print("═"*55 + "\n")
+                            diag_lines.append("═"*55)
+                            
+                            diag_str = "\n".join(diag_lines) + "\n"
+                            if diag_str != last_queue_diagnostic:
+                                sys.stdout.write(diag_str)
+                                sys.stdout.flush()
+                                last_queue_diagnostic = diag_str
                     except Exception as e:
                         # Fallback silently to prevent blocking the execution loop
                         pass
@@ -426,9 +435,10 @@ def wait_for_job(headnode_url, job_id):
                     print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
                 return exit_code
 
-            if not status_printed:
-                sys.stdout.write(f"\rStatus: {status}... ")
+            if not status_printed and status != last_status:
+                sys.stdout.write(f"Status: {status}...\n")
                 sys.stdout.flush()
+                last_status = status
 
         except Exception as e:
             print(f"\n⚠️ Error checking status: {e}")
