@@ -6,7 +6,7 @@
 | [JIT GC](tasks/jit_gc.md) | LRU-based Garbage Collector for managing disk space. | 2026-05-05 | Infrastructure |
 | [Concurrency Management](tasks/concurrency_management.md) | Management of obsolete job cancellations. | 2026-05-05 | Infrastructure |
 | [Docker ARM Strategy](architecture/docker_arm_strategy.md) | Stratégie d'isolation hybride Golden Image + Dépendances Dynamiques sur workers ARM. | 2026-05-07 | Up to date |
-| [Zombie Prevention](architecture/zombie_prevention.md) | Stratégie d'éradication et de prévention des processus orphelins dvc-viewer. | 2026-05-21 | Up to date |
+| [Zombie Prevention](architecture/zombie_prevention.md) | Stratégie d'éradication et de prévention des processus orphelins dvc-viewer et conteneurs zombies (Issue #94). | 2026-05-24 | Up to date |
 
 ## Headnode/Worker Topology and Dynamic Scheduling
 
