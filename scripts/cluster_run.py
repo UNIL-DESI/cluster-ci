@@ -498,6 +498,25 @@ def shadow_run(background=False):
         print("✅ Cluster-CI run completed successfully.")
     else:
         print(f"❌ Cluster-CI run finished with status: {conclusion or 'unknown'}")
+    
+    fetch_results(BRANCH)
+
+def fetch_results(branch):
+    print(f"📥 Fetching results (dvc.lock, metrics) from cluster branch origin/{branch}...")
+    try:
+        subprocess.run(["git", "fetch", "origin", branch], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        res_log = subprocess.run(["git", "log", "-1", "--format=%B", "FETCH_HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if "auto-sync metrics and dvc.lock" in res_log.stdout:
+            res_files = subprocess.run(["git", "show", "--name-only", "--format=", "FETCH_HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            files_to_sync = [f.strip() for f in res_files.stdout.splitlines() if f.strip()]
+            if files_to_sync:
+                print(f"📦 Synchronizing {len(files_to_sync)} files from cluster: {', '.join(files_to_sync)}")
+                subprocess.run(["git", "checkout", "FETCH_HEAD", "--"] + files_to_sync, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("✅ Results successfully synchronized to your local workspace.")
+        else:
+            print("ℹ️ No synced metrics or dvc.lock found from cluster.")
+    except Exception as e:
+        print(f"⚠️ Could not retrieve results from cluster: {e}")
 
 def main():
     # Force standard output streams to use UTF-8 to prevent UnicodeEncodeError under Windows CMD/PowerShell
@@ -507,7 +526,7 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
-    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel"],
+    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync"],
                         help="Action to perform (default: submit a new shadow run)")
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view' or 'cancel'")
@@ -564,6 +583,12 @@ def main():
         subprocess.run(["gh", "run", "cancel", run_id])
         print(f"🧹 Deleting branch {branch}...")
         subprocess.run(["git", "push", "origin", "--delete", branch, "--quiet"])
+
+    elif args.command == "sync":
+        check_gh_auth()
+        user = get_current_user()
+        branch = f"cluster-draft/{user}"
+        fetch_results(branch)
 
     else:
         # Submit shadow run
