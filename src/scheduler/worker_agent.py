@@ -316,8 +316,10 @@ def execute_job(job):
         timeout_seconds = (max_runtime_hours * 3600) if max_runtime_hours else (24 * 3600)
 
         # Status monitoring loop
+        last_db_check = time.time()
         while process.poll() is None:
-            time.sleep(5)
+            time.sleep(2)
+            
             # 1. Watchdog: Check for timeout
             elapsed = time.time() - start_time
             if elapsed > timeout_seconds:
@@ -328,9 +330,77 @@ def execute_job(job):
 
                 # Inconditional destruction
                 safe_job_id = job_id.replace('/', '-')
-                subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True)
+                subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                
+                # Kill process tree on host
+                try:
+                    parent = psutil.Process(process.pid)
+                    for child in parent.children(recursive=True):
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                except psutil.NoSuchProcess:
+                    pass
+                
                 process.terminate()
                 break
+
+            # 2. Active Self-Healing Watchdog: check job status on headnode every 10 seconds
+            # to robustly detect cancellations from GitHub or Headnode DB even if Flask webhook fails.
+            if time.time() - last_db_check > 10:
+                last_db_check = time.time()
+                try:
+                    resp = requests.get(f"{HEADNODE_URL}/job_status/{job_id}", headers=get_headers(), timeout=5)
+                    if resp.status_code == 200:
+                        job_db = resp.json()
+                        db_status = job_db.get("status")
+                        if db_status not in ["running", "assigned"]:
+                            logger.warning(f"⚠️ [SELF-HEALING] Active job {job_id} is marked as '{db_status}' in Headnode DB. Initiating instant local physical destruction!")
+                            
+                            # Physical destruction
+                            safe_job_id = job_id.replace('/', '-')
+                            subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                            
+                            # Kill process tree on host
+                            try:
+                                parent = psutil.Process(process.pid)
+                                for child in parent.children(recursive=True):
+                                    try:
+                                        child.kill()
+                                    except psutil.NoSuchProcess:
+                                        pass
+                                parent.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                                
+                            purge_ollama_vram_on_host()
+                            kill_dvc_viewer_processes()
+                            break
+                    elif resp.status_code == 404:
+                        logger.warning(f"⚠️ [SELF-HEALING] Active job {job_id} not found in Headnode DB. Initiating instant local physical destruction!")
+                        # Physical destruction
+                        safe_job_id = job_id.replace('/', '-')
+                        subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                        
+                        # Kill process tree on host
+                        try:
+                            parent = psutil.Process(process.pid)
+                            for child in parent.children(recursive=True):
+                                try:
+                                    child.kill()
+                                except psutil.NoSuchProcess:
+                                    pass
+                            parent.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                            
+                        purge_ollama_vram_on_host()
+                        kill_dvc_viewer_processes()
+                        break
+                except Exception as e:
+                    logger.error(f"[SELF-HEALING] Failed to check job status on headnode: {e}")
 
             # Try to report dynamic viewer port if not already done
             if not port_reported:
@@ -344,8 +414,6 @@ def execute_job(job):
                         port_reported = True
                     except Exception as e:
                         logger.error(f"Failed to read/report viewer port: {e}")
-
-            time.sleep(2)
 
         exit_code = process.wait()
         streamer_thread.join(timeout=10)
@@ -483,58 +551,47 @@ def cancel_job(job_id):
     logger.info(f"Received cancellation request for job {job_id}")
 
     safe_job_id = job_id.replace('/', '-')
-    # Strict Docker Purge (Isolation & Clean Kill)
-    logger.info(f"Forcing destruction of containers for job {job_id}")
-    res = subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"],
-                         capture_output=True, text=True)
     
-    # Proactively purge host Ollama VRAM to instantly free Blackwell GPU physical memory
-    purge_ollama_vram_on_host()
-    
-    kill_dvc_viewer_processes()
-
+    # 1. Acquire job lock and kill host process tree instantly to stop further job execution
+    process_killed = False
     with job_lock:
         if current_job_id == job_id and current_process:
-            logger.info(f"Cancelling job {job_id}: killing Docker containers and process tree")
+            logger.info(f"Cancelling job {job_id}: killing runner process tree first")
             try:
-                # 1. Force-remove Docker containers (primary kill mechanism)
-                # The containers follow the naming convention from run_research_pipeline.sh
-                safe_job_id = job_id.replace('/', '-')
-                for prefix in ["cluster-job-", "cluster-viewer-"]:
-                    container_name = f"{prefix}{safe_job_id}"
-                    logger.info(f"Force-removing container: {container_name}")
-                    subprocess.run(
-                        ["docker", "rm", "-f", container_name],
-                        capture_output=True, timeout=10
-                    )
-
-                # 2. Kill process tree on host (belt-and-suspenders)
-                try:
-                    parent = psutil.Process(current_process.pid)
-                    for child in parent.children(recursive=True):
-                        try:
-                            child.kill()
-                        except psutil.NoSuchProcess:
-                            pass
-                    parent.kill()
-                except psutil.NoSuchProcess:
-                    pass
-
-                # 3. Proactively update job status on headnode
-                # execute_job() will also update on process exit, but we do it
-                # here immediately so the DB is consistent even if cleanup is slow.
-                update_job_status(job_id, 'failed', exit_code=-15)
-
-                return jsonify({"status": "cancelled", "message": "Docker containers removed and process tree killed"}), 200
+                parent = psutil.Process(current_process.pid)
+                for child in parent.children(recursive=True):
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                parent.kill()
+                process_killed = True
+            except psutil.NoSuchProcess:
+                process_killed = True
             except Exception as e:
-                logger.error(f"Error while cancelling job: {e}")
-                # Still try to mark the job as failed even if cleanup had errors
-                update_job_status(job_id, 'failed', exit_code=-15)
-                return jsonify({"status": "error", "message": str(e)}), 500
-        else:
-            if res.returncode == 0:
-                return jsonify({"status": "not_found", "message": "Job not active on this worker and no containers found"}), 404
-            return jsonify({"status": "not_found", "message": "Job not active on this worker"}), 404
+                logger.error(f"Failed to kill runner process tree: {e}")
+
+    # 2. Strict Docker Purge (Isolation & Clean Kill)
+    logger.info(f"Forcing immediate destruction of Docker containers for job {job_id}")
+    res = subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"],
+                         capture_output=True, text=True, timeout=10)
+    
+    # 3. Proactively purge host Ollama VRAM to instantly free Blackwell GPU physical memory
+    purge_ollama_vram_on_host()
+    
+    # 4. Cleanup other viewers/processes
+    kill_dvc_viewer_processes()
+
+    # 5. Proactively update job status on headnode so DB is consistent immediately
+    try:
+        update_job_status(job_id, 'failed', exit_code=-15)
+    except Exception as e:
+        logger.error(f"Failed to update job status on headnode during cancellation: {e}")
+
+    if process_killed or res.returncode == 0:
+        return jsonify({"status": "cancelled", "message": "Runner process tree killed, Docker containers removed, and VRAM purged"}), 200
+    else:
+        return jsonify({"status": "not_found", "message": "Job not active on this worker and no containers found"}), 404
 
 @app.route('/job_logs/<job_id>', methods=['GET'])
 def get_job_logs(job_id):
