@@ -1,0 +1,162 @@
+CONNECTED TO WORKER: 130.223.170.123
+
+
+==================================================
+COMMAND: ps aux | grep -E 'python|worker_agent|cluster-ci'
+==================================================
+henri       8414  0.0  0.0  20848  3048 ?        S    11:58   0:00 /bin/bash /usr/local/bin/cluster-ci-run UNIL-DESI/llm-as-recommender cluster-draft/hjamet
+henri       9144  0.0  0.0 2144388 28972 ?       Sl   11:58   0:00 docker run --rm --name cluster-viewer-d19e0e64-992b-4f18-a05d-40f70eb48247 --label cluster-ci-job=d19e0e64-992b-4f18-a05d-40f70eb48247 --label cluster-ci-repo=UNIL-DESI/llm-as-recommender --entrypoint  -v /home/henri/cluster-ci/repositories/UNIL-DESI/llm-as-recommender:/workspace -w /workspace -v cluster-ci-home-UNIL-DESI-llm-as-recommender:/home/user -p 0.0.0.0:36217:36217 --ipc=host --user 1002:1002 -e HOME=/home/user -e CLUSTER_CI_MODE=executor --env-file /tmp/job_secrets_d19e0e64-992b-4f18-a05d-40f70eb48247_lz3_f3ei.env nvcr.io/nvidia/pytorch:26.04-py3 bash -c export PATH=/home/user/shims:$PATH:/home/user/.local/bin && dvc-viewer --port 36217
+henri       9250  0.2  0.0 171996 62300 ?        Ssl  11:58   0:02 /home/user/.local/share/uv/tools/dvc-viewer/bin/python3 /home/user/.local/bin/dvc-viewer --port 36217
+henri       9490  0.0  0.0  20716  3008 ?        S    11:58   0:00 bash /home/henri/cluster-ci/src/runner/dvc_watchdog.sh cluster-job-d19e0e64-992b-4f18-a05d-40f70eb48247
+henri       9494  0.0  0.0  20848  1924 ?        S    11:58   0:00 /bin/bash /usr/local/bin/cluster-ci-run UNIL-DESI/llm-as-recommender cluster-draft/hjamet
+henri       9496  0.0  0.0 2070852 28260 ?       Sl   11:58   0:00 docker exec -e HEADNODE_URL=http://130.223.73.209:5000 -e CLUSTER_CI_MODE=executor -e CLUSTER_CI_GPU_REQUIRED= cluster-job-d19e0e64-992b-4f18-a05d-40f70eb48247 bash -c export PATH=/home/user/shims:$PATH:/home/user/.local/bin && bash /cluster-ci/src/runner/smart_install.sh && dvc repro step_profile_inference_sweet_spot
+henri       9518  0.0  0.0 153204 67844 ?        Ssl  11:58   0:00 /usr/bin/python /home/user/.local/bin/dvc repro step_profile_inference_sweet_spot
+henri       9591  2.3  0.9 20084296 1242528 ?    Sl   11:58   0:20 python3 scripts/profile_inference_sweet_spot.py --models gemma4:e2b gemma4:e4b gemma4:26b gemma4:31b --users_sample 20
+henri      14966  0.0  0.0  20716  3060 ?        Ss   12:13   0:00 bash -c ps aux | grep -E 'python|worker_agent|cluster-ci'
+henri      14968  0.0  0.0  19944  1848 ?        S    12:13   0:00 grep -E python|worker_agent|cluster-ci
+henri    4161542  0.2  0.0 434204 30660 ?        Ssl  May24   2:00 /home/henri/cluster-ci/.venv/bin/python3 /home/henri/cluster-ci/src/scheduler/worker_agent.py
+
+
+==================================================
+COMMAND: docker ps -a
+==================================================
+CONTAINER ID   IMAGE                              COMMAND                  CREATED          STATUS          PORTS                                          NAMES
+9bd96f6277f6   nvcr.io/nvidia/pytorch:26.04-py3   "bash -c 'export PAT…"   14 minutes ago   Up 14 minutes   6006/tcp, 8888/tcp, 0.0.0.0:36217->36217/tcp   cluster-viewer-d19e0e64-992b-4f18-a05d-40f70eb48247
+3b5fc96986d0   nvcr.io/nvidia/pytorch:26.04-py3   "tail -f /dev/null"      14 minutes ago   Up 14 minutes   6006/tcp, 8888/tcp                             cluster-job-d19e0e64-992b-4f18-a05d-40f70eb48247
+
+
+==================================================
+COMMAND: docker images
+==================================================
+IMAGE                                           ID             DISK USAGE   CONTENT SIZE   EXTRA
+nvcr.io/nvidia/l4t-pytorch:r35.2.1-pth2.0-py3   853b58c1dce6       11.7GB             0B        
+nvcr.io/nvidia/pytorch:24.04-py3                2002387a63f6       17.7GB             0B        
+nvcr.io/nvidia/pytorch:24.09-py3                4ea94fe522a1       16.9GB             0B        
+nvcr.io/nvidia/pytorch:25.06-py3                d69aac9f72f1       24.5GB             0B        
+nvcr.io/nvidia/pytorch:26.04-py3                48901b317c67       23.5GB             0B   U    
+quay.io/skopeo/stable:latest                    b6af00ca8066        235MB             0B        
+ubuntu:22.04                                    8bdde1d72146       69.6MB             0B        
+
+STDERR:
+WARNING: This output is designed for human readability. For machine-readable output, please use --format.
+
+
+==================================================
+COMMAND: sudo journalctl -u cluster-worker -n 100 --no-pager
+==================================================
+May 25 12:10:04 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:04] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:06 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:06] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:08 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:08] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:10 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:10] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:12 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:12] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:14 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:14] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:16 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:16] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:18 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:18] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:20 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:20] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:22 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:22] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:24 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:24] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:26 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:26] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:28 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:28] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:30 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:30] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:32 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:32] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:34 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:34] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:36 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:36] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:38 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:38] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:40 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:40] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:42 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:42] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:44 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:44] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:46 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:46] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:48 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:48] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:50 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:50] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:52 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:52] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:54 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:54] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:56 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:56] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:10:58 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:10:58] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:01 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:01] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:03 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:03] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:05 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:05] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:07 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:07] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:09 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:09] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:11 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:11] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:13 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:13] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:15 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:15] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:17 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:17] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:19 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:19] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:21 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:21] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:23 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:23] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:25 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:25] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:27 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:27] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:29 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:29] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:31 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:31] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:33 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:33] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:35 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:35] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:37 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:37] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:39 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:39] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:41 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:41] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:43 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:43] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:45 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:45] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:47 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:47] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:49 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:49] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:51 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:51] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:53 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:53] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:55 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:55] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:57 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:57] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:11:59 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:11:59] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:01 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:01] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:03 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:03] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:05 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:05] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:07 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:07] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:09 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:09] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:11 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:11] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:13 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:13] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:15 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:15] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:17 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:17] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:19 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:19] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:21 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:21] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:23 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:23] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:25 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:25] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:27 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:27] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:29 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:29] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:31 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:31] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:33 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:33] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:35 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:35] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:37 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:37] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:39 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:39] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:41 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:41] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:43 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:43] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:45 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:45] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:47 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:47] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:49 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:49] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:51 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:51] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:53 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:53] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:55 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:55] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:57 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:57] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:12:59 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:12:59] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:01 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:01] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:03 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:03] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:05 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:05] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:07 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:07] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:09 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:09] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:11 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:11] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:13 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:13] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:15 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:15] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:17 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:17] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:19 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:19] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:21 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:21] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+May 25 12:13:23 HEC45801 python3[4161542]: INFO:werkzeug:130.223.73.209 - - [25/May/2026 12:13:23] "GET /job_logs/710c241d-915f-4d37-a9ee-eafa3ad45768?offset=0 HTTP/1.1" 200 -
+
+STDERR:
+[sudo] password for henri: 
+
+==================================================
+COMMAND: ls -la ~/repositories/registry.json
+==================================================
+STDERR:
+ls: cannot access '/home/henri/repositories/registry.json': No such file or directory
+
+
+==================================================
+COMMAND: find ~/repositories -maxdepth 2
+==================================================
+STDERR:
+find: ‘/home/henri/repositories’: No such file or directory

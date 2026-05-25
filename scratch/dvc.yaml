@@ -1,0 +1,11 @@
+﻿stages:
+  build:
+    cmd: echo build > build.txt
+    outs:
+      - build.txt
+  test:
+    cmd: echo test > test.txt
+    deps:
+      - build.txt
+    outs:
+      - test.txt
