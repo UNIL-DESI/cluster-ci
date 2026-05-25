@@ -48,13 +48,29 @@ sequenceDiagram
 *   **Fail-Fast API Guard**: In accordance with the `no_fallback` doctrine, if the GitHub API encounters a `403 Forbidden` (rate limit exhaustion), the scheduler raises a `RuntimeError` immediately to prevent silent degradation of the monitoring thread.
 
 ### 2.2 Worker Purge Protocol
-The worker agent (`worker_agent.py`) integrates an active REST client targeting the local Ollama runtime to bypass OS-level socket deadlocks:
-1. **Model Discovery**: Queries `GET http://127.0.0.1:11434/api/ps` to identify models currently allocating GPU memory pages.
-2. **Instant Release**: For each discovered model, dispatches a `POST http://127.0.0.1:11434/api/generate` with parameter `{"model": name, "keep_alive": 0}` (or `"0s"`), forcing Ollama to release 100% of GPU hardware contexts within milliseconds.
-3. **Execution Anchors**: This purge sequence is anchored as a mandatory stage in:
-    *   **JIT Pre-flight Purge**: Before spawning new container runtimes.
-    *   **Cancellation Webhook**: Triggered immediately upon receiving `/cancel/<job_id>`.
-    *   **Systemd Shutdown Hook**: Executed on worker agent SIGTERM signals to ensure absolute clean states.
+The worker agent (`worker_agent.py`) implements a high-reliability, multi-tiered eradication strategy to bypass Docker daemon locks and OS-level deadlocks:
+
+1. **Host-Level Process Tree Eradication (Host PID SIGKILL)**: 
+   To prevent Docker command lockups caused by frozen GPU CUDA context operations inside a container, the worker agent extracts the container's physical host process ID using `docker inspect --format "{{.State.Pid}}"`. It then traverses and forcefully kills the entire host-level process hierarchy (parent and all recursive descendants) using a direct `SIGKILL` at the Linux kernel level. This instantly frees hardware allocations, allowing subsequent `docker rm -f` commands to execute in less than 100 milliseconds.
+   
+2. **Safe Docker Purge Utility (`safe_docker_rm_f`)**:
+   A robust helper wrapper encapsulating host-level PID eradication combined with a strict timeout-bounded `docker rm -f` execution wrapped in a `try...except` block. This prevents any raw `subprocess` timeout exceptions from crashing the agent's threads or watchdogs during heavy GPU resource releases.
+
+3. **Asynchronous Non-Blocking Cancellation**:
+   The `/cancel/<job_id>` webhook operates in a completely non-blocking fashion. It instantly acquires the job lock, clears the active worker tracking states (`current_job_id` and `current_process` are reset to `None` in less than 10ms to immediately declare the worker idle), and spawns a background daemon thread (`_async_job_cleanup`) to perform:
+   * Runner host process tree termination.
+   * `safe_docker_rm_f` container removals.
+   * Host-level Ollama VRAM purging.
+   * Dynamic viewer/viewer process termination.
+   * Proactive headnode status updates.
+
+4. **Model Discovery & VRAM Purge**: 
+   Queries `GET http://127.0.0.1:11434/api/ps` to identify models currently allocating GPU memory pages. For each discovered model, dispatches a `POST http://127.0.0.1:11434/api/generate` with parameter `{"model": name, "keep_alive": 0}` (or `"0s"`), forcing Ollama to release 100% of GPU hardware contexts within milliseconds.
+
+5. **Execution Anchors**: This purge sequence is anchored as a mandatory stage in:
+   * **JIT Pre-flight Purge**: Before spawning new container runtimes.
+   * **Cancellation Webhook**: Triggered immediately upon receiving `/cancel/<job_id>`.
+   * **Systemd Shutdown Hook**: Executed on worker agent SIGTERM signals to ensure absolute clean states.
 
 ---
 
