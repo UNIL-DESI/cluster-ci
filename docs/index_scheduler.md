@@ -6,3 +6,4 @@ Cet index regroupe l'ensemble des notes techniques, guides d'architecture, et do
 |------------------|-------------------|----------------|-----|
 | [Résilience et Chaos Testing](scheduler/resilience_and_chaos_testing.md) | Analyse des blocages historiques (SQLite deadlocks, Broken Pipes) et guide d'exécution du framework de stress-test. | 2026-05-24 | `Up to date` |
 | [Réconciliation des ressources physiques et purge de la VRAM Ollama](scheduler/physical_resource_reconciliation.md) | Détails de la propagation réactive des annulations et de la purge active de la VRAM d'Ollama sur le host pour libérer le GPU en <5s. | 2026-05-25 | `Up to date` |
+| [Protocole de Déploiement et d'Auto-Mise à jour Transparente](scheduler/deployment_and_reconciliation_protocol.md) | Guide pas-à-pas et évaluation des risques pour mettre à jour à chaud le scheduler et les workers en production sans interrompre le benchmark en cours. | 2026-05-25 | `Up to date` |
