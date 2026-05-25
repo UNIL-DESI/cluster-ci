@@ -30,6 +30,51 @@ def get_headers():
         headers["Authorization"] = f"Bearer {CLUSTER_TOKEN}"
     return headers
 
+def kill_container_processes_on_host(container_name):
+    """Inspects the given container's host PID, and forcefully SIGKILLs all processes within its namespace directly on the host."""
+    try:
+        res = subprocess.run(["docker", "inspect", "--format", "{{.State.Pid}}", container_name],
+                             capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            pid = int(res.stdout.strip())
+            if pid > 0:
+                logger.info(f"🎯 Host-level eradication: Killing all processes in container {container_name} (Host PID: {pid})")
+                try:
+                    parent = psutil.Process(pid)
+                    for child in parent.children(recursive=True):
+                        try:
+                            child.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+                    parent.kill()
+                    logger.info(f"✅ Successfully killed host process tree of container {container_name}")
+                except psutil.NoSuchProcess:
+                    pass
+    except Exception as e:
+        logger.error(f"Error executing host-level container process eradication for {container_name}: {e}")
+
+def safe_docker_rm_f(container_names, timeout=8):
+    """Safely and robustly removes docker containers by first killing their host process tree,
+    then running docker rm -f under a try-except block with a timeout to prevent Docker daemon lockups.
+    """
+    if isinstance(container_names, str):
+        container_names = [container_names]
+    
+    for container in container_names:
+        logger.info(f"🛡️ Safe Docker Purge: Removing container {container}...")
+        # First try host-level PID eradication to avoid Docker lockups
+        kill_container_processes_on_host(container)
+        try:
+            res = subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=timeout)
+            if res.returncode == 0:
+                logger.info(f"✅ Successfully removed container {container}")
+            else:
+                logger.warning(f"Warning: docker rm -f {container} returned exit code {res.returncode}. Stderr: {res.stderr.decode(errors='replace') if isinstance(res.stderr, bytes) else res.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"❌ TimeoutExpired: docker rm -f {container} timed out after {timeout} seconds")
+        except Exception as e:
+            logger.error(f"❌ Error removing container {container}: {e}")
+
 def purge_orphan_runners_and_containers(job_id=None):
     """Performs JIT (Just-In-Time) purge of orphan docker containers and runner processes.
     
@@ -55,7 +100,7 @@ def purge_orphan_runners_and_containers(job_id=None):
             for container in containers:
                 if container not in expected_containers:
                     logger.warning(f"🔥 JIT Purge: Destroying orphan/zombie container {container}...")
-                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=10)
+                    safe_docker_rm_f(container, timeout=8)
         else:
             logger.error(f"JIT Purge: Failed to list docker containers: {res.stderr}")
     except Exception as e:
@@ -330,7 +375,7 @@ def execute_job(job):
 
                 # Inconditional destruction
                 safe_job_id = job_id.replace('/', '-')
-                subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
                 
                 # Kill process tree on host
                 try:
@@ -361,7 +406,7 @@ def execute_job(job):
                             
                             # Physical destruction
                             safe_job_id = job_id.replace('/', '-')
-                            subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                            safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
                             
                             # Kill process tree on host
                             try:
@@ -382,7 +427,7 @@ def execute_job(job):
                         logger.warning(f"⚠️ [SELF-HEALING] Active job {job_id} not found in Headnode DB. Initiating instant local physical destruction!")
                         # Physical destruction
                         safe_job_id = job_id.replace('/', '-')
-                        subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], capture_output=True, timeout=10)
+                        safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
                         
                         # Kill process tree on host
                         try:
@@ -545,6 +590,47 @@ app = Flask(__name__)
 
 REPOS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "repositories")
 
+def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
+    """Background thread function to clean up Docker containers, purge host Ollama VRAM,
+    terminate other viewer processes, and notify the headnode.
+    """
+    logger.info(f"🔄 [ASYNC CLEANUP] Starting background cleanup for job {job_id}")
+    
+    # 1. Kill host process tree of the runner process
+    if process_to_kill:
+        logger.info(f"🔄 [ASYNC CLEANUP] Killing runner process tree (PID: {process_to_kill.pid})")
+        try:
+            parent = psutil.Process(process_to_kill.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            parent.kill()
+            logger.info("✅ [ASYNC CLEANUP] Successfully killed runner process tree")
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.error(f"❌ [ASYNC CLEANUP] Failed to kill runner process tree: {e}")
+            
+    # 2. Safe Docker Purge (Eradication + rm)
+    safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+    
+    # 3. Purge host Ollama VRAM to instantly free Blackwell GPU physical memory
+    purge_ollama_vram_on_host()
+    
+    # 4. Cleanup other viewers/processes
+    kill_dvc_viewer_processes()
+    
+    # 5. Proactively update job status on headnode so DB is consistent immediately
+    try:
+        update_job_status(job_id, 'failed', exit_code=-15)
+        logger.info(f"✅ [ASYNC CLEANUP] Successfully notified headnode that job {job_id} failed (-15)")
+    except Exception as e:
+        logger.error(f"❌ [ASYNC CLEANUP] Failed to update job status on headnode during cancellation: {e}")
+        
+    logger.info(f"✅ [ASYNC CLEANUP] Background cleanup complete for job {job_id}")
+
 @app.route('/cancel/<job_id>', methods=['POST'])
 def cancel_job(job_id):
     global current_job_id, current_process
@@ -552,46 +638,56 @@ def cancel_job(job_id):
 
     safe_job_id = job_id.replace('/', '-')
     
-    # 1. Acquire job lock and kill host process tree instantly to stop further job execution
-    process_killed = False
+    # Check if this job is currently running on the worker
+    job_is_active = False
+    process_to_kill = None
+    
     with job_lock:
-        if current_job_id == job_id and current_process:
-            logger.info(f"Cancelling job {job_id}: killing runner process tree first")
-            try:
-                parent = psutil.Process(current_process.pid)
-                for child in parent.children(recursive=True):
-                    try:
-                        child.kill()
-                    except psutil.NoSuchProcess:
-                        pass
-                parent.kill()
-                process_killed = True
-            except psutil.NoSuchProcess:
-                process_killed = True
-            except Exception as e:
-                logger.error(f"Failed to kill runner process tree: {e}")
-
-    # 2. Strict Docker Purge (Isolation & Clean Kill)
-    logger.info(f"Forcing immediate destruction of Docker containers for job {job_id}")
-    res = subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"],
-                         capture_output=True, text=True, timeout=10)
+        if current_job_id == job_id:
+            job_is_active = True
+            process_to_kill = current_process
+            # Reset the current job trackers immediately so that the worker is considered free
+            current_job_id = None
+            current_process = None
+            
+    # We always launch the async cleanup thread because we also want to clean up any physical
+    # containers (e.g. cluster-job-{safe_job_id}) that might be lingering even if the worker
+    # doesn't think it is active, or to double check.
+    cleanup_thread = threading.Thread(
+        target=_async_job_cleanup,
+        args=(job_id, safe_job_id, process_to_kill),
+        daemon=True
+    )
+    cleanup_thread.start()
     
-    # 3. Proactively purge host Ollama VRAM to instantly free Blackwell GPU physical memory
-    purge_ollama_vram_on_host()
-    
-    # 4. Cleanup other viewers/processes
-    kill_dvc_viewer_processes()
-
-    # 5. Proactively update job status on headnode so DB is consistent immediately
-    try:
-        update_job_status(job_id, 'failed', exit_code=-15)
-    except Exception as e:
-        logger.error(f"Failed to update job status on headnode during cancellation: {e}")
-
-    if process_killed or res.returncode == 0:
-        return jsonify({"status": "cancelled", "message": "Runner process tree killed, Docker containers removed, and VRAM purged"}), 200
+    if job_is_active:
+        return jsonify({
+            "status": "cancelled",
+            "message": "Cancellation initiated. Runner process tree and containers are being destroyed asynchronously in less than 5s."
+        }), 200
     else:
-        return jsonify({"status": "not_found", "message": "Job not active on this worker and no containers found"}), 404
+        # Check if containers exist physically
+        containers_exist = False
+        try:
+            res = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_job_id}", "--filter", f"name=cluster-viewer-{safe_job_id}", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                containers_exist = True
+        except Exception:
+            pass
+            
+        if containers_exist:
+            return jsonify({
+                "status": "cancelled",
+                "message": "Job not active in runner but matching containers found. Cancellation initiated asynchronously."
+            }), 200
+        else:
+            return jsonify({
+                "status": "not_found",
+                "message": "Job not active on this worker and no matching containers found"
+            }), 404
 
 @app.route('/job_logs/<job_id>', methods=['GET'])
 def get_job_logs(job_id):
@@ -911,10 +1007,7 @@ def cleanup_active_jobs_and_containers():
         if current_job_id:
             logger.warning(f"🧹 Initiating forced cleanup for active job {current_job_id} due to shutdown request...")
             safe_job_id = current_job_id.replace('/', '-')
-            for prefix in ["cluster-job-", "cluster-viewer-"]:
-                container_name = f"{prefix}{safe_job_id}"
-                logger.info(f"Force-removing container {container_name} on shutdown...")
-                subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, timeout=10)
+            safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
             
             if current_process:
                 logger.info(f"Terminating local runner process (PID: {current_process.pid}) tree...")
