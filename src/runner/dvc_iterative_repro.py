@@ -146,7 +146,7 @@ def main():
             subprocess.run(["git", "config", "user.name", "cluster-ci"])
             subprocess.run(["git", "config", "user.email", "cluster-ci@cluster.local"])
             
-            commit_msg = f"cluster-ci: intermediate results for stage {stage}"
+            commit_msg = f"cluster-ci: intermediate results for stage {stage} [skip ci]"
             subprocess.run(["git", "commit", "-m", commit_msg])
             
             target_branch = os.environ.get("TARGET_BRANCH")
