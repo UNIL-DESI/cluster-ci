@@ -255,18 +255,26 @@ def submit_job():
             with get_db_conn() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT job_id, branch FROM jobs
+                    SELECT job_id, branch, username FROM jobs
                     WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
                 ''', (repo,))
                 active_jobs = cursor.fetchall()
                 for aj in active_jobs:
                     aj_branch = aj['branch'] or ''
-                    if is_draft:
-                        if aj_branch == branch:
-                            jobs_to_cancel.append(aj['job_id'])
-                    else:
-                        if not aj_branch.startswith("cluster-draft/"):
-                            jobs_to_cancel.append(aj['job_id'])
+                    aj_user = aj['username'] or ''
+                    
+                    # Target active job for immediate cancellation if:
+                    # - It's on the exact same branch (new push/commit on same branch)
+                    # - OR it's a draft branch belonging to the same user (e.g. cluster-draft/{user})
+                    # - OR the new job is not a draft and the active job is also not a draft (mainline pipeline replacement)
+                    if aj_branch == branch:
+                        jobs_to_cancel.append(aj['job_id'])
+                    elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
+                        jobs_to_cancel.append(aj['job_id'])
+                    elif aj_branch == f"cluster-draft/{username}":
+                        jobs_to_cancel.append(aj['job_id'])
+                    elif not is_draft and not aj_branch.startswith("cluster-draft/"):
+                        jobs_to_cancel.append(aj['job_id'])
         except Exception as e:
             app.logger.error(f"Error identifying active jobs to cancel: {e}")
 
@@ -438,6 +446,7 @@ def clean_ghosts():
         ghost_candidate_jobs = [dict(row) for row in cursor.fetchall()]
         
     cleaned = 0
+    errors = []
     gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
     headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
     
@@ -447,8 +456,10 @@ def clean_ghosts():
             resp = requests.get(url, headers=headers, timeout=5)
             # R2: Fail-Fast (No Silent Fallback) on rate limiting or auth errors to expose infrastructure issues immediately
             if resp.status_code == 403:
-                app.logger.error("❌ GitHub API returned 403 Forbidden. Rate limit exceeded or invalid GH_TOKEN/GITHUB_PAT.")
-                raise RuntimeError("GitHub API rate limit exceeded or invalid token. Ghost job reconciliation halted.")
+                err_msg = f"❌ GitHub API returned 403 Forbidden for job {job['job_id']}. Rate limit exceeded or invalid GH_TOKEN/GITHUB_PAT."
+                app.logger.error(err_msg)
+                errors.append(RuntimeError(err_msg))
+                continue
                 
             if resp.status_code == 200:
                 run_data = resp.json()
@@ -456,15 +467,22 @@ def clean_ghosts():
                 conclusion = run_data.get('conclusion')
                 if status == 'completed' or conclusion is not None:
                     app.logger.info(f"Ghost job detected: {job['job_id']} (GH status: {status}, conclusion: {conclusion}). Marking as failed & releasing worker resources.")
-                    cancel_job_cleanly(job['job_id'], exit_code=-1)
+                    cancel_job_cleanly(job['job_id'], exit_code=-15)
                     cleaned += 1
             elif resp.status_code == 404:
                 app.logger.info(f"Ghost job detected (404): {job['job_id']}. Marking as failed & releasing worker resources.")
-                cancel_job_cleanly(job['job_id'], exit_code=-1)
+                cancel_job_cleanly(job['job_id'], exit_code=-15)
                 cleaned += 1
+            else:
+                err_msg = f"Unexpected response status {resp.status_code} from GitHub API for job {job['job_id']}"
+                app.logger.error(err_msg)
+                errors.append(RuntimeError(err_msg))
         except Exception as e:
             app.logger.error(f"Error checking ghost job {job['job_id']}: {e}")
-            raise  # Fail-Fast: do not swallow exceptions during cluster monitoring
+            errors.append(e)
+            
+    if errors:
+        raise RuntimeError(f"Ghost job reconciliation completed with {len(errors)} error(s). Details: " + "; ".join([str(e) for e in errors]))
             
     return jsonify({"status": "ok", "cleaned_jobs": cleaned})
 
