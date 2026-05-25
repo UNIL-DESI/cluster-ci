@@ -1,0 +1,9 @@
+{
+  "aggregate_hash": "861c8708f6753565fb57f28f36a4642c0088d64fbda1fe57a9c54248251bc8e3",
+  "file_hashes": {
+    "simulate_research.py": "cd2980441374dfac1ae4f52ae2442f51162b34ef3135faa8f6493becde4f12a5"
+  },
+  "import_graph": {
+    "simulate_research.py": []
+  }
+}

@@ -1,16 +1,15 @@
 stages:
+  dvc-code-analysis:
+    cmd: bash .dvc-viewer/bootstrap.sh && dvc-viewer hash
+    always_changed: true
+    outs:
+    - .dvc-viewer/hashes: {cache: false}
   research:
     cmd: python3 simulate_research.py
     always_changed: true
-    deps:
-      - simulate_research.py
-    outs:
-      - artifacts/data.csv
-    metrics:
-      - artifacts/metrics.json
-      - artifacts/random_table.csv
-    plots:
-      - artifacts/plot.png
-      - artifacts/random_plot.png
-
-
+    deps: [simulate_research.py, .dvc-viewer/hashes/research.hash]
+    outs: [artifacts/data.csv]
+    metrics: [artifacts/metrics.json: {cache: false}, artifacts/random_table.csv: {
+          cache: false}]
+    plots: [artifacts/plot.png: {cache: false}, artifacts/random_plot.png: {
+            cache: false}]

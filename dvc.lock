@@ -1,0 +1,49 @@
+schema: '2.0'
+stages:
+  dvc-code-analysis:
+    cmd: bash .dvc-viewer/bootstrap.sh && dvc-viewer hash
+    outs:
+    - path: .dvc-viewer/hashes
+      hash: md5
+      md5: 0799c82bfbd9302edc5a61af19819b16.dir
+      size: 329
+      nfiles: 2
+  fake_test:
+    cmd: echo 'Pipeline DVC factice exécutée avec succès !'
+    deps:
+    - path: .cluster-ci
+      hash: md5
+      md5: 18379601b0ed5c1818a3a4a24b1e59ad
+      size: 10
+  research:
+    cmd: python3 simulate_research.py
+    deps:
+    - path: .dvc-viewer/hashes/research.hash
+      hash: md5
+      md5: fbb538ab63cd56fe29a438be31450f34
+      size: 64
+    - path: simulate_research.py
+      hash: md5
+      md5: d703e948a29732c2a8b5e88bf997040b
+      size: 2024
+    outs:
+    - path: artifacts/data.csv
+      hash: md5
+      md5: d1b3657087114cdda387f9618fcfdc1a
+      size: 847
+    - path: artifacts/metrics.json
+      hash: md5
+      md5: ef52dde570c11f8fb7e4720ce7c39881
+      size: 189
+    - path: artifacts/plot.png
+      hash: md5
+      md5: 2cd8bde463f5d82aae0f0cec061d6b8f
+      size: 70
+    - path: artifacts/random_plot.png
+      hash: md5
+      md5: 47cd97231c0a9484c34356394cf0a78f
+      size: 86
+    - path: artifacts/random_table.csv
+      hash: md5
+      md5: 6815b25e393abe0c375e9c3bc4b6b2d6
+      size: 190
