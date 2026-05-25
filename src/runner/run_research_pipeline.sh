@@ -497,9 +497,9 @@ log_info "Launching: dvc repro $DVC_ARGS via Docker"
 # The smart_install.sh script hashes dependency files and caches the result in the
 # persistent Docker volume. Skips entirely if nothing changed → saves ~3GB bandwidth.
 if [ -f "pyproject.toml" ]; then
-    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && dvc repro $DVC_ARGS"
+    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 else
-    EXEC_CMD="dvc repro $DVC_ARGS"
+    EXEC_CMD="python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 fi
 
 log_info "🚀 Live Terminal Streaming enabled. Piping logs to server..."
