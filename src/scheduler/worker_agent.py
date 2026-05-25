@@ -499,8 +499,23 @@ def execute_job(job):
 
     except Exception as e:
         logger.error(f"Execution failed: {e}")
-        update_job_status(job_id, 'failed', -1)
+        try:
+            update_job_status(job_id, 'failed', -1)
+        except Exception as update_err:
+            logger.error(f"Failed to update failed job status to headnode: {update_err}")
     finally:
+        # Inconditional, immediate physical cleanup of Docker containers & VRAM
+        safe_job_id = job_id.replace('/', '-')
+        try:
+            safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+        except Exception as docker_err:
+            logger.error(f"Error purging job containers in finally: {docker_err}")
+            
+        try:
+            purge_ollama_vram_on_host()
+        except Exception as ollama_err:
+            logger.error(f"Error purging Ollama VRAM in finally: {ollama_err}")
+
         kill_dvc_viewer_processes()
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
@@ -1093,7 +1108,18 @@ def main_loop():
         while not shutdown_requested:
             job = poll_for_job()
             if job:
-                execute_job(job)
+                try:
+                    execute_job(job)
+                except Exception as e:
+                    logger.error(f"❌ CRITICAL: Unhandled exception in execute_job: {e}")
+                    # Safety recovery to prevent locking down the worker
+                    try:
+                        purge_orphan_runners_and_containers()
+                    except Exception as recovery_err:
+                        logger.error(f"Failed to perform emergency recovery purge: {recovery_err}")
+                    with job_lock:
+                        current_job_id = None
+                        current_process = None
             time.sleep(5)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt caught in main loop.")
