@@ -72,6 +72,21 @@ The worker agent (`worker_agent.py`) implements a high-reliability, multi-tiered
    * **Cancellation Webhook**: Triggered immediately upon receiving `/cancel/<job_id>`.
    * **Systemd Shutdown Hook**: Executed on worker agent SIGTERM signals to ensure absolute clean states.
 
+### 2.3 Main Loop Hardening & Network Resilience
+To prevent silent worker failures where the background API server continues responding but the main execution loop has crashed, the agent incorporates a defensive dual-layer recovery structure:
+
+1. **Robust Exception Protection during Execution**: 
+   All final status transitions dispatched via `update_job_status` (such as signaling an execution failure to the headnode) are wrapped in specialized `try...except` exception catchers. This ensures that any temporary headnode network dropouts or database locks do not raise unhandled exceptions capable of crashing the orchestration threads.
+   
+2. **Deterministic Finally Purge Hooks**:
+   The `execute_job` method anchors its physical reclamation processes (both container removal via `safe_docker_rm_f` and model purges via `purge_ollama_vram_on_host`) in an absolute `finally:` block. This guarantees 100% deallocation of Blackwell GPU VRAM and CPU memory pages upon completion, failure, or interruption, without depending on external status synchronization success.
+
+3. **Global Loop Safety Recoveries**:
+   The primary polling thread in `main_loop` encapsulates `execute_job` inside a high-level safety `try...except Exception` handler. In the event of a catastrophic and unforeseen runtime exception, the worker immediately triggers:
+   * An emergency JIT recovery purge of all orphaned runners and docker resources.
+   * Full atomic state resetting (`current_job_id` and `current_process` reverted to `None`).
+   This allows the worker to self-heal instantly and remain online to immediately accept subsequent tasks from the scheduler queue.
+
 ---
 
 ## 3. Physical Benchmarks and Verification

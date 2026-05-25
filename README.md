@@ -92,6 +92,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
     - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
     - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
    Une fois alloué, le conteneur a accès à 100% de la RAM hôte pour éviter les limites artificielles.
+8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
 # Principaux résultats
 
 - **Status**: Operational & secured against zombie processes (Last updated: 25 May 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates and hardware-level VRAM purging.
