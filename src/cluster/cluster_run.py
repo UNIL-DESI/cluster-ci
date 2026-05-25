@@ -418,9 +418,45 @@ def check_gitattributes_safety():
     except Exception as e:
         print(f"⚠️  Could not verify .gitattributes safety: {e}")
 
+def clean_old_results():
+    """Purge old results and logs before execution to prevent stale data."""
+    import glob
+    patterns = [
+        "results/**/*.log",
+        "results/**/*.json",
+        "results/**/*.csv",
+        "results/**/*.txt",
+        "results/**/*.pt",
+        "artifacts/**/*.log",
+        "artifacts/**/*.json",
+        "artifacts/**/*.csv",
+        "artifacts/**/*.txt",
+        "artifacts/**/*.png",
+        "artifacts/**/*.pt",
+        "metrics/**/*.log",
+        "metrics/**/*.json",
+        "logs/**/*.log"
+    ]
+    
+    removed = 0
+    for pattern in patterns:
+        for path in glob.glob(pattern, recursive=True):
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    removed += 1
+                except Exception:
+                    pass
+                    
+    if removed > 0:
+        print(f"🧹 Purged {removed} old result file(s) to ensure a fresh start.")
+
 def shadow_run(background=False):
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
+    
+    clean_old_results()
+    
     check_gitattributes_safety()
     check_gh_auth()
     user = get_current_user()
