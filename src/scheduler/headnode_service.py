@@ -403,6 +403,14 @@ def update_job_status():
             
         current_status = job['status']
 
+        # If it's an external cancellation (indicated by negative exit code from signal propagation like GHA TERM)
+        # and the job is currently assigned or running, we must route it via cancel_job_cleanly to notify the worker.
+        if status == 'failed' and current_status in ['assigned', 'running'] and exit_code is not None and int(exit_code) < 0:
+            conn.commit()  # Release current transaction before calling cancel_job_cleanly to avoid SQLite locks
+            app.logger.info(f"🔄 Routing external cancellation signal ({exit_code}) for job {job_id} through cancel_job_cleanly")
+            cancel_job_cleanly(job_id, exit_code=exit_code)
+            return jsonify({"status": "ok", "message": "Cancellation signal routed cleanly"})
+
         if status == 'running':
             cursor.execute('''
                 UPDATE jobs SET
@@ -422,36 +430,41 @@ def update_job_status():
 @app.route('/clean_ghosts', methods=['POST'])
 def clean_ghosts():
     """Cleans up ghost jobs (jobs that are pending in DB but their GH workflow is completed/cancelled)"""
+    # R1: Retrieve candidates outside of the active transaction loop to avoid SQLite lock contentions
+    ghost_candidate_jobs = []
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND gh_run_id IS NOT NULL")
-        ghost_candidate_jobs = cursor.fetchall()
+        ghost_candidate_jobs = [dict(row) for row in cursor.fetchall()]
         
-        cleaned = 0
-        gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
-        headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
-        
-        for job in ghost_candidate_jobs:
-            url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
-            try:
-                resp = requests.get(url, headers=headers, timeout=5)
-                if resp.status_code == 200:
-                    run_data = resp.json()
-                    status = run_data.get('status')
-                    conclusion = run_data.get('conclusion')
-                    if status == 'completed' or conclusion is not None:
-                        app.logger.info(f"Ghost job detected: {job['job_id']}. Marking as failed.")
-                        cursor.execute("UPDATE jobs SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?", (job['job_id'],))
-                        cleaned += 1
-                elif resp.status_code == 404:
-                    app.logger.info(f"Ghost job detected (404): {job['job_id']}. Marking as failed.")
-                    cursor.execute("UPDATE jobs SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?", (job['job_id'],))
+    cleaned = 0
+    gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
+    headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
+    
+    for job in ghost_candidate_jobs:
+        url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=5)
+            # R2: Fail-Fast (No Silent Fallback) on rate limiting or auth errors to expose infrastructure issues immediately
+            if resp.status_code == 403:
+                app.logger.error("❌ GitHub API returned 403 Forbidden. Rate limit exceeded or invalid GH_TOKEN/GITHUB_PAT.")
+                raise RuntimeError("GitHub API rate limit exceeded or invalid token. Ghost job reconciliation halted.")
+                
+            if resp.status_code == 200:
+                run_data = resp.json()
+                status = run_data.get('status')
+                conclusion = run_data.get('conclusion')
+                if status == 'completed' or conclusion is not None:
+                    app.logger.info(f"Ghost job detected: {job['job_id']} (GH status: {status}, conclusion: {conclusion}). Marking as failed & releasing worker resources.")
+                    cancel_job_cleanly(job['job_id'], exit_code=-1)
                     cleaned += 1
-            except Exception as e:
-                app.logger.error(f"Error checking ghost job {job['job_id']}: {e}")
-        
-        if cleaned > 0:
-            conn.commit()
+            elif resp.status_code == 404:
+                app.logger.info(f"Ghost job detected (404): {job['job_id']}. Marking as failed & releasing worker resources.")
+                cancel_job_cleanly(job['job_id'], exit_code=-1)
+                cleaned += 1
+        except Exception as e:
+            app.logger.error(f"Error checking ghost job {job['job_id']}: {e}")
+            raise  # Fail-Fast: do not swallow exceptions during cluster monitoring
             
     return jsonify({"status": "ok", "cleaned_jobs": cleaned})
 

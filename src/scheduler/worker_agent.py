@@ -38,6 +38,9 @@ def purge_orphan_runners_and_containers(job_id=None):
     """
     logger.info(f"🧹 Performing JIT (Just-In-Time) purge of orphan runners and containers (Job ID context: {job_id})")
     
+    # Unleash proactive Ollama Host VRAM Purge to instantly reclaim physical resources before starting/cleaning up
+    purge_ollama_vram_on_host()
+    
     # 1. Docker JIT Container Purge
     safe_job_id = job_id.replace('/', '-') if job_id else None
     expected_containers = {f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"} if safe_job_id else set()
@@ -82,6 +85,36 @@ def purge_orphan_runners_and_containers(job_id=None):
                 proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
+
+def purge_ollama_vram_on_host():
+    """Contact local Ollama service on host (if active) to unload all active models and free GPU VRAM instantly."""
+    logger.info("📡 Requesting local Ollama service to purge all models from GPU VRAM...")
+    ollama_url = "http://127.0.0.1:11434"
+    try:
+        # 1. Get list of active/loaded models in memory
+        resp = requests.get(f"{ollama_url}/api/ps", timeout=3)
+        if resp.status_code == 200:
+            models_data = resp.json()
+            models = models_data.get("models", [])
+            if not models:
+                logger.info("Ollama memory is already clean (0 models loaded).")
+                return
+                
+            for m in models:
+                name = m.get("name") or m.get("model")
+                if name:
+                    logger.warning(f"🔥 Forcing unload of Ollama model '{name}' from GPU VRAM...")
+                    # Sending keep_alive: 0 or keep_alive: "0s" forces immediate unload
+                    requests.post(
+                        f"{ollama_url}/api/generate",
+                        json={"model": name, "keep_alive": 0},
+                        timeout=3
+                    )
+            logger.info("✅ Successfully requested Ollama to unload all models.")
+        else:
+            logger.info(f"Ollama API /api/ps returned status {resp.status_code}. Skipping Ollama VRAM purge.")
+    except Exception as e:
+        logger.info(f"Ollama service not running or unreachable on host: {e}. Skipping host Ollama VRAM purge.")
 
 def kill_dvc_viewer_processes():
     # Deprecated wrapper: delegate to our robust purge function
@@ -454,6 +487,10 @@ def cancel_job(job_id):
     logger.info(f"Forcing destruction of containers for job {job_id}")
     res = subprocess.run(["docker", "rm", "-f", f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"],
                          capture_output=True, text=True)
+    
+    # Proactively purge host Ollama VRAM to instantly free Blackwell GPU physical memory
+    purge_ollama_vram_on_host()
+    
     kill_dvc_viewer_processes()
 
     with job_lock:
@@ -809,6 +846,10 @@ def release_single_instance_lock():
 
 def cleanup_active_jobs_and_containers():
     global current_job_id, current_process
+    
+    # Ensure residual host Ollama VRAM is freed instantly during active job cleanup
+    purge_ollama_vram_on_host()
+    
     with job_lock:
         if current_job_id:
             logger.warning(f"🧹 Initiating forced cleanup for active job {current_job_id} due to shutdown request...")
