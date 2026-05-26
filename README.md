@@ -199,6 +199,7 @@ cluster-ci/
 - [x] [Architecture : Implémenter le streaming en direct des logs pour les jobs asynchrones (cluster-run view)](https://github.com/UNIL-DESI/cluster-ci/issues/93)
 - [x] [Garde-fous Systémiques : Prévention et éradication des processus orphelins et conteneurs zombies](https://github.com/UNIL-DESI/cluster-ci/issues/94)
 - [x] [Fix P2P and Cancellation Logs](docs/tasks/fix_p2p_and_cancellation_logs.md) : Correction de l'IP invalide P2P et ajout des notifications de log d'annulation.
+- [x] [Optimize Git and DVC Sync](https://github.com/UNIL-DESI/cluster-ci/issues/96) : Optimisation de l'historique des commits intermédiaires Git et synchronisation DVC automatique et intelligente.
 
 
 
