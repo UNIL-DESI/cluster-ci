@@ -871,10 +871,32 @@ def start_dvc_viewer():
             stderr=subprocess.DEVNULL
         )
 
-        # Small grace period for startup check
-        time.sleep(2)
-        if proc.poll() is not None:
-            return jsonify({"error": "dvc-viewer failed to start"}), 500
+        # Robustly wait for the TCP port to be open and listening
+        start_wait = time.time()
+        port_open = False
+        while time.time() - start_wait < 20:  # 20 seconds max timeout
+            if proc.poll() is not None:
+                break
+            
+            # Connect probe
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                s.connect(('127.0.0.1', port))
+                port_open = True
+                s.close()
+                break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if not port_open:
+            logger.error(f"dvc-viewer failed to bind/open port {port} within 20 seconds")
+            try:
+                proc.terminate()
+            except:
+                pass
+            return jsonify({"error": "dvc-viewer failed to start or open port"}), 500
 
         logger.info(f"Historical dvc-viewer successfully started for {repo} on port {port}")
         return jsonify({"status": "ok", "port": port})
