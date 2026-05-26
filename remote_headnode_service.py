@@ -772,6 +772,11 @@ DVC_VIEWER_TIMEOUT_MIN = int(os.environ.get("DVC_VIEWER_TIMEOUT_MIN", 30))
 local_viewers = {}
 local_viewers_lock = threading.Lock()
 
+# Registry for remote dvc-viewer processes on workers
+# { repo_full_name: { 'worker_id': str, 'worker_url': str, 'port': int, 'last_access': float, 'rev': str } }
+remote_viewers = {}
+remote_viewers_lock = threading.Lock()
+
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(('', 0))
@@ -780,15 +785,17 @@ def get_free_port():
     return port
 
 def cleanup_inactive_viewers():
-    """Background task to kill local dvc-viewer processes after inactivity."""
+    """Background task to kill local and remote inactive dvc-viewer processes."""
     while True:
-        time.sleep(60)
+        time.sleep(30)
         now = time.time()
-        to_delete = []
+        
+        # 1. Cleanup local viewers
+        to_delete_local = []
         with local_viewers_lock:
             for repo_name, viewer in local_viewers.items():
                 if now - viewer['last_access'] > (DVC_VIEWER_TIMEOUT_MIN * 60):
-                    print(f"Terminating inactive dvc-viewer for {repo_name} (port {viewer['port']})")
+                    print(f"Terminating inactive local dvc-viewer for {repo_name} (port {viewer['port']})")
                     try:
                         viewer['proc'].terminate()
                         viewer['proc'].wait(timeout=5)
@@ -798,10 +805,22 @@ def cleanup_inactive_viewers():
                             viewer['proc'].kill()
                         except:
                             pass
-                    to_delete.append(repo_name)
+                    to_delete_local.append(repo_name)
 
-            for repo_name in to_delete:
+            for repo_name in to_delete_local:
                 del local_viewers[repo_name]
+                
+        # 2. Cleanup remote viewers (local metadata registry only, process self-destructs on worker)
+        to_delete_remote = []
+        with remote_viewers_lock:
+            for repo_name, viewer in remote_viewers.items():
+                # 45 seconds timeout is very safe since worker dvc-viewer self-destructs in 15 seconds of inactivity.
+                if now - viewer['last_access'] > 45:
+                    print(f"Removing inactive remote dvc-viewer registry entry for {repo_name} (worker {viewer['worker_url']}, port {viewer['port']})")
+                    to_delete_remote.append(repo_name)
+                    
+            for repo_name in to_delete_remote:
+                del remote_viewers[repo_name]
 
 @app.route('/view/<owner>/<repo>/')
 @app.route('/view/<owner>/<repo>/<path:path>')
@@ -867,47 +886,105 @@ h1 {{ color: #e94560; margin-top: 0; }} pre {{ background: #0f3460; padding: 16p
 </div></body></html>""", 502
         return result
 
-    # --- Case 2: Historical (Local) ---
-    repo_path = find_local_repo(repo_full_name)
-    if not repo_path:
-        return f"Project {repo_full_name} not found locally and not active.", 404
-
-    with local_viewers_lock:
-        if repo_full_name in local_viewers:
-            viewer = local_viewers[repo_full_name]
-            # Check if process is still alive
-            if viewer['proc'].poll() is None:
-                viewer['last_access'] = time.time()
-                target_url = f"http://localhost:{viewer['port']}/{path}"
-                base_href = f"/view/{owner}/{repo}/" if path == '' else None
-                return proxy_request(target_url, base_href=base_href)
-            else:
-                del local_viewers[repo_full_name]
-
-        # Start a new dvc-viewer process
-        port = get_free_port()
+    # --- Case 2: Historical (Remote Worker) ---
+    rev = request.args.get('rev')
+    
+    # Try to find default commit hash from DB if not provided
+    if not rev:
         try:
-            # Start global dvc-viewer and inject read-only mode (CLUSTER_CI_MODE=executor)
-            viewer_env = os.environ.copy()
-            viewer_env["CLUSTER_CI_MODE"] = "executor"
-            viewer_env["DVC_VIEWER_PROJECT_DIR"] = repo_path
-            viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
-            cmd = ["dvc-viewer", "--port", str(port), "--host", "127.0.0.1"]
-            proc = subprocess.Popen(cmd, cwd=repo_path, env=viewer_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT commit_hash FROM jobs
+                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                    ORDER BY finished_at DESC LIMIT 1
+                ''', (repo_full_name,))
+                row = cursor.fetchone()
+                if row:
+                    rev = row['commit_hash']
+        except Exception as e:
+            app.logger.error(f"Error fetching default commit hash for historical view: {e}")
 
-            # Wait a bit for the server to start
-            time.sleep(2)
+    with remote_viewers_lock:
+        if repo_full_name in remote_viewers:
+            viewer = remote_viewers[repo_full_name]
+            if viewer.get('rev') == rev:
+                viewer['last_access'] = time.time()
+                parsed = urlparse(viewer['worker_url'])
+                target_host = parsed.hostname
+                target_url = f"http://{target_host}:{viewer['port']}/{path}"
+                base_href = f"/view/{owner}/{repo}/" if path == '' else None
+                
+                res = proxy_request(target_url, base_href=base_href)
+                if isinstance(res, tuple) and len(res) == 2 and res[1] == 502:
+                    app.logger.warning(f"Remote viewer for {repo_full_name} on {viewer['worker_url']} is unreachable. Will recreate.")
+                else:
+                    return res
 
-            local_viewers[repo_full_name] = {
-                'proc': proc,
+            if repo_full_name in remote_viewers:
+                del remote_viewers[repo_full_name]
+
+        # Smart worker selection based on cache locality
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            # 1. Try to find the last online worker that ran a job for this repo
+            cursor.execute('''
+                SELECT w.worker_id, w.service_url
+                FROM jobs j
+                JOIN workers w ON j.worker_id = w.worker_id
+                WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
+                ORDER BY j.finished_at DESC LIMIT 1
+            ''', (repo_full_name,))
+            worker = cursor.fetchone()
+
+            # 2. Otherwise, fall back to any online worker
+            if not worker:
+                cursor.execute('''
+                    SELECT worker_id, service_url
+                    FROM workers
+                    WHERE status = 'online' AND service_url IS NOT NULL
+                    LIMIT 1
+                ''')
+                worker = cursor.fetchone()
+
+        if not worker:
+            return "No online worker available to host the historical visualizer. Please start a worker first.", 503
+
+        worker_id = worker['worker_id']
+        worker_url = worker['service_url']
+
+        app.logger.info(f"Requesting worker {worker_url} to start historical dvc-viewer for {repo_full_name} at revision {rev}")
+        try:
+            resp = requests.post(
+                f"{worker_url}/api/worker/dvc-viewer/start",
+                json={"repo": repo_full_name, "rev": rev},
+                timeout=60
+            )
+            if resp.status_code != 200:
+                return f"Failed to start historical dvc-viewer on worker: {resp.text}", 502
+            
+            data_resp = resp.json()
+            port = data_resp.get('port')
+            if not port:
+                return "Failed to start historical dvc-viewer: worker did not return an access port", 500
+
+            remote_viewers[repo_full_name] = {
+                'worker_id': worker_id,
+                'worker_url': worker_url,
                 'port': port,
-                'last_access': time.time()
+                'last_access': time.time(),
+                'rev': rev
             }
-            target_url = f"http://localhost:{port}/{path}"
+
+            parsed = urlparse(worker_url)
+            target_host = parsed.hostname
+            target_url = f"http://{target_host}:{port}/{path}"
             base_href = f"/view/{owner}/{repo}/" if path == '' else None
             return proxy_request(target_url, base_href=base_href)
+
         except Exception as e:
-            return f"Failed to start dvc-viewer: {str(e)}", 500
+            app.logger.error(f"Error calling worker to start dvc-viewer: {e}")
+            return f"Failed to reach worker to start dvc-viewer: {str(e)}", 502
 
 def proxy_request(target_url, base_href=None):
     """Simple proxy that forwards the request to the target_url.
