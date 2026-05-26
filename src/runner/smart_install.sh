@@ -27,6 +27,7 @@ echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${
 
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
+pip install --break-system-packages --prefix /home/user/.local dvc-http
 
 # Post-install: purge any PyPI-downloaded NVIDIA/PyTorch/vLLM packages that would
 # shadow the highly-optimized NGC system libraries or source-compiled vLLM in /home/user/vllm

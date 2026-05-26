@@ -418,7 +418,7 @@ function docker_exec_bootstrap() {
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=\$PATH:/home/user/.local/bin && $1"
 }
 docker_exec_bootstrap "uv --version >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || python3 -m pip install uv --user --break-system-packages >/dev/null 2>&1"
-docker_exec_bootstrap "dvc version >/dev/null 2>&1 || uv tool install dvc >/dev/null 2>&1"
+docker_exec_bootstrap "dvc version >/dev/null 2>&1 && uv tool upgrade dvc --with dvc-http >/dev/null 2>&1 || uv tool install dvc --with dvc-http >/dev/null 2>&1"
 docker_exec_bootstrap "uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool install git+https://github.com/UNIL-DESI/dvc-viewer.git >/dev/null 2>&1"
 
 log_info "Reading DVC parameters from .cluster-ci..."
@@ -453,17 +453,22 @@ if [ -n "$DVC_REMOTE_P2P_URL" ]; then
     if docker_exec "dvc pull --force -r peer_remote" 2>/tmp/p2p_pull.log; then
         log_success "P2P transfer successful."
     else
-        log_warn "P2P pull incomplete or failed (some cache files missing on peer). Details of the error:"
-        if [ -s /tmp/p2p_pull.log ]; then
-            log_warn "--- P2P Pull Error Diagnostic Log ---"
-            tail -n 20 /tmp/p2p_pull.log | while read -r line; do
-                log_warn "  $line"
-            done
-            log_warn "------------------------------------"
+        log_warn "P2P pull incomplete or failed. Attempting fallback pull from default remote..."
+        if docker_exec "dvc pull --force" >>/tmp/p2p_pull.log 2>&1; then
+            log_success "Fallback pull from default remote successful."
         else
-            log_warn "No detailed error log available."
+            log_warn "Fallback pull also failed or incomplete. Details of the error:"
+            if [ -s /tmp/p2p_pull.log ]; then
+                log_warn "--- DVC Pull Error Diagnostic Log ---"
+                tail -n 20 /tmp/p2p_pull.log | while read -r line; do
+                    log_warn "  $line"
+                done
+                log_warn "-------------------------------------"
+            else
+                log_warn "No detailed error log available."
+            fi
+            log_info "dvc repro will regenerate missing stages (best-effort)."
         fi
-        log_info "dvc repro will regenerate missing stages (best-effort)."
     fi
 fi
 
