@@ -22,7 +22,8 @@ Asynchronous continuous integration system for research pipelines, designed as a
 
 ### 1. Client Installation (Projet de recherche)
 
-Exécutez cette commande à la racine de votre dépôt Git pour l'intégration automatique :
+Exécutez cette commande à la racine de votre dépôt Git pour l'intégration automatique.
+⚠️ **Utilisateurs Windows :** Cette commande télécharge et exécute un script Bash. Vous devez impérativement l'exécuter dans **Git Bash** ou **WSL** (elle échouera dans PowerShell ou CMD).
 
 ```bash
 curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=$(date +%s)" | bash
