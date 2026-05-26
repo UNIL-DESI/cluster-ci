@@ -439,6 +439,9 @@ else
     log_info "Arguments detected: $DVC_ARGS"
 fi
 
+log_info "Preventive cleanup of DVC lock file..."
+docker_exec "rm -f .dvc/tmp/lock"
+
 if [ -n "$DVC_REMOTE_P2P_URL" ]; then
     log_info "Data Plane: Configuring dynamic P2P remote to $DVC_REMOTE_P2P_URL..."
     PEER_REMOTE_URL="$DVC_REMOTE_P2P_URL/$TARGET_REPO/.dvc/cache/files/md5"
@@ -446,10 +449,21 @@ if [ -n "$DVC_REMOTE_P2P_URL" ]; then
     docker_exec "dvc remote add -f peer_remote '$PEER_REMOTE_URL' --local"
 
     log_info "Fetching data from peer (best-effort P2P pull)..."
-    if docker_exec "dvc pull --force -r peer_remote" 2>/dev/null; then
+    rm -f /tmp/p2p_pull.log
+    if docker_exec "dvc pull --force -r peer_remote" 2>/tmp/p2p_pull.log; then
         log_success "P2P transfer successful."
     else
-        log_info "⚠️  P2P pull incomplete (some cache files missing on peer). dvc repro will regenerate missing stages."
+        log_warn "P2P pull incomplete or failed (some cache files missing on peer). Details of the error:"
+        if [ -s /tmp/p2p_pull.log ]; then
+            log_warn "--- P2P Pull Error Diagnostic Log ---"
+            tail -n 20 /tmp/p2p_pull.log | while read -r line; do
+                log_warn "  $line"
+            done
+            log_warn "------------------------------------"
+        else
+            log_warn "No detailed error log available."
+        fi
+        log_info "dvc repro will regenerate missing stages (best-effort)."
     fi
 fi
 
