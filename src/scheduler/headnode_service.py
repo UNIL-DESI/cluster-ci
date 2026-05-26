@@ -1202,39 +1202,44 @@ def api_latest_artifacts(repo):
 
     commit_hash = last_run['commit_hash']
     local_repo_path = find_local_repo(repo)
-    pat = os.environ.get("GITHUB_PAT")
-    repo_url = f"https://x-access-token:{pat}@github.com/{repo}.git" if pat else f"https://github.com/{repo}.git"
-    source = local_repo_path if local_repo_path else repo_url
 
-    cmd = [DVC_CMD, "list", source, "--rev", commit_hash, "--dvc-only", "--recursive", "--json"]
+    if not local_repo_path:
+        app.logger.warning(f"Local repo path not found for {repo}")
+        return jsonify([])
+
     try:
-        env = os.environ.copy()
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["DVC_NO_ANALYTICS"] = "1"
+        # Run git ls-tree to list all files at that commit
+        cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
         
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=15)
-        except subprocess.TimeoutExpired as te:
-            app.logger.error(f"Timeout expired while executing DVC list command: {te}")
-            return jsonify({"artifacts": [], "error": "DVC list command timed out after 15 seconds"}), 504
+        if result.returncode != 0:
+            # If the commit is not locally known, try fetching it quickly (timeout 5s)
+            app.logger.info(f"Commit not found locally, fetching for {repo}...")
+            subprocess.run(["git", "fetch", "--all"], cwd=local_repo_path, capture_output=True, timeout=5)
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
 
         if result.returncode == 0:
-            return Response(result.stdout, mimetype='application/json')
+            files = []
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                # Filter out system and config directories
+                if any(line.startswith(p) for p in [".git/", ".github/", ".dvc/", ".idea/", ".vscode/"]):
+                    continue
+                files.append({
+                    "path": line,
+                    "is_dir": False,
+                    "size": 0,
+                    "isout": True
+                })
+            return jsonify(files)
         else:
-            # Try fetching if unknown Git revision
-            if local_repo_path and "unknown Git revision" in result.stderr:
-                try:
-                    subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=30)
-                    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=15)
-                    if result.returncode == 0:
-                        return Response(result.stdout, mimetype='application/json')
-                except subprocess.TimeoutExpired as te:
-                    app.logger.error(f"Timeout expired during second DVC list attempt after git fetch: {te}")
-                    return jsonify({"artifacts": [], "error": "DVC list command timed out after 15 seconds"}), 504
-            return jsonify({"artifacts": [], "error": f"Failed to list DVC files: {result.stderr.strip() if result.stderr else 'Unknown error'}"}), 500
+            app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
+            return jsonify([])
+
     except Exception as e:
-        app.logger.error(f"Error listing latest DVC artifacts: {e}")
-        return jsonify({"artifacts": [], "error": str(e)}), 500
+        app.logger.error(f"Error listing latest artifacts from local Git for {repo}: {e}")
+        return jsonify([])
 
 @app.route('/api/projects/<path:repo>/artifact/history', methods=['GET'])
 def api_artifact_history(repo):
