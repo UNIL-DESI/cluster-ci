@@ -99,12 +99,12 @@ def get_cache_false_paths(dvc_yaml_path):
                     for path, config in entry.items():
                         if isinstance(config, dict) and config.get('cache') is False:
                             full_path = os.path.join(wdir, path) if wdir != '.' else path
-                            paths.add(full_path)
+                            paths.add(Path(full_path).as_posix())
         elif isinstance(entries, dict):
             for path, config in entries.items():
                 if isinstance(config, dict) and config.get('cache') is False:
                     full_path = os.path.join(wdir, path) if wdir != '.' else path
-                    paths.add(full_path)
+                    paths.add(Path(full_path).as_posix())
 
     if 'stages' in data:
         for stage in data['stages'].values():

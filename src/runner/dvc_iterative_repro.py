@@ -142,10 +142,17 @@ def main():
                 subprocess.run(["git", "commit", "-m", commit_msg])
             
             target_branch = os.environ.get("TARGET_BRANCH")
-            if target_branch:
+            if not target_branch:
+                res_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+                if res_branch.returncode == 0:
+                    target_branch = res_branch.stdout.strip()
+            
+            if target_branch and target_branch != "HEAD":
+                print(f"Pushing failure state to branch: {target_branch}")
                 subprocess.run(["git", "push", "origin", target_branch])
             else:
-                subprocess.run(["git", "push"])
+                print("Pushing failure state to default HEAD branch...")
+                subprocess.run(["git", "push", "origin", "HEAD"])
             sys.exit(ret.returncode)
             
         print(f"\n💾 Checking for changes after stage {stage}...")
