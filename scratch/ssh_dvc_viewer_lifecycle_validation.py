@@ -9,7 +9,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 def run_server(client, host):
-    command = "cd /home/henri/cluster-ci/repositories/UNIL-DESI/llm-as-recommender && /usr/local/bin/uv run dvc-viewer --port 8686"
+    command = "export PATH=~/.local/bin:$PATH; cd /home/henri/cluster-ci/repositories/UNIL-DESI/llm-as-recommender && dvc-viewer --port 8686 --host 127.0.0.1"
     print(f"[{host}] Thread: Starting server with command: {command}")
     try:
         stdin, stdout, stderr = client.exec_command(command)
