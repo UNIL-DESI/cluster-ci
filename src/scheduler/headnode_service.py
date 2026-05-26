@@ -1115,6 +1115,7 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
             # Start global dvc-viewer and inject read-only mode (CLUSTER_CI_MODE=executor)
             viewer_env = os.environ.copy()
             viewer_env["CLUSTER_CI_MODE"] = "executor"
+            viewer_env["DVC_VIEWER_PROJECT_DIR"] = repo_path
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
             cmd = ["dvc-viewer", "--port", str(port), "--host", "127.0.0.1"]
             proc = subprocess.Popen(cmd, cwd=repo_path, env=viewer_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
