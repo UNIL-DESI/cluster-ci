@@ -840,9 +840,16 @@ def start_dvc_viewer():
             subprocess.run(["git", "checkout", "-f", "main"], cwd=repo_path, capture_output=True, timeout=15)
             subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, capture_output=True, timeout=15)
 
-        # 2. Pull physical DVC cache (P2P/remote sync)
-        logger.info(f"Executing DVC pull for {repo}...")
-        subprocess.run([DVC_CMD, "pull"], cwd=repo_path, capture_output=True, timeout=45)
+        # 2. Pull physical DVC cache in background (non-blocking)
+        def bg_dvc_pull():
+            try:
+                logger.info(f"Executing background DVC pull for {repo}...")
+                subprocess.run([DVC_CMD, "pull"], cwd=repo_path, capture_output=True, timeout=120)
+                logger.info(f"Background DVC pull completed for {repo}")
+            except Exception as e:
+                logger.warning(f"Background DVC pull failed or timed out: {e}")
+
+        threading.Thread(target=bg_dvc_pull, daemon=True).start()
 
         # 3. Dynamic Port allocation and start
         port = get_free_port()
