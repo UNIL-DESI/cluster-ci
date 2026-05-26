@@ -1083,6 +1083,21 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         return f"Project {repo_full_name} not found locally and not active.", 404
 
     with local_viewers_lock:
+        if path == '' and repo_full_name in local_viewers:
+            viewer = local_viewers[repo_full_name]
+            app.logger.info(f"Existing dvc-viewer instance found for {repo_full_name} at root access. Terminating it to guarantee single fresh instance.")
+            try:
+                viewer['proc'].terminate()
+                try:
+                    viewer['proc'].wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    app.logger.warning(f"dvc-viewer for {repo_full_name} did not terminate in 3 seconds, killing it.")
+                    viewer['proc'].kill()
+                    viewer['proc'].wait()
+            except Exception as e:
+                app.logger.error(f"Error terminating existing dvc-viewer for {repo_full_name}: {e}")
+            del local_viewers[repo_full_name]
+
         if repo_full_name in local_viewers:
             viewer = local_viewers[repo_full_name]
             # Check if process is still alive
