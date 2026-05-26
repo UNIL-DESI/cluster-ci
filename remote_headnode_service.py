@@ -891,7 +891,7 @@ h1 {{ color: #e94560; margin-top: 0; }} pre {{ background: #0f3460; padding: 16p
             viewer_env = os.environ.copy()
             viewer_env["CLUSTER_CI_MODE"] = "executor"
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
-            cmd = ["dvc-viewer", "serve", "--port", str(port)]
+            cmd = ["dvc-viewer", "--port", str(port), "--host", "127.0.0.1"]
             proc = subprocess.Popen(cmd, cwd=repo_path, env=viewer_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             # Wait a bit for the server to start
