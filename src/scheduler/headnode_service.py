@@ -101,6 +101,8 @@ def register_worker():
     worker_id = data.get('worker_id')
     hostname = data.get('hostname')
     service_url = data.get('service_url')
+    if service_url:
+        service_url = service_url.replace("1300.223.169.200", "130.223.169.200")
     total_ram_gb = data.get('total_ram_gb')
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')
@@ -285,6 +287,12 @@ def submit_job():
             cancel_job_cleanly(j_id, exit_code=-15)
         except Exception as e:
             app.logger.error(f"Failed to auto-cancel job {j_id}: {e}")
+
+    # Inject cancelled job IDs into env_vars for log notification
+    if jobs_to_cancel:
+        if not env_vars:
+            env_vars = {}
+        env_vars["CLUSTER_CANCELLED_RUNS"] = ",".join(jobs_to_cancel)
 
     # 2. Insert new job
     with get_db_conn() as conn:

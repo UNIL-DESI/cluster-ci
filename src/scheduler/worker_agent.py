@@ -178,6 +178,8 @@ else:
 HOSTNAME = socket.gethostname()
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 6000))
 SERVICE_URL = os.environ.get("SERVICE_URL", f"http://{HOSTNAME}:{AGENT_PORT}")
+if SERVICE_URL:
+    SERVICE_URL = SERVICE_URL.replace("1300.223.169.200", "130.223.169.200")
 
 # Global state for current job tracking
 current_job_id = None
@@ -324,7 +326,20 @@ def execute_job(job):
             logger.error(f"Failed to write job secrets: {e}")
 
     log_path = os.path.join(LOGS_DIR, f"{job_id}.log")
-    log_file = open(log_path, 'w')
+    log_file = open(log_path, 'w', encoding='utf-8')
+
+    # Log cancellation notifications if any previous runs were cancelled by this submission
+    if env_vars:
+        try:
+            parsed_vars = json.loads(env_vars) if isinstance(env_vars, str) else env_vars
+            if parsed_vars and "CLUSTER_CANCELLED_RUNS" in parsed_vars:
+                cancelled_runs = [r.strip() for r in parsed_vars["CLUSTER_CANCELLED_RUNS"].split(",") if r.strip()]
+                for cr_id in cancelled_runs:
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_file.write(f"[{now_str}] ℹ️  Previous active run [{cr_id}] has been cancelled by this new submission.\n")
+                log_file.flush()
+        except Exception as e:
+            logger.error(f"Failed to write cancellation notifications to log: {e}")
 
     try:
         # Delete stale port file from previous runs

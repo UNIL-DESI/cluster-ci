@@ -227,7 +227,10 @@ def schedule_jobs():
                         if peers:
                             best_peer, peer_score = peers[0]
                             if peer_score > 0:
-                                p2p_url = f"{best_peer['service_url']}/fetch_artifact"
+                                s_url = best_peer['service_url']
+                                if s_url:
+                                    s_url = s_url.replace("1300.223.169.200", "130.223.169.200")
+                                p2p_url = f"{s_url}/fetch_artifact"
 
                     logger.info(f"Assigning job {job_id} to worker {assigned_worker['worker_id']} (Score: {winner_score}, P2P: {p2p_url})")
 

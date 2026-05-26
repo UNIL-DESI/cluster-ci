@@ -101,6 +101,8 @@ def register_worker():
     worker_id = data.get('worker_id')
     hostname = data.get('hostname')
     service_url = data.get('service_url')
+    if service_url:
+        service_url = service_url.replace("1300.223.169.200", "130.223.169.200")
     total_ram_gb = data.get('total_ram_gb')
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')
