@@ -201,6 +201,9 @@ cluster-ci/
 - [x] [Garde-fous Systémiques : Prévention et éradication des processus orphelins et conteneurs zombies](https://github.com/UNIL-DESI/cluster-ci/issues/94)
 - [x] [Fix P2P and Cancellation Logs](docs/tasks/fix_p2p_and_cancellation_logs.md) : Correction de l'IP invalide P2P et ajout des notifications de log d'annulation.
 - [x] [Optimize Git and DVC Sync](https://github.com/UNIL-DESI/cluster-ci/issues/96) : Optimisation de l'historique des commits intermédiaires Git et synchronisation DVC automatique et intelligente.
+- [x] Sécurisation et optimisation de la récupération des artefacts récents (`api_latest_artifacts`) via l'historique Git local (`git ls-tree`), éliminant les freezes de l'interface.
+- [x] Ajout d'un bouton d'accès direct premium "Historique DVC-Viewer" avec `e.stopPropagation()` sur chaque carte de projet du Dashboard.
+- [x] Implémentation de la gestion stricte d'instance unique pour les processus DVC-Viewer locaux lors de l'accès à la route de visualisation.
 
 
 
