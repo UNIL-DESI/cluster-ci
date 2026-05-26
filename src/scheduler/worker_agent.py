@@ -803,6 +803,79 @@ def check_cache():
 
     return jsonify(found_hashes)
 
+def get_free_port():
+    """Find a free TCP port on the host."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+@app.route('/api/worker/dvc-viewer/start', methods=['POST'])
+def start_dvc_viewer():
+    """Start an on-demand dvc-viewer historical instance on a free port."""
+    data = request.get_json() or {}
+    repo = data.get('repo')
+    rev = data.get('rev')
+    if not repo:
+        return jsonify({"error": "Missing 'repo' parameter"}), 400
+
+    repo_path = os.path.join(REPOS_DIR, repo)
+    if not os.path.exists(repo_path):
+        return jsonify({"error": f"Repository '{repo}' not found on this worker"}), 404
+
+    try:
+        # 1. Update and Sync: git fetch
+        logger.info(f"Fetching latest commits for {repo}...")
+        subprocess.run(["git", "fetch", "--all", "--prune"], cwd=repo_path, capture_output=True, timeout=30)
+
+        # Checkout target revision if specified, else default to main branch
+        if rev:
+            logger.info(f"Checking out revision {rev} for {repo}...")
+            res_co = subprocess.run(["git", "checkout", "-f", rev], cwd=repo_path, capture_output=True, text=True, timeout=15)
+            if res_co.returncode != 0:
+                logger.warning(f"git checkout failed: {res_co.stderr.strip()}")
+        else:
+            logger.info(f"No revision specified, checkout main for {repo}...")
+            subprocess.run(["git", "checkout", "-f", "main"], cwd=repo_path, capture_output=True, timeout=15)
+            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, capture_output=True, timeout=15)
+
+        # 2. Pull physical DVC cache (P2P/remote sync)
+        logger.info(f"Executing DVC pull for {repo}...")
+        subprocess.run([DVC_CMD, "pull"], cwd=repo_path, capture_output=True, timeout=45)
+
+        # 3. Dynamic Port allocation and start
+        port = get_free_port()
+        logger.info(f"Starting historical dvc-viewer for {repo} on port {port}")
+
+        viewer_env = os.environ.copy()
+        viewer_env["CLUSTER_CI_MODE"] = "executor"
+        viewer_env["DVC_VIEWER_PROJECT_DIR"] = repo_path
+        viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
+
+        dvc_viewer_bin = get_executable("dvc-viewer")
+        cmd = [dvc_viewer_bin, "--port", str(port), "--host", "0.0.0.0"]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=repo_path,
+            env=viewer_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+        # Small grace period for startup check
+        time.sleep(2)
+        if proc.poll() is not None:
+            return jsonify({"error": "dvc-viewer failed to start"}), 500
+
+        logger.info(f"Historical dvc-viewer successfully started for {repo} on port {port}")
+        return jsonify({"status": "ok", "port": port})
+
+    except Exception as e:
+        logger.error(f"Error starting historical dvc-viewer: {e}")
+        return jsonify({"error": str(e)}), 500
+
 def get_executable(name):
     """Finds an executable in system PATH, local bin, or current venv."""
     cmd = shutil.which(name)
