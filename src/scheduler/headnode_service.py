@@ -1194,19 +1194,32 @@ def api_latest_artifacts(repo):
     cmd = [DVC_CMD, "list", source, "--rev", commit_hash, "--dvc-only", "--recursive", "--json"]
     try:
         env = os.environ.copy()
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["DVC_NO_ANALYTICS"] = "1"
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=15)
+        except subprocess.TimeoutExpired as te:
+            app.logger.error(f"Timeout expired while executing DVC list command: {te}")
+            return jsonify({"artifacts": [], "error": "DVC list command timed out after 15 seconds"}), 504
+
         if result.returncode == 0:
             return Response(result.stdout, mimetype='application/json')
         else:
             # Try fetching if unknown Git revision
             if local_repo_path and "unknown Git revision" in result.stderr:
-                subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=30)
-                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-                if result.returncode == 0:
-                    return Response(result.stdout, mimetype='application/json')
-            return jsonify({"error": "Failed to list DVC files", "details": result.stderr}), 500
+                try:
+                    subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=30)
+                    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=15)
+                    if result.returncode == 0:
+                        return Response(result.stdout, mimetype='application/json')
+                except subprocess.TimeoutExpired as te:
+                    app.logger.error(f"Timeout expired during second DVC list attempt after git fetch: {te}")
+                    return jsonify({"artifacts": [], "error": "DVC list command timed out after 15 seconds"}), 504
+            return jsonify({"artifacts": [], "error": f"Failed to list DVC files: {result.stderr.strip() if result.stderr else 'Unknown error'}"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Error listing latest DVC artifacts: {e}")
+        return jsonify({"artifacts": [], "error": str(e)}), 500
 
 @app.route('/api/projects/<path:repo>/artifact/history', methods=['GET'])
 def api_artifact_history(repo):
