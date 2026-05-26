@@ -5,10 +5,10 @@ import sys
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-def run_ssh(cmd):
+def run_ssh(ip, user, password, cmd):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect("130.223.73.209", username="henri", password="^Jw6jQTVbsGc3cwc@v^%")
+    client.connect(ip, username=user, password=password)
     stdin, stdout, stderr = client.exec_command(cmd)
     
     # Read and decode with utf-8, ignoring decoding errors
@@ -20,5 +20,8 @@ def run_ssh(cmd):
     client.close()
 
 if __name__ == "__main__":
-    run_ssh(sys.argv[1])
+    if len(sys.argv) < 5:
+        print("Usage: python ssh_cmd.py <ip> <user> <pass> <cmd>")
+        sys.exit(1)
+    run_ssh(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
 
