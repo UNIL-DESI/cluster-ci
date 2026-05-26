@@ -95,10 +95,33 @@ def cleanup():
 def fetch_results(branch):
     print(f"📥 Fetching results from cluster branch origin/{branch}...")
     try:
+        # 1. Fetch the latest commits on the draft branch
         subprocess.run(["git", "fetch", "origin", branch], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        print("📦 Synchronizing all files from the cluster commit...")
-        subprocess.run(["git", "checkout", "FETCH_HEAD", "."], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("✅ Results successfully synchronized to your local workspace.")
+        
+        # 2. Check if local workspace is clean
+        status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        is_clean = not status_res.stdout.strip()
+        
+        merged_successfully = False
+        if is_clean:
+            print("🧹 Local workspace is clean. Attempting a safe merge to bring back DVC lock and metrics history...")
+            merge_res = subprocess.run(["git", "merge", f"origin/{branch}", "--no-edit"], capture_output=True, text=True)
+            if merge_res.returncode == 0:
+                print("✅ Successfully merged all DVC lock and metrics history into your current branch!")
+                merged_successfully = True
+            else:
+                subprocess.run(["git", "merge", "--abort"], capture_output=True)
+                print("⚠️ Safe merge failed. Falling back to individual file extraction...")
+        else:
+            print("⚠️ Local workspace has uncommitted changes.")
+            print(f"💡 Suggestion: To safely bring back the complete DVC stage commit history, run:")
+            print(f"   git stash && git merge origin/{branch} && git stash pop")
+            print("👉 Extracting only the modified files to avoid touching your local uncommitted files...")
+
+        if not merged_successfully:
+            print("📦 Synchronizing all files from the cluster commit...")
+            subprocess.run(["git", "checkout", "FETCH_HEAD", "."], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            print("✅ Results successfully synchronized to your local workspace.")
     except Exception as e:
         print(f"⚠️ Could not retrieve results from cluster: {e}")
 

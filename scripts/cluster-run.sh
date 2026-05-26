@@ -248,6 +248,39 @@ stream_logs() {
     done
 }
 
+fetch_results() {
+    local branch=$1
+    echo "📥 Fetching results from cluster branch origin/$branch..."
+    if git fetch origin "$branch" >/dev/null 2>&1; then
+        # Check if local workspace is clean
+        if [ -z "$(git status --porcelain)" ]; then
+            echo "🧹 Local workspace is clean. Attempting a safe merge to bring back DVC lock and metrics history..."
+            if git merge "origin/$branch" --no-edit >/dev/null 2>&1; then
+                echo "✅ Successfully merged all DVC lock and metrics history into your current branch!"
+                return 0
+            else
+                git merge --abort >/dev/null 2>&1
+                echo "⚠️ Safe merge failed. Falling back to individual file extraction..."
+            fi
+        else
+            echo "⚠️ Local workspace has uncommitted changes."
+            echo "💡 Suggestion: To safely bring back the complete DVC stage commit history, run:"
+            echo "   git stash && git merge origin/$branch && git stash pop"
+            echo "👉 Extracting only the modified files to avoid touching your local uncommitted files..."
+        fi
+        
+        # Fallback to checkout FETCH_HEAD .
+        echo "📦 Synchronizing all files from the cluster commit..."
+        if git checkout FETCH_HEAD . >/dev/null 2>&1; then
+            echo "✅ Results successfully synchronized to your local workspace."
+        else
+            echo "⚠️ Failed to synchronize files from cluster commit."
+        fi
+    else
+        echo "⚠️ Could not fetch results from origin/$branch."
+    fi
+}
+
 shadow_run() {
     local background=$1
     check_gh_auth
@@ -334,6 +367,7 @@ shadow_run() {
 
     if [ "$conclusion" == "success" ]; then
         echo "✅ Cluster-CI run completed successfully."
+        fetch_results "$BRANCH"
     else
         echo "❌ Cluster-CI run finished with status: ${conclusion:-unknown}"
     fi
