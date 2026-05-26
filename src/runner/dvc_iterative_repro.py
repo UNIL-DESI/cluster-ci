@@ -132,6 +132,20 @@ def main():
         ret = subprocess.run(stage_cmd)
         if ret.returncode != 0:
             print(f"❌ Stage {stage} failed with code {ret.returncode}")
+            print(f"💾 Committing and pushing failure state to GitHub...")
+            subprocess.run(["git", "add", "."], check=False)
+            status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
+            if status.stdout.strip():
+                subprocess.run(["git", "config", "user.name", "cluster-ci"])
+                subprocess.run(["git", "config", "user.email", "cluster-ci@cluster.local"])
+                commit_msg = f"cluster-ci: failed stage {stage} [skip ci]"
+                subprocess.run(["git", "commit", "-m", commit_msg])
+            
+            target_branch = os.environ.get("TARGET_BRANCH")
+            if target_branch:
+                subprocess.run(["git", "push", "origin", target_branch])
+            else:
+                subprocess.run(["git", "push"])
             sys.exit(ret.returncode)
             
         print(f"\n💾 Checking for changes after stage {stage}...")
@@ -140,7 +154,7 @@ def main():
         
         status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
         if status.stdout.strip():
-            print(f"📝 Changes detected. Committing and pushing intermediate results...")
+            print(f"📝 Changes detected. Committing intermediate results locally (no push)...")
             
             # Ensure git config is set for committing
             subprocess.run(["git", "config", "user.name", "cluster-ci"])
@@ -148,17 +162,7 @@ def main():
             
             commit_msg = f"cluster-ci: intermediate results for stage {stage} [skip ci]"
             subprocess.run(["git", "commit", "-m", commit_msg])
-            
-            target_branch = os.environ.get("TARGET_BRANCH")
-            if target_branch:
-                push_res = subprocess.run(["git", "push", "origin", target_branch])
-            else:
-                push_res = subprocess.run(["git", "push"])
-                
-            if push_res.returncode != 0:
-                print(f"⚠️ Warning: Failed to push after stage {stage}")
-            else:
-                print(f"✅ Intermediate commit pushed successfully.")
+            print(f"✅ Intermediate commit created locally.")
         else:
             print(f"ℹ️ No changes to commit after stage {stage}.")
             
