@@ -944,6 +944,25 @@
                     card.appendChild(icon);
                     card.appendChild(title);
 
+                    // Add History DVC-Viewer button
+                    const parts = repoName.split('/');
+                    if (parts.length === 2) {
+                        const owner = parts[0];
+                        const repo = parts[1];
+                        const btnContainer = document.createElement('div');
+                        btnContainer.className = 'mt-3 w-100 px-2';
+                        const historyBtn = document.createElement('a');
+                        historyBtn.href = `/view/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/`;
+                        historyBtn.className = 'btn btn-sm btn-outline-primary w-100';
+                        historyBtn.innerHTML = '<i class="bi bi-clock-history me-1"></i>Historique DVC-Viewer';
+                        historyBtn.target = '_blank';
+                        historyBtn.onclick = (e) => {
+                            e.stopPropagation();
+                        };
+                        btnContainer.appendChild(historyBtn);
+                        card.appendChild(btnContainer);
+                    }
+
                     if (status) {
                         const indicatorContainer = document.createElement('div');
                         indicatorContainer.className = 'position-absolute top-0 end-0 m-2';
