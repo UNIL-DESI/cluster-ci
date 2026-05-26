@@ -33,6 +33,17 @@ class TestPortalAndProxy(unittest.TestCase):
     def setUp(self):
         with local_viewers_lock:
             local_viewers.clear()
+        from src.scheduler.headnode_service import remote_viewers, remote_viewers_lock
+        with remote_viewers_lock:
+            remote_viewers.clear()
+            
+        # Clear database tables to ensure isolation
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM workers')
+            cursor.execute('DELETE FROM jobs')
+            conn.commit()
+
         # Clear session for each test to ensure isolation
         with self.client.session_transaction() as sess:
             sess.clear()
@@ -56,17 +67,30 @@ class TestPortalAndProxy(unittest.TestCase):
         with self.client.session_transaction() as sess:
             sess['user'] = {'login': 'testuser'}
 
+        # Insert an online worker so the headnode can query it
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO workers (worker_id, hostname, service_url, status)
+                VALUES ('w1', 'worker1', 'http://worker1:6000', 'online')
+            ''')
+            conn.commit()
+
         with app.test_request_context():
             from flask import url_for
             target = url_for('view_project', owner='nonexistent', repo='repo')
 
-        response = self.client.get(target, follow_redirects=True)
-        self.assertEqual(response.status_code, 404)
-        # Check for presence of key words as strings from the decoded response
-        body = response.data.decode('utf-8')
-        self.assertIn('non', body)
-        self.assertIn('not found', body)
-        self.assertIn('locally', body)
+        # Mock the worker agent response to return 404 (repo missing on worker)
+        with patch('requests.post') as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 404
+            mock_resp.text = "Repository nonexistent/repo not found on this worker"
+            mock_post.return_value = mock_resp
+
+            response = self.client.get(target, follow_redirects=True)
+            self.assertEqual(response.status_code, 502) # worker returns non-200 -> 502 Bad Gateway
+            body = response.data.decode('utf-8')
+            self.assertIn('Failed to start historical dvc-viewer on worker', body)
 
     def test_historical_proxy_spawns_process(self):
         # Mock login
@@ -74,13 +98,20 @@ class TestPortalAndProxy(unittest.TestCase):
             sess['user'] = {'login': 'testuser'}
             sess['token'] = {'access_token': 'fake_token'}
 
-        # Create a dummy repo directory
-        os.makedirs('repositories/testowner/testrepo/.git', exist_ok=True)
+        # Insert an online worker so the headnode can query it
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO workers (worker_id, hostname, service_url, status)
+                VALUES ('w1', 'worker1', 'http://worker1:6000', 'online')
+            ''')
+            conn.commit()
 
-        with patch('subprocess.Popen') as mock_popen:
-            mock_proc = MagicMock()
-            mock_proc.poll.return_value = None
-            mock_popen.return_value = mock_proc
+        with patch('requests.post') as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"status": "ok", "port": 8888}
+            mock_post.return_value = mock_resp
 
             with patch('src.scheduler.headnode_service.proxy_request') as mock_proxy:
                 mock_proxy.return_value = app.response_class("proxied")
@@ -88,13 +119,18 @@ class TestPortalAndProxy(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.data, b'proxied')
-                mock_popen.assert_called()
-                with local_viewers_lock:
-                    self.assertIn('testowner/testrepo', local_viewers)
-
-        # Clean up dummy repo
-        import shutil
-        shutil.rmtree('repositories/testowner')
+                
+                # Check requests.post was called to start visualizer on worker
+                mock_post.assert_called_once_with(
+                    'http://worker1:6000/api/worker/dvc-viewer/start',
+                    json={'repo': 'testowner/testrepo', 'rev': None},
+                    timeout=60
+                )
+                
+                from src.scheduler.headnode_service import remote_viewers, remote_viewers_lock
+                with remote_viewers_lock:
+                    self.assertIn('testowner/testrepo', remote_viewers)
+                    self.assertEqual(remote_viewers['testowner/testrepo']['port'], 8888)
 
     def test_inactivity_cleanup(self):
         # Manually add a fake viewer to the registry
