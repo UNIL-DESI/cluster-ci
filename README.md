@@ -205,6 +205,8 @@ cluster-ci/
 - [x] Ajout d'un bouton d'accès direct premium "Historique DVC-Viewer" avec `e.stopPropagation()` sur chaque carte de projet du Dashboard.
 - [x] Implémentation de la gestion stricte d'instance unique pour les processus DVC-Viewer locaux lors de l'accès à la route de visualisation.
 - [x] DevOps : Déploiement et validation E2E en production de `dvc-viewer` avec support de l'argument `--host 127.0.0.1` et extinction automatique par heartbeat après 15 secondes d'inactivité.
+- [ ] [Feature: DVC-Viewer historique déporté en P2P sur les Workers](https://github.com/UNIL-DESI/cluster-ci/issues/97)
+
 
 
 
