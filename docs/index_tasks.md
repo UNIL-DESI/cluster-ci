@@ -13,3 +13,4 @@ Cet index répertorie l'ensemble des tâches de conception, de développement et
 | [Global Execution Timeout](tasks/global_timeout.md) | Sécurité de dépassement de temps limite, arrêt propre Docker, notification chercheur | 2026-05-22 | `Up to date` |
 | [Ghost Jobs Fix](tasks/ghost_jobs_fix.md) | Résolution définitive du problème des jobs fantômes | 2026-05-23 | `Up to date` |
 | [Fix P2P and Cancellation Logs](tasks/fix_p2p_and_cancellation_logs.md) | Correction de l'IP du remote P2P et notification des jobs annulés | 2026-05-26 | `Up to date` |
+| [Optimize Git and DVC Sync](tasks/optimize_git_and_dvc_sync.md) | Optimisation de l'historique des commits intermédiaires Git et synchronisation DVC automatique et intelligente | 2026-05-26 | `Up to date` |
