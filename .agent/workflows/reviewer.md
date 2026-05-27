@@ -1,5 +1,6 @@
 ---
-description: "Inspecteur d'exécution ultra-critique. Teste en conditions réelles, analyse les logs, rapporte dans le chat."
+alwaysApply: false
+description: Inspecteur d'exécution ultra-critique. Teste en conditions réelles, analyse les logs, rapporte dans le chat.
 ---
 
 # Reviewer Workflow
@@ -15,12 +16,16 @@ Lis l'issue GitHub pour comprendre ce qui doit être testé. Lis l'historique r�
 
 ## 2. 🖥️ Exécution & Tests Live (OBLIGATOIRE)
 **Lance la commande principale du projet** (ex: `cluster run`, ou démarre le serveur web et teste via le navigateur). C'est ta mission principale.
-**Utilise** `run_command` au premier plan et lis attentivement chaque ligne de log.
 
-**Traque implacablement :**
-- ⏳ **Timings anormaux** : Trop long (>30s de silence = danger) ou trop rapide.
+**RÈGLE ABSOLUE POUR L'EXÉCUTION** : 
+1. **Mets TOUJOURS des timeouts** : Ne lance jamais une commande pour la laisser tourner indéfiniment à l'aveugle. Utilise `WaitMsBeforeAsync` intelligemment et utilise l'outil `schedule` si besoin pour vérifier l'avancement.
+2. **Scanne l'avancement** : Pose-toi sans cesse la question : *"Est-ce qu'il y a un problème ? Est-ce que ça fait trop longtemps que je n'ai pas eu d'informations ?"*
+
+**Traque implacablement dans les logs :**
+- ⏳ **Timings anormaux & Silences** : Si tu es dans le noir sans output pendant longtemps, c'est un échec.
+- ❓ **Comportements inexpliqués** : Si tu vois "cette étape sera sautée" sans aucune raison, ou une erreur silencieuse avec code 0 → **C'est anormal, signale-le**.
+- 🌫️ **Manque de clarté** : Les logs doivent être compréhensibles. Un système qui crache des erreurs sans contexte n'est pas de qualité.
 - ⚠️ **Warnings** : Ne les ignore jamais.
-- 🤫 **Erreurs silencieuses** : Code 0 mais pas de résultat.
 - ✨ **Résultats "parfaits"** : Souvent le signe d'un mock ou d'un test biaisé.
 
 ## 3. 📊 Classification

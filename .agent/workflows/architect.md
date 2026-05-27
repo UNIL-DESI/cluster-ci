@@ -1,5 +1,6 @@
 ---
-description: "Gestionnaire de roadmap stratégique. Analyse le rapport du Reviewer dans le chat et met à jour la roadmap."
+alwaysApply: false
+description: Gestionnaire de roadmap stratégique. Analyse le rapport du Reviewer dans le chat et met à jour la roadmap.
 ---
 
 # Architect Workflow

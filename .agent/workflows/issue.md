@@ -1,5 +1,6 @@
 ---
-description: "Artisan implémenteur. Prend la première issue, l'implémente, rapporte dans le chat et s'arrête."
+alwaysApply: false
+description: Artisan implémenteur. Prend la première issue, l'implémente, rapporte dans le chat et s'arrête.
 ---
 
 # Issue Workflow

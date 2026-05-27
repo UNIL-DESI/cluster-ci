@@ -297,8 +297,23 @@ EOF
     cat <<EOF > "$HOOK_FILE"
 #!/bin/bash
 # Cluster-CI Pre-commit Validator
-exec < /dev/tty
-$LOCAL_PYTHON .cluster-ci-tools/validate_pyproject.py --interactive --pyproject pyproject.toml --constraints .cluster-ci-tools/cluster_constraints.txt
+
+INTERACTIVE=""
+if [ -t 1 ] && [ -c /dev/tty ] 2>/dev/null; then
+  exec < /dev/tty
+  INTERACTIVE="--interactive"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_CMD="python3"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_CMD="python"
+else
+  echo "❌ Error: Python is not installed or not in PATH."
+  exit 1
+fi
+
+\$PYTHON_CMD .cluster-ci-tools/validate_pyproject.py \$INTERACTIVE --pyproject pyproject.toml --constraints .cluster-ci-tools/cluster_constraints.txt
 EOF
     chmod +x "$HOOK_FILE"
     echo "✅ Pre-commit hook installed."
