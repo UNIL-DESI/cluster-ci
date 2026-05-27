@@ -71,6 +71,19 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     if not headnode_url:
         print("Error: HEADNODE_URL is required to submit a job.")
         sys.exit(1)
+
+    # Active JIT Network Diagnostic
+    try:
+        print(f"Connecting to headnode at {headnode_url} (checking connectivity)...")
+        requests.get(f"{headnode_url}/check_space", timeout=3)
+    except requests.exceptions.Timeout:
+        print(f"Error: Connection to headnode at {headnode_url} timed out (limit: 3s).")
+        print("   Please check that the headnode service is running and accessible.")
+        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        print(f"Error: Could not connect to headnode at {headnode_url}: {e}")
+        print("   Please verify the URL and network configuration.")
+        sys.exit(1)
     if not commit_hash:
         commit_hash = os.environ.get("CALLER_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
         if not commit_hash:
