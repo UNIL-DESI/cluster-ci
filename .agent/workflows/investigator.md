@@ -81,7 +81,13 @@ Si l'utilisateur pose une question, lance un sous-agent supplémentaire pour y r
 
 ## 4. 📝 Enrichissement du Review Report
 
-Mets à jour l'**artefact `review_report.md`** en **conservant sa structure originale** et en ajoutant, sous chaque défaut :
+> [!CAUTION]
+> **🛑 AJOUTS UNIQUEMENT. AUCUNE MODIFICATION. AUCUNE SUPPRESSION.**
+> Le texte original du Reviewer est SACRÉ. Tu ne changes pas un mot, tu ne reformules rien, tu ne supprimes rien.
+> Tu AJOUTES tes blocs d'investigation EN DESSOUS de chaque défaut existant. C'est tout.
+> Si tu modifies ou supprimes quoi que ce soit du rapport original, tu FAUSSES la chaîne d'information.
+
+Mets à jour l'**artefact `review_report.md`** en ajoutant, sous chaque défaut :
 
 ```markdown
 ### 🔎 Investigation
@@ -95,11 +101,13 @@ Mets à jour l'**artefact `review_report.md`** en **conservant sa structure orig
 ```
 
 > [!IMPORTANT]
-> **Structure du review report enrichi** :
-> Le rapport garde sa structure originale intacte (verdict, défauts classifiés, logs).
-> Tu AJOUTES les blocs `### 🔎 Investigation` sous chaque défaut.
-> Tu AJOUTES une section `## 💬 Réponses aux commentaires` si l'utilisateur a laissé des annotations.
-> Tu NE MODIFIES PAS les observations originales du Reviewer.
+> **Règles d'édition du review report** :
+> - ✅ AJOUTER des blocs `### 🔎 Investigation` sous chaque défaut
+> - ✅ AJOUTER une section `## 💬 Réponses aux commentaires` si l'utilisateur a laissé des annotations
+> - ❌ MODIFIER le texte, le verdict, les logs ou la classification du Reviewer
+> - ❌ SUPPRIMER, reformuler ou résumer les observations originales
+> - ❌ Réorganiser ou déplacer les sections existantes
+
 
 ## 5. 🛑 Arrêt
 1. Vérifie que chaque défaut du rapport a son bloc d'investigation.
