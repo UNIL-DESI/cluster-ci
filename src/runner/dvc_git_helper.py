@@ -157,10 +157,34 @@ def sync_metrics():
             has_changes_to_commit = True
 
     if has_changes_to_commit:
-        log_info("Committing auto-synced metrics and dvc.lock...")
+        # Detect what was actually staged using git diff --cached --quiet
+        dvc_lock_staged = False
+        if os.path.exists('dvc.lock'):
+            res_diff_lock = subprocess.run(['git', 'diff', '--cached', '--quiet', 'dvc.lock'])
+            if res_diff_lock.returncode != 0:
+                dvc_lock_staged = True
+
+        metrics_staged = False
+        for path in paths:
+            if os.path.isfile(path):
+                res_diff_metric = subprocess.run(['git', 'diff', '--cached', '--quiet', path])
+                if res_diff_metric.returncode != 0:
+                    metrics_staged = True
+                    break
+
+        if dvc_lock_staged and metrics_staged:
+            commit_msg = 'chore(ci): auto-sync metrics and dvc.lock [skip ci]'
+        elif dvc_lock_staged:
+            commit_msg = 'chore(ci): auto-sync dvc.lock [skip ci]'
+        elif metrics_staged:
+            commit_msg = 'chore(ci): auto-sync metrics [skip ci]'
+        else:
+            commit_msg = 'chore(ci): auto-sync changes [skip ci]'
+
+        log_info(f"Committing changes with message: {commit_msg}")
         subprocess.run(['git', 'config', 'user.name', 'cluster-ci-bot'], check=True)
         subprocess.run(['git', 'config', 'user.email', 'bot@cluster-ci.io'], check=True)
-        subprocess.run(['git', 'commit', '-m', 'chore(ci): auto-sync metrics and dvc.lock [skip ci]'], check=True)
+        subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
     else:
         log_info("No new metrics changes to commit.")
 

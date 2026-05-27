@@ -157,23 +157,9 @@ def main():
                 subprocess.run(["git", "push", "origin", "HEAD"])
             sys.exit(ret.returncode)
             
-        print(f"\n💾 Checking for changes after stage {stage}...")
-        
-        subprocess.run(["git", "add", "."], check=False)
-        
-        status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
-        if status.stdout.strip():
-            print(f"📝 Changes detected. Committing intermediate results locally (no push)...")
-            
-            # Ensure git config is set for committing
-            subprocess.run(["git", "config", "user.name", "cluster-ci"])
-            subprocess.run(["git", "config", "user.email", "cluster-ci@cluster.local"])
-            
-            commit_msg = f"cluster-ci: intermediate results for stage {stage} [skip ci]"
-            subprocess.run(["git", "commit", "-m", commit_msg])
-            print(f"✅ Intermediate commit created locally.")
-        else:
-            print(f"ℹ️ No changes to commit after stage {stage}.")
+        print(f"==================================================")
+        print(f"✅ Stage {stage} completed successfully.")
+        print(f"==================================================")
             
     print(f"\n✅ Iterative reproduction completed successfully.")
 
