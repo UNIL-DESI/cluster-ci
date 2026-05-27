@@ -1,15 +1,15 @@
 ---
 alwaysApply: false
-description: Artisan implémenteur. Prend la première issue, l'implémente, rapporte dans le chat et s'arrête.
+description: Artisan implémenteur. Prend la première issue, l'implémente, produit un artefact walkthrough et s'arrête.
 ---
 
 # Issue Workflow
 
 **Objectif** : Implémenter l'issue la plus urgente de A à Z.
 
-> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre et testé basiquement.
-> **🚫 LIMITES STRICTES :** Tu ne fais QU'implémenter du code et lancer de petites commandes (déplacer des fichiers, tests unitaires basiques). Tu n'exécutes RIEN de lourd (pas de tests complexes, pas de runs, pas de pipelines).
-> **🚫 AUCUN ARTEFACT.** Tout ton rapport se fait à l'oral dans le chat. Pas de fichier `walkthrough.md`.
+> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre et vérifié basiquement.
+> **🚫 AUCUNE EXÉCUTION LONGUE.** Tu ne DOIS JAMAIS exécuter de commandes longues (pipelines, entraînements, runs complexes, benchmarks, etc.). L'exécution en conditions réelles est le job EXCLUSIF des Reviewers. Toi, tu ne fais que t'assurer que ton code ne leur fera pas perdre leur temps : compilation OK, syntaxe OK, imports OK. Prépare la commande d'exécution et consigne-la dans le walkthrough pour les Reviewers.
+> **🚫 PAS DE SOUS-AGENTS.** Tu fais le travail et tu t'arrêtes. Le Reviewer prendra le relais ensuite.
 
 ## 1. 🔍 Démarrage
 1. Lis la Roadmap (`README.md`).
@@ -23,10 +23,24 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, rap
 
 ## 3. 🛠️ Implémentation
 - Respecte les conventions. Commits atomiques.
-- **Vérifie ton code** : Pas d'erreurs de syntaxe, imports corrects. Exécute les tests unitaires de base.
-- Si bloqué, utilise AIVC ou demande à l'utilisateur en dernier recours.
+- **Vérifications rapides UNIQUEMENT** (tout doit prendre <30 secondes) :
+  - ✅ Compilation / syntaxe (`python -c "import mon_module"`, `tsc --noEmit`, etc.)
+  - ✅ Imports corrects, pas d'erreurs évidentes
+  - ✅ Tests unitaires ultra-rapides s'ils existent déjà
+  - ✅ Linting basique
+  - ❌ Pipelines, entraînements, benchmarks, exécutions complètes
+  - ❌ Toute commande qui prend plus de 30 secondes
+- **Ton objectif** : t'assurer que le code ne fera PAS perdre leur temps aux Reviewers avec des erreurs triviales. Tu ne fais PAS le travail des Reviewers. Tu prépares un livrable propre qu'ils pourront tester en conditions réelles.
 
-## 4. 📝 Rapport & Arrêt
-1. **Fais ton rapport directement dans le chat** (résumé des changements, commandes exactes à lancer pour tester).
+## 4. 📝 Livrable (Walkthrough)
+Crée un **artefact** `walkthrough.md` (via le système d'artefacts, PAS un fichier physique dans le repo) contenant :
+1. Titre et lien de l'issue.
+2. Résumé des changements.
+3. Commandes exactes pour tester l'implémentation (pour le prochain agent Reviewer).
+
+Cet artefact sera partagé automatiquement avec le Reviewer qui prendra le relais.
+
+## 5. 🛑 Arrêt
+1. Rapporte tes actions dans le chat.
 2. Fais un `remember` dans AIVC.
-3. **ARRÊTE-TOI**. Ne ferme PAS l'issue. L'utilisateur invoquera le Reviewer ensuite.
+3. **ARRÊTE-TOI**. Ne ferme PAS l'issue. Demande à l'utilisateur d'invoquer le Reviewer.
