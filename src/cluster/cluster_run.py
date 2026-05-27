@@ -545,11 +545,14 @@ def shadow_run():
                 else:
                     print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
             else:
-                # Fallback to checkout dvc.lock directly if diff command fails
-                subprocess.run(["git", "checkout", f"origin/{BRANCH}", "--", "dvc.lock"], check=True)
-                print("✅ Synchronized local dvc.lock (fallback).")
+                raise RuntimeError(
+                    f"FATAL: 'git diff {base_ref} origin/{BRANCH} --name-only' failed "
+                    f"(exit code {res_diff.returncode}). Cannot determine which files "
+                    f"were modified on the cluster. Stderr: {res_diff.stderr}"
+                )
         except Exception as e:
-            print(f"⚠️ Failed to auto-sync results from cluster: {e}")
+            print(f"❌ Failed to auto-sync results from cluster: {e}", file=sys.stderr)
+            raise
     else:
         print(f"❌ Cluster-CI run finished with status: {conclusion or 'unknown'}")
 
