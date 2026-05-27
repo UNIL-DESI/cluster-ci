@@ -18,6 +18,7 @@ import shutil
 import requests
 import subprocess
 import sys
+import yaml
 import time
 import threading
 import re
@@ -822,6 +823,111 @@ def cleanup_inactive_viewers():
             for repo_name in to_delete_remote:
                 del remote_viewers[repo_name]
 
+@app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
+def api_latest_artifacts(repo):
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT commit_hash, branch, job_id, created_at
+            FROM jobs
+            WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1
+        ''', (repo,))
+        last_run = cursor.fetchone()
+
+    if not last_run:
+        return jsonify([])
+
+    commit_hash = last_run['commit_hash']
+    local_repo_path = find_local_repo(repo)
+
+    if not local_repo_path:
+        app.logger.warning(f"Local repo path not found for {repo}")
+        return jsonify([])
+
+    try:
+        # Run git ls-tree to list all files at that commit
+        cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
+
+        if result.returncode != 0:
+            # If the commit is not locally known, try fetching it quickly (timeout 5s)
+            app.logger.info(f"Commit not found locally, fetching for {repo}...")
+            subprocess.run(["git", "fetch", "--all"], cwd=local_repo_path, capture_output=True, timeout=5)
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
+
+        if result.returncode == 0:
+            all_git_files = [l for l in result.stdout.strip().split("\n") if l]
+
+            # Attempt to discover DVC artifacts from dvc.yaml
+            dvc_artifacts = set()
+            try:
+                show_cmd = ["git", "show", f"{commit_hash}:dvc.yaml"]
+                show_res = subprocess.run(show_cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
+                if show_res.returncode == 0:
+                    dvc_config = yaml.safe_load(show_res.stdout)
+                    if dvc_config and 'stages' in dvc_config:
+                        for stage_name, stage_cfg in dvc_config['stages'].items():
+                            for key in ['outs', 'metrics', 'plots']:
+                                if key in stage_cfg:
+                                    items = stage_cfg[key]
+                                    if isinstance(items, list):
+                                        for item in items:
+                                            if isinstance(item, str):
+                                                dvc_artifacts.add(item)
+                                            elif isinstance(item, dict):
+                                                # Handle format: {"path": {"cache": false}}
+                                                for path in item.keys():
+                                                    dvc_artifacts.add(path)
+                elif show_res.returncode != 0:
+                    app.logger.info(f"dvc.yaml not found in {repo} at {commit_hash}")
+            except Exception as e:
+                app.logger.warning(f"Failed to parse dvc.yaml for {repo}: {e}")
+
+            files = []
+            for line in all_git_files:
+                # 1. If we have DVC artifacts, strictly filter by them
+                if dvc_artifacts:
+                    # Check if the file is one of the artifacts or inside an artifact directory
+                    is_artifact = False
+                    for art in dvc_artifacts:
+                        if line == art or line.startswith(art + '/'):
+                            is_artifact = True
+                            break
+                    if not is_artifact:
+                        continue
+                else:
+                    # 2. Fallback: Aggressive exclusion of non-artifact files
+                    # Filter out system and config directories
+                    if any(line.startswith(p) for p in [".git/", ".github/", ".dvc/", ".idea/", ".vscode/", ".agent/"]):
+                        continue
+                    # Filter out common source/config extensions
+                    if any(line.endswith(ext) for ext in [
+                        ".py", ".sh", ".md", ".yaml", ".yml", ".json",
+                        ".toml", ".lock", ".txt", ".gitattributes", ".gitignore", ".dvcignore"
+                    ]):
+                        # Exception for common metric/plot suffixes even in fallback
+                        if not any(x in line.lower() for x in ["metric", "plot", "result", "output", "artifact"]):
+                            continue
+
+                files.append({
+                    "path": line,
+                    "is_dir": False,
+                    "size": 0,
+                    "isout": True
+                })
+            return jsonify(files)
+        else:
+            app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
+            return jsonify([])
+
+    except Exception as e:
+        app.logger.error(f"Error listing latest artifacts from local Git for {repo}: {e}")
+        return jsonify([])
+
 @app.route('/view/<owner>/<repo>/')
 @app.route('/view/<owner>/<repo>/<path:path>')
 def view_project(owner, repo, path=''):
@@ -902,8 +1008,24 @@ h1 {{ color: #e94560; margin-top: 0; }} pre {{ background: #0f3460; padding: 16p
                 row = cursor.fetchone()
                 if row:
                     rev = row['commit_hash']
+                else:
+                    rev = 'main'
         except Exception as e:
             app.logger.error(f"Error fetching default commit hash for historical view: {e}")
+            rev = 'main'
+
+    # Resolve rev to an absolute commit SHA to prevent "zombie" stages when a branch moves
+    local_repo_path = find_local_repo(repo_full_name)
+    if local_repo_path:
+        try:
+            # First, fetch to make sure we have the latest SHAs for branches
+            subprocess.run(["git", "fetch", "--all"], cwd=local_repo_path, capture_output=True, timeout=5)
+            # Resolve the revision
+            res = subprocess.run(["git", "rev-parse", rev], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                rev = res.stdout.strip()
+        except Exception as e:
+            app.logger.warning(f"Could not resolve revision {rev} to SHA for {repo_full_name}: {e}")
 
     with remote_viewers_lock:
         if repo_full_name in remote_viewers:
