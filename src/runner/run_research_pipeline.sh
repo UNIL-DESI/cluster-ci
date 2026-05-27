@@ -237,6 +237,10 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT="2"
 log_info "RAM limit detected: ${RAM_LIMIT}GB"
 
+# Convert RAM limit in GB to integer MegaBytes for Docker --memory option
+RAM_LIMIT_MB=$(python3 -c "import math; print(int(float('${RAM_LIMIT}') * 1024))" 2>/dev/null || awk "BEGIN {print int(${RAM_LIMIT} * 1024)}")
+log_info "RAM limit converted for Docker: ${RAM_LIMIT_MB}MB"
+
 
 # Configuration Docker
 DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
@@ -279,6 +283,7 @@ echo "$VIEWER_PORT" > .cluster-ci-viewer-port
 
 docker run -d \
     --name "${MAIN_CONTAINER_NAME}" \
+    --memory="${RAM_LIMIT_MB}m" \
     $COMMON_LABELS \
     $DOCKER_PORT_MAPPING \
     --entrypoint "tail" \
