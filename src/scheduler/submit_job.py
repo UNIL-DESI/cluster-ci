@@ -68,6 +68,9 @@ def get_config_value(pattern, content, default=None, is_float=False):
 
 def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None):
     """Submits a research job to the headnode scheduler."""
+    if not headnode_url:
+        print("❌ Error: HEADNODE_URL is required to submit a job.")
+        sys.exit(1)
     if not commit_hash:
         commit_hash = os.environ.get("CALLER_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
         if not commit_hash:
@@ -148,6 +151,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         headers["Authorization"] = f"Bearer {token}"
 
     try:
+        print(f"📡 Connecting to headnode at {headnode_url}...")
         resp = requests.post(f"{headnode_url}/submit_job", json={
             "repo": repo,
             "branch": branch,
@@ -172,6 +176,9 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
 
 def wait_for_job(headnode_url, job_id):
     """Polls the headnode for job status and streams logs from the worker."""
+    if not headnode_url:
+        print("❌ Error: HEADNODE_URL is required to check job status.")
+        sys.exit(1)
     print(f"⏳ Waiting for job {job_id} to complete...")
 
     def signal_handler(sig, frame):
@@ -460,11 +467,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Submit a job to Cluster-CI Scheduler")
     parser.add_argument("repo", help="Target repository (owner/repo)")
     parser.add_argument("branch", help="Target branch")
-    parser.add_argument("--headnode", default=os.environ.get("HEADNODE_URL", "http://localhost:5000"), help="Headnode URL")
+    parser.add_argument("--headnode", default=os.environ.get("HEADNODE_URL"), help="Headnode URL")
     parser.add_argument("--gh-token", default=None, help="GitHub token for cloning private repos")
     parser.add_argument("-e", "--env", action="append", help="Environment variables to pass (KEY=VALUE)", default=[])
 
     args = parser.parse_args()
+
+    if not args.headnode:
+        print("❌ Error: HEADNODE_URL environment variable is missing and no --headnode argument was provided.")
+        print("   Please set the HEADNODE_URL environment variable or provide the --headnode parameter.")
+        sys.exit(1)
 
     env_vars = {}
     
