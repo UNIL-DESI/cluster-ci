@@ -39,7 +39,10 @@ if [ -e /var/run/docker.sock ]; then
 fi
 
 CLUSTER_TOKEN="${CLUSTER_TOKEN:-}"
-HEADNODE_URL="${HEADNODE_URL:-http://localhost:5000}"
+if [ -z "${HEADNODE_URL:-}" ]; then
+    echo "❌ Error: HEADNODE_URL environment variable is missing."
+    exit 1
+fi
 
 echo "=== [1/6] Enabling Maintenance Mode ==="
 curl -s -X POST "${HEADNODE_URL}/maintenance/on" \
