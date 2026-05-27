@@ -400,7 +400,10 @@ def run_transfer_gc():
         registry_path = get_registry_path()
         if not registry_path.exists(): return
 
-        headnode_url = os.environ.get("HEADNODE_URL", "http://localhost:5000")
+        headnode_url = os.environ.get("HEADNODE_URL")
+        if not headnode_url:
+            print("❌ Error: HEADNODE_URL environment variable is missing.")
+            sys.exit(1)
 
         # 1. Identify candidates (Locked briefly)
         candidates = []
