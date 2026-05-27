@@ -15,3 +15,4 @@ Cet index répertorie l'ensemble des tâches de conception, de développement et
 | [Fix P2P and Cancellation Logs](tasks/fix_p2p_and_cancellation_logs.md) | Correction de l'IP du remote P2P et notification des jobs annulés | 2026-05-26 | `Up to date` |
 | [Optimize Git and DVC Sync](tasks/optimize_git_and_dvc_sync.md) | Optimisation de l'historique des commits intermédiaires Git et synchronisation DVC automatique et intelligente | 2026-05-26 | `Up to date` |
 | [Rescue and Robustness GHA Runner](tasks/rescue_and_robustness_runner.md) | Durcissement systemd, nettoyage profond des slots et processus orphelins suite aux annulations de jobs | 2026-05-27 | `Up to date` |
+| [OOM Cgroups Detection](tasks/oom_cgroups_detection.md) | Détection explicite et robuste du dépassement de la RAM par cgroups Docker | 2026-05-27 | `Up to date` |
