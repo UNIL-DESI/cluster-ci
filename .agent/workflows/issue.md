@@ -7,8 +7,7 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, pro
 
 **Objectif** : Implémenter l'issue la plus urgente de A à Z.
 
-> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre et vérifié basiquement.
-> **🚫 AUCUNE EXÉCUTION LONGUE.** Tu ne DOIS JAMAIS exécuter de commandes longues (pipelines, entraînements, runs complexes, benchmarks, etc.). L'exécution en conditions réelles est le job EXCLUSIF des Reviewers. Toi, tu ne fais que t'assurer que ton code ne leur fera pas perdre leur temps : compilation OK, syntaxe OK, imports OK. Prépare la commande d'exécution et consigne-la dans le walkthrough pour les Reviewers.
+> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre, testé et fonctionnel.
 > **🚫 PAS DE SOUS-AGENTS.** Tu fais le travail et tu t'arrêtes. Le Reviewer prendra le relais ensuite.
 
 ## 1. 🔍 Démarrage
@@ -23,14 +22,13 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, pro
 
 ## 3. 🛠️ Implémentation
 - Respecte les conventions. Commits atomiques.
-- **Vérifications rapides UNIQUEMENT** (tout doit prendre <30 secondes) :
-  - ✅ Compilation / syntaxe (`python -c "import mon_module"`, `tsc --noEmit`, etc.)
-  - ✅ Imports corrects, pas d'erreurs évidentes
-  - ✅ Tests unitaires ultra-rapides s'ils existent déjà
-  - ✅ Linting basique
-  - ❌ Pipelines, entraînements, benchmarks, exécutions complètes
-  - ❌ Toute commande qui prend plus de 30 secondes
-- **Ton objectif** : t'assurer que le code ne fera PAS perdre leur temps aux Reviewers avec des erreurs triviales. Tu ne fais PAS le travail des Reviewers. Tu prépares un livrable propre qu'ils pourront tester en conditions réelles.
+- **Vérifie que ça fonctionne** : tu peux exécuter les commandes nécessaires (y compris longues) pour tester ton implémentation :
+  - ✅ Compilation / syntaxe
+  - ✅ Imports corrects, linting
+  - ✅ Tests unitaires
+  - ✅ Exécution de la commande principale pour vérifier le bon fonctionnement
+  - ✅ Corrections rapides si tu constates des problèmes évidents
+- **Ton objectif** : livrer un code qui FONCTIONNE. Ne fais pas perdre leur temps aux Reviewers avec des erreurs triviales. Teste, constate, corrige les gros problèmes, et consigne la commande de test dans le walkthrough.
 
 ## 4. 📝 Livrable (Walkthrough)
 Crée un **artefact** `walkthrough.md` (via le système d'artefacts, PAS un fichier physique dans le repo) contenant :
