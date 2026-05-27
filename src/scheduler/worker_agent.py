@@ -18,7 +18,10 @@ from flask import Flask, jsonify, send_from_directory, send_file, request, Respo
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HEADNODE_URL = os.environ.get("HEADNODE_URL", "http://localhost:5000")
+HEADNODE_URL = os.environ.get("HEADNODE_URL")
+if not HEADNODE_URL:
+    logger.critical("❌ Error: HEADNODE_URL environment variable is missing.")
+    sys.exit(1)
 CLUSTER_TOKEN = os.environ.get("CLUSTER_TOKEN")
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOGS_DIR = os.path.join(BASE_DIR, "job_logs")
