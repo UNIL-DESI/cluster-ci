@@ -60,6 +60,11 @@ COMMON_LABELS="--label cluster-ci-job=${JOB_ID} --label cluster-ci-repo=${TARGET
 # Delegation mode: If not explicitly in executor mode,
 # delegate the task to the scheduler via submit_job.py
 if [ "$CLUSTER_CI_MODE" != "executor" ]; then
+    if [ -z "$HEADNODE_URL" ]; then
+        echo "Error: HEADNODE_URL is not set. In delegation mode, the GHA runner must know the scheduler address." >&2
+        echo "   Please define HEADNODE_URL in the host environment or in .env." >&2
+        exit 1
+    fi
     echo "🌐 Delegation Mode enabled. Submitting job to scheduler..."
     
     # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)

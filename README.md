@@ -200,7 +200,7 @@ cluster-ci/
 
 **Phase 3 (Stability & Correctness — In Progress)**
 - [x] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105)
-- [ ] [Orchestrateur : Fallback silencieux de HEADNODE_URL et absence de feedback réseau](https://github.com/UNIL-DESI/cluster-ci/issues/109) *(rejeté par review : architecture validée, fail-fast non implémenté)*
+- [/] [Orchestrateur : Fallback silencieux de HEADNODE_URL et absence de feedback réseau](https://github.com/UNIL-DESI/cluster-ci/issues/109) *(en cours de résolution)*
 - [ ] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106) *(dépend de #109)*
 - [ ] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go](https://github.com/UNIL-DESI/cluster-ci/issues/107)
 - [ ] [cluster-run CLI : Mojibake Windows, feedback suppression branche et verbosité scheduler](https://github.com/UNIL-DESI/cluster-ci/issues/108)
