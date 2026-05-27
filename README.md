@@ -207,6 +207,7 @@ cluster-ci/
 - [x] DevOps : Déploiement et validation E2E en production de `dvc-viewer` avec support de l'argument `--host 127.0.0.1` et extinction automatique par heartbeat après 15 secondes d'inactivité.
 - [x] [Feature: DVC-Viewer historique déporté en P2P sur les Workers](https://github.com/UNIL-DESI/cluster-ci/issues/97)
 - [x] [Fix DVC lock issues and improve P2P pull logging](https://github.com/UNIL-DESI/cluster-ci/issues/98)
+- [x] [Rescue et Robustesse du Runner Actions (SSH)](https://github.com/UNIL-DESI/llm-as-recommender/issues/65) : Durcissement du service systemd du runner permanent du Headnode (Restart=always, RestartSec=5, KillMode=process) et éradication complète des processus orphelins sur les slots de runners éphémères.
 
 
 

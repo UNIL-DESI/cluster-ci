@@ -142,6 +142,8 @@ WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/runner_manager.py
 Restart=always
+RestartSec=5
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -164,6 +166,8 @@ WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/headnode_service.py
 Restart=always
+RestartSec=5
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -182,6 +186,8 @@ WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/scheduler_loop.py
 Restart=always
+RestartSec=5
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -211,6 +217,7 @@ EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
 Restart=always
 RestartSec=10
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
