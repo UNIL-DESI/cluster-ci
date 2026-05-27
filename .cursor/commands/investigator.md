@@ -22,9 +22,22 @@ description: Enquêteur en lecture seule. Lance des sous-agents pour investiguer
 3. Lis l'**artefact `walkthrough.md`** produit par l'agent Issue (pour le contexte des changements).
 4. **Lis les commentaires de l'utilisateur** : l'utilisateur a pu annoter le review report avec ses propres observations, questions ou doutes. Prends-les en compte comme des pistes d'investigation prioritaires.
 
-## 2. 🔍 Investigation (OBLIGATOIRE)
+## 2. 🔍 Investigation (OBLIGATOIRE — VIA SOUS-AGENTS)
 
-Pour **chaque défaut classifié** (🔴/🟡/🟠) dans le review report, **lance un sous-agent** (`invoke_subagent TypeName="self"`) avec ce prompt :
+> [!CAUTION]
+> **🛑 TU NE FAIS PAS L'INVESTIGATION TOI-MÊME.**
+> Tu es un COORDINATEUR. Tu lances un sous-agent pour CHAQUE défaut, tu attends leurs retours, et tu agrèges les résultats.
+> **Si tu te mets à lire du code ou à investiguer directement un problème, tu fais ERREUR. Délègue.**
+
+### Procédure pas-à-pas :
+
+**Étape 1 — Lancer les sous-agents** : Pour **chaque défaut classifié** (🔴/🟡/🟠) dans le review report, lance un sous-agent **séparé** (`invoke_subagent TypeName="self"`). Un défaut = un sous-agent. Pas d'exception.
+
+**Étape 2 — Attendre les retours** : Chaque sous-agent te rapportera ses hypothèses via `send_message`. Attends d'avoir reçu les retours de TOUS les sous-agents avant de passer à l'étape suivante. Utilise `schedule` (DurationSeconds=300) pour relancer ceux qui tardent.
+
+**Étape 3 — Agréger** : Une fois tous les retours reçus, c'est TOI qui agrèges et structures les hypothèses dans le review report (section 4).
+
+### Prompt pour chaque sous-agent :
 
 ```
 Tu es un Enquêteur Spécialisé. Ton unique mission est d'investiguer UN problème précis.
@@ -54,7 +67,8 @@ INTERDICTION TOTALE de proposer des corrections ou des solutions.
 Envoie ton rapport d'investigation à ton parent via send_message.
 ```
 
-> **💡 PARALLÉLISATION** : Lance autant de sous-agents que de défauts à investiguer. Ils travaillent en parallèle et te rapportent chacun leurs conclusions.
+> **💡 PARALLÉLISATION** : Lance TOUS les sous-agents en même temps. Ils travaillent en parallèle et te rapportent chacun leurs conclusions via `send_message`.
+
 
 ## 3. 💬 Interaction avec l'utilisateur
 
