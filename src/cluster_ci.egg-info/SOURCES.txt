@@ -8,7 +8,10 @@ src/cluster_ci.egg-info/dependency_links.txt
 src/cluster_ci.egg-info/entry_points.txt
 src/cluster_ci.egg-info/requires.txt
 src/cluster_ci.egg-info/top_level.txt
+src/runner/dvc_git_helper.py
+src/runner/dvc_iterative_repro.py
 src/runner/gc_orchestrator.py
+src/runner/test_dvc_git_helper.py
 src/runner/test_gc.py
 src/runner/test_tiered_gc.py
 src/runner/validate_pyproject.py
