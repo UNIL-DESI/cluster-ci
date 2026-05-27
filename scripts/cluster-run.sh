@@ -29,7 +29,6 @@ show_help() {
     echo "  cancel <run_id>     Cancel a specific run"
     echo ""
     echo "Options:"
-    echo "  --background, -b    Submit the run and exit without watching logs"
     echo "  --help, -h          Show this help message"
     echo ""
 }
@@ -282,7 +281,6 @@ fetch_results() {
 }
 
 shadow_run() {
-    local background=$1
     check_gh_auth
     local user=$(get_current_user)
     BRANCH="cluster-draft/$user"
@@ -317,16 +315,6 @@ shadow_run() {
 
     echo "🚀 Shadow pushing to origin/$BRANCH..."
     git push origin "$commit_to_push:refs/heads/$BRANCH" --force --quiet
-
-    if [ "$background" = true ]; then
-        echo "✅ Run submitted in background. You can watch it with: cluster-run list"
-        # In background mode, we DON'T want the EXIT trap to delete the branch immediately
-        # because the GHA is still running. The researcher will have to delete it later or
-        # it will be overwritten by next run.
-        # Actually, for background runs, we should probably just untrap.
-        trap - EXIT
-        return
-    fi
 
     # 3. Find and watch the run
     echo "⏳ Waiting for GitHub Actions to trigger..."
@@ -422,10 +410,6 @@ case "$COMMAND" in
         show_help
         ;;
     *)
-        BG=false
-        if [[ "$1" == "--background" || "$1" == "-b" ]]; then
-            BG=true
-        fi
-        shadow_run "$BG"
+        shadow_run
         ;;
 esac

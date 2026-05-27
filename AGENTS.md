@@ -40,7 +40,6 @@ En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes sui
    - Utilise la commande locale `cluster-run` dans ton terminal.
    - **Guide d'utilisation de `cluster-run`** :
      - `cluster-run` : Pousse un shadow commit avec l'état actuel de ton espace de travail (y compris les fichiers non commités et fichiers untracked) vers une branche de draft temporaire. Cela va déclencher le runner, soumettre le job au scheduler du Headnode, puis **streamer en direct et en temps réel les logs d'exécution ligne par ligne dans ton terminal local**. C'est la commande principale pour itérer rapidement sans polluer l'historique git.
-     - `cluster-run --background` : Soumet le job de la même manière, mais te rend immédiatement la main dans le terminal.
      - `cluster-run list` : Affiche l'historique et le statut (pending, running, completed, failed) des runs récents.
      - `cluster-run view [run_id]` : Affiche ou reprend le streaming des logs d'un run spécifié (ou du tout dernier run si aucun ID n'est fourni).
      - `cluster-run cancel [run_id]` : Interrompt proprement l'exécution d'un run en cours et nettoie la branche temporaire correspondante.

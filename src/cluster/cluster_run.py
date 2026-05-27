@@ -128,6 +128,14 @@ def cleanup():
         print(f"🧹 Deleting remote branch origin/{BRANCH}...")
         subprocess.run(["git", "push", "origin", "--delete", BRANCH, "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def check_curl():
+    """Verify if curl is installed."""
+    try:
+        subprocess.run(["curl", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, Exception):
+        return False
+
 def display_clean_queue_status(run_id):
     """Fetches GHA logs, parses them to find the latest queue/scheduler status block,
     clears the terminal screen, and prints a clean, non-duplicated view.
@@ -211,163 +219,109 @@ def display_clean_queue_status(run_id):
 
 def stream_logs(run_id, commit_sha):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
+    has_curl = check_curl()
+    last_gha_poll_time = 0
     
-    # 1. Connect to live terminal via piping
-    if commit_sha:
-        print("🔍 Connecting to live terminal session via piping...")
-        print("⚡ Capturing real-time logs from runner (streaming to your terminal)...")
-        print("==========================================================================")
-        
-        last_gh_log_time = 0
-        try:
-            while True:
-                # Prior check of GHA run status
-                status = "queued"
-                conclusion = None
-                try:
-                    res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if res.returncode == 0:
-                        info = json.loads(res.stdout)
-                        status = info.get("status")
-                        conclusion = info.get("conclusion")
-                        if status == "completed" or conclusion:
-                            if conclusion == "success":
-                                print("✅ Cluster-CI run completed successfully!")
-                            else:
-                                print(f"❌ Cluster-CI run finished with status: {conclusion}")
-                            break
-                except Exception:
-                    pass
+    # For 'view' mode or resuming, it's good to show what happened before
+    print(f"📦 Fetching latest logs from GitHub Actions (Run ID: {run_id})...")
+    try:
+        log_res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if log_res.returncode == 0:
+            lines = log_res.stdout.splitlines()
+            # Show last 20 lines of previous logs to give context
+            for line in lines[-20:]:
+                parts = line.split("\t")
+                content = parts[2] if len(parts) >= 3 else line
+                content = content.replace("\ufeff", "")
+                content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
+                content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
+                if content.strip():
+                    print(f"\033[90m[context]\033[0m {content}")
+    except Exception:
+        pass
 
-                # If the job is active but ppng.io is not receiving data (e.g. still in queue)
-                # Fetch recent logs from GitHub every 15 seconds to show queue/startup status dynamically on-place
-                if time.time() - last_gh_log_time > 15:
-                    display_clean_queue_status(run_id)
-                    last_gh_log_time = time.time()
+    try:
+        while True:
+            # 1. Check GHA status
+            status = "queued"
+            conclusion = None
+            try:
+                res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                if res.returncode == 0:
+                    info = json.loads(res.stdout)
+                    status = info.get("status")
+                    conclusion = info.get("conclusion")
+                    if status == "completed" or conclusion:
+                        if conclusion == "success":
+                            print("\n✅ Cluster-CI run completed successfully!")
+                            return 0
+                        elif conclusion == "cancelled":
+                            print("\n⚠️  Cluster-CI run was cancelled.")
+                            return 1
+                        else:
+                            print(f"\n❌ Cluster-CI run finished with status: {conclusion or 'failed'}")
+                            return 1
+            except Exception:
+                pass
 
-                # Start curl process to stream from ppng.io
+            # 2. Try live streaming if possible
+            if has_curl and commit_sha:
                 proc = subprocess.Popen(
                     ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                     stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace"
                 )
                 
-                stop_event = threading.Event()
+                # Flag to check if we received any data (using a list for thread safety)
+                received_data = [False]
                 
-                def monitor_run_status():
-                    while not stop_event.is_set() and proc.poll() is None:
-                        time.sleep(5)
+                # Thread to monitor GHA status, queue status, and kill curl if job finishes
+                stop_curl_event = threading.Event()
+                def kill_curl_if_done():
+                    last_queue_poll = time.time()
+                    while not stop_curl_event.is_set() and proc.poll() is None:
+                        time.sleep(2)
                         try:
-                            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                            if res.returncode == 0:
-                                status_info = json.loads(res.stdout)
-                                status = status_info.get("status")
-                                conclusion = status_info.get("conclusion")
-                                if status == "completed" or conclusion:
-                                    proc.terminate()
-                                    break
-                        except Exception:
-                            pass
+                            # If we haven't received live data, show queue status every 10s
+                            now = time.time()
+                            if not received_data[0] and (now - last_queue_poll) > 10:
+                                display_clean_queue_status(run_id)
+                                last_queue_poll = now
+                                
+                            r = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status"], capture_output=True, text=True)
+                            if r.returncode == 0 and json.loads(r.stdout).get("status") == "completed":
+                                proc.terminate()
+                                break
+                        except: pass
 
-                monitor_thread = threading.Thread(target=monitor_run_status, daemon=True)
-                monitor_thread.start()
+                mon_thread = threading.Thread(target=kill_curl_if_done, daemon=True)
+                mon_thread.start()
 
-                # Read line by line and print cleanly
-                for line in proc.stdout:
-                    print_line(line.rstrip('\r\n'), force=True)
-
-                # Wait for curl to finish
-                proc.wait()
-                stop_event.set()
-
-                # Check GHA status again
                 try:
-                    res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if res.returncode == 0:
-                        info = json.loads(res.stdout)
-                        status = info.get("status")
-                        conclusion = info.get("conclusion")
-                        if status == "completed" or conclusion:
-                            if conclusion == "success":
-                                print("✅ Cluster-CI run completed successfully!")
-                            else:
-                                print(f"❌ Cluster-CI run finished with status: {conclusion}")
-                            break
+                    for line in proc.stdout:
+                        if not received_data[0]:
+                            print("🟢 Live stream connected.")
+                            received_data[0] = True
+                        print_line(line.rstrip('\r\n'), force=True)
+                        last_gha_poll_time = time.time()
                 except Exception:
                     pass
-
-                # If the run is still active but curl stopped, wait and reconnect
-                print("\n🔄 Connection to piping lost or waiting for runner. Reconnecting in 3s...")
-                time.sleep(3)
-
-        except KeyboardInterrupt:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            raise
+                finally:
+                    stop_curl_event.set()
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1)
+                    except: pass
             
-        print("==========================================================================")
-        return 0
-
-    # 3. Fallback: API Polling & Consolidated Logs Dump
-    print("📺 Live terminal not available. Waiting for GHA completion to fetch logs...")
-    spin_idx = 0
-    spin_chars = ["/", "-", "\\", "|"]
-    
-    while True:
-        try:
-            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-            info = json.loads(res.stdout) if res.returncode == 0 else {"status": "queued", "conclusion": None}
-        except Exception:
-            info = {"status": "queued", "conclusion": None}
+            # 3. Fallback / Idle Poll
+            # Only poll here if we are not using curl (otherwise the thread handles it)
+            if not (has_curl and commit_sha) and (time.time() - last_gha_poll_time > 10):
+                display_clean_queue_status(run_id)
+                last_gha_poll_time = time.time()
             
-        status = info.get("status", "queued")
-        conclusion = info.get("conclusion")
-        
-        char = spin_chars[spin_idx]
-        spin_idx = (spin_idx + 1) % 4
-        
-        if status == "completed" or conclusion:
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
-            print("📥 Job completed. Fetching consolidated logs...")
-            print("==========================================================================")
-            try:
-                log_res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                if log_res.returncode == 0:
-                    for line in log_res.stdout.splitlines():
-                        # Parse lines that have: "timestamp \t step_name \t log_content"
-                        parts = line.split("\t")
-                        if len(parts) >= 3:
-                            step = parts[1]
-                            content = parts[2]
-                            # Clean GHA noise
-                            content = content.replace("\ufeff", "")
-                            # Strip GHA timestamp prefixes if present
-                            content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
-                            content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
-                            if content.strip():
-                                print(f"\033[90m[{step}]\033[0m {content}")
-            except Exception as e:
-                print(f"Error fetching GHA logs: {e}")
-                
-            print("==========================================================================")
-            if conclusion == "success":
-                print("✅ Cluster-CI run completed successfully!")
-                return 0
-            elif conclusion == "cancelled":
-                print("⚠️  Cluster-CI run was cancelled.")
-                return 1
-            else:
-                print(f"❌ Cluster-CI run finished with status: {conclusion or 'failed'}")
-                return 1
-                
-        if status == "queued":
-            sys.stdout.write(f"\r⏳ Waiting in GitHub Actions queue [{char}]...")
-        else:
-            sys.stdout.write(f"\r⏱️  Job in progress [{char}] (logs will appear on completion)...")
-        sys.stdout.flush()
-        time.sleep(3)
+            time.sleep(2)
+
+    except KeyboardInterrupt:
+        raise
 
 def check_gitattributes_safety():
     """Verify that .gitattributes is safe and doesn't corrupt binary files."""
@@ -451,7 +405,7 @@ def clean_old_results():
     if removed > 0:
         print(f"🧹 Purged {removed} old result file(s) to ensure a fresh start.")
 
-def shadow_run(background=False):
+def shadow_run():
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
     
@@ -510,10 +464,6 @@ def shadow_run(background=False):
 
     print(f"🚀 Shadow pushing to origin/{BRANCH}...")
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/heads/{BRANCH}", "--force", "--quiet"], check=True)
-
-    if background:
-        print("✅ Run submitted in background. You can watch it with: cluster-run list")
-        return
 
     # Find the triggered GHA run
     print("⏳ Waiting for GitHub Actions to trigger...")
@@ -664,8 +614,6 @@ def main():
                         help="Action to perform (default: submit a new shadow run)")
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view' or 'cancel'")
-    parser.add_argument("-b", "--background", action="store_true",
-                        help="Submit the run and exit without watching logs")
 
     args = parser.parse_args()
 
@@ -699,8 +647,8 @@ def main():
                 info = json.loads(res.stdout)
                 status = info.get("status")
                 head_sha = info.get("headSha")
-                if status in ("in_progress", "queued") and head_sha:
-                    print(f"📺 Run {run_id} is {status}. Resuming live stream...")
+                if status in ("in_progress", "queued"):
+                    # We can always call stream_logs, it will handle fallback if head_sha is missing
                     try:
                         stream_logs(run_id, head_sha)
                     except KeyboardInterrupt:
@@ -739,10 +687,9 @@ def main():
     else:
         # Submit shadow run
         try:
-            shadow_run(background=args.background)
+            shadow_run()
         finally:
-            if not args.background:
-                cleanup()
+            cleanup()
 
 if __name__ == "__main__":
     main()
