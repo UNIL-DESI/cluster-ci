@@ -46,6 +46,7 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 | Commande | Description |
 |---|---|
 | `cluster-run` | Soumet un job et streame en temps réel et en direct les logs d'exécution ligne par ligne dans votre terminal d'origine sans perte |
+| `cluster-run --background` | Soumet un job sans bloquer le terminal |
 | `cluster-run list` | Liste les runs récents |
 | `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
 | `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |
@@ -144,13 +145,6 @@ cluster-ci/
 
 # Roadmap
 
-### En cours
-
-### À faire (par ordre d'exécution)
-
-### Terminé
-- [x] [#99 — Supprimer --background et garantir un streaming bloquant robuste dans cluster-run](https://github.com/UNIL-DESI/cluster-ci/issues/99) — ✅ Terminé (Merged PR #100)
-
 **Phase 1 (Foundation — Completed)**
 - [x] [Orchestrator Runner Setup](docs/tasks/setup_orchestrator.md)
 - [x] [Local Deployment & Runner Test](docs/tasks/deploy_local_cluster.md)
@@ -214,8 +208,4 @@ cluster-ci/
 - [x] [Feature: DVC-Viewer historique déporté en P2P sur les Workers](https://github.com/UNIL-DESI/cluster-ci/issues/97)
 - [x] [Fix DVC lock issues and improve P2P pull logging](https://github.com/UNIL-DESI/cluster-ci/issues/98)
 - [x] [Rescue et Robustesse du Runner Actions (SSH)](https://github.com/UNIL-DESI/llm-as-recommender/issues/65) : Durcissement du service systemd du runner permanent du Headnode (Restart=always, RestartSec=5, KillMode=process) et éradication complète des processus orphelins sur les slots de runners éphémères.
-
-
-
-
-
+- [ ] [Bugs Interface Web : Filtre Artefacts et Synchro P2P de l'Historique DVC (Issue #101)](https://github.com/UNIL-DESI/cluster-ci/issues/101)
