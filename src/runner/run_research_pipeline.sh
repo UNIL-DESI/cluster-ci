@@ -307,6 +307,10 @@ docker run -d \
 # Ensure the volume and workspace are owned by the current user (must be run as root)
 docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c "chown -R $(id -u):$(id -g) /home/user && chown -R $(id -u):$(id -g) /workspace"
 
+# Detect Python version for site-packages path reconciliation (UID 1000 vs 1001)
+PY_VER=$(docker exec "${MAIN_CONTAINER_NAME}" python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+log_info "Detected Python version: $PY_VER"
+
 # Detect Docker image change: if the cached image marker differs from the
 # current image, purge stale tool binaries to force a clean reinstall.
 MARKER_CMD="cat /home/user/.cluster-ci-image-marker 2>/dev/null || echo 'none'"
@@ -322,6 +326,8 @@ docker exec \
         -e HEADNODE_URL="$HEADNODE_URL" \
         -e CLUSTER_CI_MODE=executor \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
+        -e PYTHONUSERBASE=/home/user/.local \
+        -e PYTHONPATH="/home/user/.local/lib/python${PY_VER}/site-packages" \
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
 }
 
@@ -420,6 +426,8 @@ log_info "Installing base dependencies in persistent volume..."
 # Shims are only for user pipeline execution, not for installing the tools themselves.
 function docker_exec_bootstrap() {
     docker exec \
+        -e PYTHONUSERBASE=/home/user/.local \
+        -e PYTHONPATH="/home/user/.local/lib/python${PY_VER}/site-packages" \
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=\$PATH:/home/user/.local/bin && $1"
 }
 docker_exec_bootstrap "uv --version >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || python3 -m pip install uv --user --break-system-packages >/dev/null 2>&1"
@@ -497,6 +505,8 @@ else
         --ipc=host \
         --user "$(id -u):$(id -g)" -e HOME=/home/user \
         -e CLUSTER_CI_MODE=executor \
+        -e PYTHONUSERBASE=/home/user/.local \
+        -e PYTHONPATH="/home/user/.local/lib/python${PY_VER}/site-packages" \
         $ENV_FILE_FLAG \
         $DOCKER_IMAGE \
         bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && dvc-viewer --port $VIEWER_PORT" > "dvc-viewer.log" 2>&1 &
@@ -521,7 +531,7 @@ log_info "Launching: dvc repro $DVC_ARGS via Docker"
 # The smart_install.sh script hashes dependency files and caches the result in the
 # persistent Docker volume. Skips entirely if nothing changed → saves ~3GB bandwidth.
 if [ -f "pyproject.toml" ]; then
-    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
+    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && python3 /cluster-ci/src/runner/validate_pyproject.py --check-imports && python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 else
     EXEC_CMD="python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 fi

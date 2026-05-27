@@ -18,6 +18,11 @@ compute_deps_hash() {
 DEPS_HASH=$(compute_deps_hash)
 CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
+# Reconciliation of UID 1000 vs 1001: ensure PYTHONPATH is correct during install
+PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+export PYTHONUSERBASE=/home/user/.local
+export PYTHONPATH="/home/user/.local/lib/python${PY_VER}/site-packages"
+
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
     echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
     exit 0

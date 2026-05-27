@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import re
+import importlib.util
 from pathlib import Path
 
 try:
@@ -148,12 +149,60 @@ def simulate_resolution(pyproject_path, constraints_path):
     log_success("Resolution simulation passed.")
     return True
 
+def check_imports(pyproject_path):
+    log_info("Checking real importability of dependencies...")
+    with open(pyproject_path, "r") as f:
+        doc = tomlkit.parse(f.read())
+
+    dependencies = doc.get("project", {}).get("dependencies", [])
+    if not dependencies:
+        log_info("No dependencies found in pyproject.toml.")
+        return True
+
+    # Mapping of package names to import names
+    IMPORT_MAP = {
+        "pyyaml": "yaml",
+        "scikit-learn": "sklearn",
+        "python-dotenv": "dotenv",
+        "beautifulsoup4": "bs4",
+        "opencv-python": "cv2",
+        "pypi-mirror": "pypi_mirror",
+    }
+
+    failed_imports = []
+    for dep in dependencies:
+        # Extract package name (ignore versions/extras)
+        # e.g., "polars>=0.20.0" -> "polars"
+        # e.g., "fastapi[all]" -> "fastapi"
+        pkg_name = re.split(r'[>=<\[ ]', dep)[0].strip().lower()
+        if not pkg_name:
+            continue
+
+        import_name = IMPORT_MAP.get(pkg_name, pkg_name).replace("-", "_")
+
+        log_info(f"Verifying import: {import_name} (from {pkg_name})...")
+        spec = importlib.util.find_spec(import_name)
+        if spec is None:
+            log_error(f"Module '{import_name}' (package: {pkg_name}) is NOT importable!")
+            failed_imports.append(pkg_name)
+        else:
+            log_success(f"Module '{import_name}' is available.")
+
+    if failed_imports:
+        log_error(f"Failed to import {len(failed_imports)} dependencies: {', '.join(failed_imports)}")
+        log_error("This usually means smart_install.sh failed or UID/PYTHONPATH is misconfigured.")
+        return False
+
+    log_success("All project dependencies are importable.")
+    return True
+
 def main():
     parser = argparse.ArgumentParser(description="Cluster-CI Pre-flight Scanner")
     parser.add_argument("--ci", action="store_true", help="CI mode (fail-fast)")
     parser.add_argument("--interactive", action="store_true", help="Interactive mode (pre-commit)")
     parser.add_argument("--pyproject", default="pyproject.toml", help="Path to pyproject.toml")
     parser.add_argument("--constraints", default="cluster_constraints.txt", help="Path to constraints file")
+    parser.add_argument("--check-imports", action="store_true", help="Verify real importability of dependencies")
     
     args = parser.parse_args()
     
@@ -211,6 +260,11 @@ def main():
         if constraints_to_use != args.constraints and os.path.exists(constraints_to_use):
             os.remove(constraints_to_use)
         sys.exit(1)
+
+    # 4. Check Imports (if requested)
+    if args.check_imports:
+        if not check_imports(pyproject_path):
+            sys.exit(1)
 
     # Cleanup temp file if created
     if constraints_to_use != args.constraints and os.path.exists(constraints_to_use):
