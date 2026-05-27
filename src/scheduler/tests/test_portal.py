@@ -123,7 +123,7 @@ class TestPortalAndProxy(unittest.TestCase):
                 # Check requests.post was called to start visualizer on worker
                 mock_post.assert_called_once_with(
                     'http://worker1:6000/api/worker/dvc-viewer/start',
-                    json={'repo': 'testowner/testrepo', 'rev': None},
+                    json={'repo': 'testowner/testrepo', 'rev': 'main'},
                     timeout=60
                 )
                 
