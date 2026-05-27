@@ -197,7 +197,6 @@ cluster-ci/
 - [x] [Architecture : Implémenter un Watchdog Asynchrone pour la sauvegarde incrémentale de DVC](https://github.com/UNIL-DESI/cluster-ci/issues/92)
 - [x] [Architecture : Implémenter le streaming en direct des logs pour les jobs asynchrones (cluster-run view)](https://github.com/UNIL-DESI/cluster-ci/issues/93)
 - [x] [Garde-fous Systémiques : Prévention et éradication des processus orphelins et conteneurs zombies](https://github.com/UNIL-DESI/cluster-ci/issues/94)
-- [ ] [Faille Systémique de Conflit d'UID & Exclusion du Site-Packages](https://github.com/UNIL-DESI/cluster-ci/issues/103)
 
 
 
