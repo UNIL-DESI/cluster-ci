@@ -863,6 +863,10 @@ def start_dvc_viewer():
             subprocess.run(["git", "checkout", "-f", "main"], cwd=repo_path, capture_output=True, timeout=15)
             subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, capture_output=True, timeout=15)
 
+        # Ensure a clean state by removing untracked files (ghost stages)
+        logger.info(f"Cleaning untracked files for {repo}...")
+        subprocess.run(["git", "clean", "-fd"], cwd=repo_path, capture_output=True, timeout=15)
+
         # 2. Pull physical DVC cache in background (non-blocking)
         def bg_dvc_pull():
             try:
