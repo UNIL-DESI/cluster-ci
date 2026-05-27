@@ -160,7 +160,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "gh_token": gh_token,
             "env_vars": env_vars,
             "username": os.environ.get("GITHUB_ACTOR", "unknown")
-        }, headers=headers, timeout=10)
+        }, headers=headers, timeout=45)
         resp.raise_for_status()
         job_data = resp.json()
         job_id = job_data['job_id']
