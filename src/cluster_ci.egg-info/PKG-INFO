@@ -9,5 +9,6 @@ Requires-Dist: psutil
 Requires-Dist: requests
 Requires-Dist: authlib
 Requires-Dist: python-dotenv
+Requires-Dist: PyYAML
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
