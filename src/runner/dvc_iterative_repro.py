@@ -106,6 +106,8 @@ def get_dvc_dag(targets):
     return topo_order
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     dvc_args = sys.argv[1:]
     
     flags = []

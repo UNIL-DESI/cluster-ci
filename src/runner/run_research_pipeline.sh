@@ -302,7 +302,7 @@ docker run -d \
     -e HEADNODE_URL="$HEADNODE_URL" \
     -e CLUSTER_CI_MODE=executor \
     -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
-    "$DOCKER_IMAGE" -f /dev/null
+    "$DOCKER_IMAGE" -f /dev/null >/dev/null
 
 # Ensure the volume and workspace are owned by the current user (must be run as root)
 docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c "chown -R $(id -u):$(id -g) /home/user && chown -R $(id -u):$(id -g) /workspace"
@@ -521,9 +521,9 @@ log_info "Launching: dvc repro $DVC_ARGS via Docker"
 # The smart_install.sh script hashes dependency files and caches the result in the
 # persistent Docker volume. Skips entirely if nothing changed → saves ~3GB bandwidth.
 if [ -f "pyproject.toml" ]; then
-    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
+    EXEC_CMD="bash /cluster-ci/src/runner/smart_install.sh && python3 -u /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 else
-    EXEC_CMD="python3 /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
+    EXEC_CMD="python3 -u /cluster-ci/src/runner/dvc_iterative_repro.py $DVC_ARGS"
 fi
 
 log_info "🚀 Live Terminal Streaming enabled. Piping logs to server..."

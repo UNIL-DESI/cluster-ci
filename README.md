@@ -199,7 +199,7 @@ cluster-ci/
 - [x] [Garde-fous Systémiques : Prévention et éradication des processus orphelins et conteneurs zombies](https://github.com/UNIL-DESI/cluster-ci/issues/94)
 
 **Phase 3 (Stability & Correctness — In Progress)**
-- [ ] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105) 🔴
+- [/] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105) 🔴
 - [ ] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106) 🔴
 - [ ] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go](https://github.com/UNIL-DESI/cluster-ci/issues/107)
 - [ ] [Bugs Interface Web : Filtre Artefacts et Synchro P2P de l'Historique DVC](https://github.com/UNIL-DESI/cluster-ci/issues/101)
