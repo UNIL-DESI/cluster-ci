@@ -271,22 +271,15 @@ def stream_logs(run_id, commit_sha):
                     stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace"
                 )
                 
-                # Flag to check if we received any data (using a list for thread safety)
-                received_data = [False]
+                # Flag to check if we received any data
+                received_data = False
                 
-                # Thread to monitor GHA status, queue status, and kill curl if job finishes
+                # Thread to monitor GHA status and kill curl if job finishes
                 stop_curl_event = threading.Event()
                 def kill_curl_if_done():
-                    last_queue_poll = time.time()
                     while not stop_curl_event.is_set() and proc.poll() is None:
-                        time.sleep(2)
+                        time.sleep(5)
                         try:
-                            # If we haven't received live data, show queue status every 10s
-                            now = time.time()
-                            if not received_data[0] and (now - last_queue_poll) > 10:
-                                display_clean_queue_status(run_id)
-                                last_queue_poll = now
-                                
                             r = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status"], capture_output=True, text=True)
                             if r.returncode == 0 and json.loads(r.stdout).get("status") == "completed":
                                 proc.terminate()
@@ -298,9 +291,9 @@ def stream_logs(run_id, commit_sha):
 
                 try:
                     for line in proc.stdout:
-                        if not received_data[0]:
+                        if not received_data:
                             print("🟢 Live stream connected.")
-                            received_data[0] = True
+                            received_data = True
                         print_line(line.rstrip('\r\n'), force=True)
                         last_gha_poll_time = time.time()
                 except Exception:
@@ -313,8 +306,7 @@ def stream_logs(run_id, commit_sha):
                     except: pass
             
             # 3. Fallback / Idle Poll
-            # Only poll here if we are not using curl (otherwise the thread handles it)
-            if not (has_curl and commit_sha) and (time.time() - last_gha_poll_time > 10):
+            if time.time() - last_gha_poll_time > 10:
                 display_clean_queue_status(run_id)
                 last_gha_poll_time = time.time()
             

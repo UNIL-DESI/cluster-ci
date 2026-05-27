@@ -144,6 +144,13 @@ cluster-ci/
 
 # Roadmap
 
+### En cours
+
+### À faire (par ordre d'exécution)
+
+### Terminé
+- [x] [#99 — Supprimer --background et garantir un streaming bloquant robuste dans cluster-run](https://github.com/UNIL-DESI/cluster-ci/issues/99) — ✅ Terminé (Merged PR #100)
+
 **Phase 1 (Foundation — Completed)**
 - [x] [Orchestrator Runner Setup](docs/tasks/setup_orchestrator.md)
 - [x] [Local Deployment & Runner Test](docs/tasks/deploy_local_cluster.md)
