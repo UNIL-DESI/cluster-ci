@@ -106,7 +106,7 @@ def purge_orphan_runners_and_containers(job_id=None):
     except Exception as e:
         logger.error(f"JIT Purge: Error during docker container purge: {e}")
         
-    # 2. Host Orphan Process Purge (including dvc-viewer and python runners)
+    # 2. Host Orphan Process Purge (including dvc-viewer, python runners and orphan custom Ollama servers)
     my_pid = os.getpid()
     logger.info("Scanning for orphan runner/viewer processes on host...")
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
@@ -125,6 +125,25 @@ def purge_orphan_runners_and_containers(job_id=None):
             if "dvc-viewer" in cmdline_str or name == "dvc-viewer":
                 is_orphan_runner = True
             
+            # Target custom local Ollama processes running on 11435 to avoid port collision and memory leak
+            if "ollama" in name or "llama" in name:
+                is_custom_ollama = False
+                for arg in cmdline:
+                    if "11435" in arg:
+                        is_custom_ollama = True
+                
+                # If we can access environment variables of the process, double-check OLLAMA_HOST
+                try:
+                    environ = proc.environ()
+                    if "11435" in environ.get("OLLAMA_HOST", ""):
+                        is_custom_ollama = True
+                except Exception:
+                    pass
+                
+                if is_custom_ollama:
+                    logger.warning(f"🔥 JIT Purge: Detected orphaned custom Ollama process (PID: {pid}, cmd: {cmdline})")
+                    is_orphan_runner = True
+            
             if is_orphan_runner:
                 logger.warning(f"🔥 JIT Purge: Killing host orphan process (PID: {pid}, name: {name}, cmd: {cmdline})")
                 proc.kill()
@@ -132,34 +151,38 @@ def purge_orphan_runners_and_containers(job_id=None):
             pass
 
 def purge_ollama_vram_on_host():
-    """Contact local Ollama service on host (if active) to unload all active models and free GPU VRAM instantly."""
-    logger.info("📡 Requesting local Ollama service to purge all models from GPU VRAM...")
-    ollama_url = "http://127.0.0.1:11434"
-    try:
-        # 1. Get list of active/loaded models in memory
-        resp = requests.get(f"{ollama_url}/api/ps", timeout=3)
-        if resp.status_code == 200:
-            models_data = resp.json()
-            models = models_data.get("models", [])
-            if not models:
-                logger.info("Ollama memory is already clean (0 models loaded).")
-                return
-                
-            for m in models:
-                name = m.get("name") or m.get("model")
-                if name:
-                    logger.warning(f"🔥 Forcing unload of Ollama model '{name}' from GPU VRAM...")
-                    # Sending keep_alive: 0 or keep_alive: "0s" forces immediate unload
-                    requests.post(
-                        f"{ollama_url}/api/generate",
-                        json={"model": name, "keep_alive": 0},
-                        timeout=3
-                    )
-            logger.info("✅ Successfully requested Ollama to unload all models.")
-        else:
-            logger.info(f"Ollama API /api/ps returned status {resp.status_code}. Skipping Ollama VRAM purge.")
-    except Exception as e:
-        logger.info(f"Ollama service not running or unreachable on host: {e}. Skipping host Ollama VRAM purge.")
+    """Contact local Ollama services on host (both standard port 11434 and custom port 11435)
+    to unload all active models and free GPU VRAM instantly.
+    """
+    ports = [11434, 11435]
+    for port in ports:
+        logger.info(f"📡 Requesting local Ollama service on port {port} to purge all models from GPU VRAM...")
+        ollama_url = f"http://127.0.0.1:{port}"
+        try:
+            # 1. Get list of active/loaded models in memory
+            resp = requests.get(f"{ollama_url}/api/ps", timeout=3)
+            if resp.status_code == 200:
+                models_data = resp.json()
+                models = models_data.get("models", [])
+                if not models:
+                    logger.info(f"Ollama memory on port {port} is already clean (0 models loaded).")
+                    continue
+                    
+                for m in models:
+                    name = m.get("name") or m.get("model")
+                    if name:
+                        logger.warning(f"🔥 Forcing unload of Ollama model '{name}' on port {port} from GPU VRAM...")
+                        # Sending keep_alive: 0 or keep_alive: "0s" forces immediate unload
+                        requests.post(
+                            f"{ollama_url}/api/generate",
+                            json={"model": name, "keep_alive": 0},
+                            timeout=3
+                        )
+                logger.info(f"✅ Successfully requested Ollama on port {port} to unload all models.")
+            else:
+                logger.info(f"Ollama API /api/ps on port {port} returned status {resp.status_code}. Skipping VRAM purge on this port.")
+        except Exception as e:
+            logger.info(f"Ollama service on port {port} is not running or unreachable: {e}. Skipping VRAM purge on this port.")
 
 def kill_dvc_viewer_processes():
     # Deprecated wrapper: delegate to our robust purge function
