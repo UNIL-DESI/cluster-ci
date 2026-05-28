@@ -1359,15 +1359,10 @@ def api_latest_artifacts(repo):
 
         paths, patterns = extract_metrics_and_plots_paths(dvc_yaml_data)
 
-        # 2. Run git ls-tree to list all files at that commit
+        # 2. Ensure the commit is locally available, then ls-tree
+        subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
         cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
-        
-        if result.returncode != 0:
-            # If the commit is not locally known, try fetching it quickly (timeout 5s)
-            app.logger.info(f"Commit not found locally, fetching for {repo}...")
-            subprocess.run(["git", "fetch", "--all"], cwd=local_repo_path, capture_output=True, timeout=5)
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
 
         if result.returncode == 0:
             files = []
@@ -1385,6 +1380,7 @@ def api_latest_artifacts(repo):
                         "size": 0,
                         "isout": True
                     })
+            app.logger.info(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}")
             return jsonify(files)
         else:
             app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
