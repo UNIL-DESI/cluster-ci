@@ -271,7 +271,7 @@ def stream_logs(run_id, commit_sha):
             if has_curl and commit_sha and consecutive_failures < MAX_RECONNECTS:
                 proc = subprocess.Popen(
                     ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
-                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace"
+                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
                 )
                 
                 # Flag to check if we received any data
@@ -283,6 +283,8 @@ def stream_logs(run_id, commit_sha):
                     while not stop_curl_event.is_set() and proc.poll() is None:
                         time.sleep(5)
                         try:
+                            if not received_data:
+                                display_clean_queue_status(run_id)
                             r = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status"], capture_output=True, text=True)
                             if r.returncode == 0 and json.loads(r.stdout).get("status") == "completed":
                                 proc.terminate()
