@@ -1756,6 +1756,7 @@
 
         // Lazy rendering state
         const LOG_CHUNK_SIZE = 300; // lines per chunk
+        const MAX_DISPLAY_LINES = 500; // sliding window max
         let currentSectionLines = []; // full lines array for active section
         let renderedLineCount = 0;
 
@@ -2011,7 +2012,13 @@
         }
 
         function renderLogContent(content, reset) {
-            currentSectionLines = content.split('\n');
+            let allLines = content.split('\n');
+            const totalLines = allLines.length;
+
+            // Sliding window: keep only the last MAX_DISPLAY_LINES
+            const windowStart = Math.max(0, totalLines - MAX_DISPLAY_LINES);
+            currentSectionLines = allLines.slice(windowStart);
+
             const logContent = document.getElementById('log-content');
 
             if (reset) {
@@ -2020,7 +2027,7 @@
 
             if (currentSectionLines.length <= LOG_CHUNK_SIZE) {
                 // Small content: render everything at once
-                logContent.textContent = content;
+                logContent.textContent = currentSectionLines.join('\n');
                 renderedLineCount = currentSectionLines.length;
             } else {
                 // Large content: render first chunk only
@@ -2029,7 +2036,7 @@
                 renderedLineCount = end;
             }
 
-            updateLineIndicator();
+            updateLineIndicator(windowStart, totalLines);
         }
 
         function loadMoreLogLines() {
@@ -2041,14 +2048,16 @@
             logContent.textContent += '\n' + nextChunk.join('\n');
             renderedLineCount = end;
 
-            updateLineIndicator();
+            updateLineIndicator(0, currentSectionLines.length);
         }
 
-        function updateLineIndicator() {
+        function updateLineIndicator(windowStart, totalLines) {
             const indicator = document.getElementById('log-line-indicator');
             if (!indicator) return;
             const total = currentSectionLines.length;
-            if (renderedLineCount >= total) {
+            if (windowStart > 0) {
+                indicator.textContent = `Lignes ${windowStart + 1}–${totalLines} (${MAX_DISPLAY_LINES} dernières sur ${totalLines})`;
+            } else if (renderedLineCount >= total) {
                 indicator.textContent = `${total} lines`;
             } else {
                 indicator.textContent = `${renderedLineCount} / ${total} lines ↓`;
