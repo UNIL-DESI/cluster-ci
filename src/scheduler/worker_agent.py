@@ -1289,6 +1289,22 @@ def cleanup_active_jobs_and_containers():
             except Exception as e:
                 logger.error(f"Failed to update job status on shutdown: {e}")
 
+    # Catch-all: kill ALL remaining cluster containers even if not tracked
+    # This handles edge cases where current_job_id was lost (e.g. crash recovery)
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-q", "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-"],
+            capture_output=True, text=True, timeout=5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            remaining = [c.strip() for c in res.stdout.strip().split("\n") if c.strip()]
+            if remaining:
+                logger.warning(f"🔥 Catch-all cleanup: {len(remaining)} untracked cluster container(s) found. Force-killing...")
+                for container_id in remaining:
+                    safe_docker_rm_f(container_id, timeout=8)
+    except Exception as e:
+        logger.error(f"Error in catch-all container cleanup: {e}")
+
 def signal_handler(signum, frame):
     global shutdown_requested
     signame = signal.Signals(signum).name

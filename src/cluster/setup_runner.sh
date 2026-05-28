@@ -211,13 +211,28 @@ User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
+ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always
 RestartSec=10
 KillMode=process
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # Pre-restart cleanup: kill ALL running cluster containers to avoid orphans
+    echo "🧹 Pre-restart cleanup: Stopping all running cluster containers..."
+    running_jobs=$(docker ps -q --filter name=cluster-job- 2>/dev/null)
+    running_viewers=$(docker ps -q --filter name=cluster-viewer- 2>/dev/null)
+    if [ -n "$running_jobs" ] || [ -n "$running_viewers" ]; then
+        echo "⚠️  Active containers detected. Force-killing before restart..."
+        [ -n "$running_jobs" ] && docker rm -f $running_jobs 2>/dev/null || true
+        [ -n "$running_viewers" ] && docker rm -f $running_viewers 2>/dev/null || true
+        echo "✅ All cluster containers destroyed."
+    else
+        echo "✅ No active cluster containers."
+    fi
 
     sudo systemctl daemon-reload
     sudo systemctl enable cluster-worker
