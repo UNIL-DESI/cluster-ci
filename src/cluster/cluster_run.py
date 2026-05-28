@@ -14,6 +14,7 @@ import tempfile
 import argparse
 import subprocess
 import threading
+import queue
 
 # Global variables for cleanup
 RUN_ID = None
@@ -241,102 +242,75 @@ def stream_logs(run_id, commit_sha):
         pass
 
     try:
-        consecutive_failures = 0
-        MAX_RECONNECTS = 5
+        q = queue.Queue()
+        proc = None
+        received_data = False
+
+        if has_curl and commit_sha:
+            proc = subprocess.Popen(
+                ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
+            )
+            
+            def log_reader_thread():
+                for line in proc.stdout:
+                    q.put(line)
+                    
+            reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
+            reader_thread.start()
 
         while True:
-            # 1. Check GHA status
-            status = "queued"
-            conclusion = None
             try:
-                res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                if res.returncode == 0:
-                    info = json.loads(res.stdout)
-                    status = info.get("status")
-                    conclusion = info.get("conclusion")
-                    url = info.get("url", "URL non disponible")
-                    if status == "completed" or conclusion:
-                        if conclusion == "success":
-                            print("\n✅ Cluster-CI run completed successfully!")
-                            return 0
-                        elif conclusion == "cancelled":
-                            print("\n⚠️ [ERREUR] L'exécution a été annulée.")
-                            print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
-                            print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
-                            return 1
-                        else:
-                            print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
-                            print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
-                            print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
-                            return 1
-            except Exception:
-                pass
-
-            # 2. Try live streaming if possible
-            if has_curl and commit_sha and consecutive_failures < MAX_RECONNECTS:
-                proc = subprocess.Popen(
-                    ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
-                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
-                )
-                
-                # Flag to check if we received any data
-                received_data = False
-                
-                # Thread to monitor GHA status and kill curl if job finishes
-                stop_curl_event = threading.Event()
-                def kill_curl_if_done():
-                    while not stop_curl_event.is_set() and proc.poll() is None:
-                        time.sleep(5)
-                        try:
-                            if not received_data:
-                                display_clean_queue_status(run_id)
-                            r = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status"], capture_output=True, text=True)
-                            if r.returncode == 0 and json.loads(r.stdout).get("status") == "completed":
-                                proc.terminate()
-                                break
-                        except: pass
-
-                mon_thread = threading.Thread(target=kill_curl_if_done, daemon=True)
-                mon_thread.start()
-
-                try:
-                    for line in proc.stdout:
-                        line_stripped = line.rstrip('\r\n')
-                        # Detect ppng.io connection error (stream is dead)
-                        if "has been established already" in line_stripped:
-                            consecutive_failures += 1
-                            break
-                        if not received_data:
-                            print("🟢 Live stream connected.")
-                            received_data = True
-                            consecutive_failures = 0  # Reset on successful data
-                        print_line(line_stripped, force=True)
-                        last_gha_poll_time = time.time()
-                except Exception:
-                    pass
-                finally:
-                    stop_curl_event.set()
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=1)
-                    except: pass
-
+                line = q.get(timeout=1)
+                line_stripped = line.rstrip('\r\n')
+                if "has been established already" in line_stripped:
+                    continue
                 if not received_data:
-                    consecutive_failures += 1
-
-                if consecutive_failures >= MAX_RECONNECTS:
-                    print(f"⚠️  Live stream unavailable after {MAX_RECONNECTS} attempts. Falling back to GHA polling.")
-            
-            # 3. Fallback / Idle Poll
-            if time.time() - last_gha_poll_time > 10:
-                display_clean_queue_status(run_id)
+                    print("\n🟢 Live stream connected.")
+                    received_data = True
+                print_line(line_stripped, force=True)
                 last_gha_poll_time = time.time()
-            
-            # Exponential backoff on reconnection failures
-            backoff = min(2 ** consecutive_failures, 10) if consecutive_failures > 0 else 2
-            time.sleep(backoff)
+            except queue.Empty:
+                if time.time() - last_gha_poll_time > 5:
+                    status = "queued"
+                    conclusion = None
+                    try:
+                        res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                        if res.returncode == 0:
+                            info = json.loads(res.stdout)
+                            status = info.get("status")
+                            conclusion = info.get("conclusion")
+                            url = info.get("url", "URL non disponible")
+                            if status == "completed" or conclusion:
+                                if proc:
+                                    try: proc.terminate()
+                                    except: pass
+                                if conclusion == "success":
+                                    print("\n✅ Cluster-CI run completed successfully!")
+                                    return 0
+                                elif conclusion == "cancelled":
+                                    print("\n⚠️ [ERREUR] L'exécution a été annulée.")
+                                    print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
+                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+                                    return 1
+                                else:
+                                    print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
+                                    print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+                                    return 1
+                    except Exception:
+                        pass
+
+                    if not received_data:
+                        if not display_clean_queue_status(run_id):
+                            print("\r⏳ En attente de l'allocation d'un runner GitHub Actions...", end="", flush=True)
+                    
+                    last_gha_poll_time = time.time()
 
     except KeyboardInterrupt:
+        if 'proc' in locals() and proc:
+            try: proc.terminate()
+            except: pass
         raise
 
 def check_gitattributes_safety():
