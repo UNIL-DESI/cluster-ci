@@ -1068,13 +1068,15 @@
                 }
             }, 100);
 
-            // Set up click tab listener to load artifacts
+            // Set up click tab listener to load artifacts + preload immediately
             const artifactsTabBtn = document.getElementById('artifacts-tab');
             if (artifactsTabBtn) {
                 artifactsTabBtn.addEventListener('click', () => {
                     loadProjectArtifacts(repo);
                 });
             }
+            // Preload artifacts in background so they're ready when user clicks the tab
+            loadProjectArtifacts(repo);
 
             const runsList = document.getElementById('runs-list');
 
