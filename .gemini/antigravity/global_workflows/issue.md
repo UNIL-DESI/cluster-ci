@@ -1,6 +1,6 @@
 ---
 alwaysApply: false
-description: Artisan implémenteur. Prend la première issue, l'implémente, rapporte dans le chat et s'arrête.
+description: Artisan implémenteur. Prend la première issue, l'implémente, crée un walkthrough et s'arrête.
 ---
 
 # Issue Workflow
@@ -8,8 +8,8 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, rap
 **Objectif** : Implémenter l'issue la plus urgente de A à Z.
 
 > **📦 TU ES UN ARTISAN.** Ton livrable doit être propre et testé basiquement.
-> **🚫 LIMITES STRICTES :** Tu ne fais QU'implémenter du code et lancer de petites commandes (déplacer des fichiers, tests unitaires basiques). Tu n'exécutes RIEN de lourd (pas de tests complexes, pas de runs, pas de pipelines).
-> **🚫 AUCUN ARTEFACT.** Tout ton rapport se fait à l'oral dans le chat. Pas de fichier `walkthrough.md`.
+> **🚫 AUCUNE EXÉCUTION LONGUE.** Tu ne DOIS JAMAIS exécuter de commandes longues (pipelines, runs complexes). Si ta tâche consiste essentiellement à cela, vérifie statiquement le code, prépare la commande, et délègue l'exécution via le walkthrough.
+> **🚫 PAS DE SOUS-AGENTS.** Tu fais le travail et tu t'arrêtes. Le Reviewer prendra le relais ensuite.
 
 ## 1. 🔍 Démarrage
 1. Lis la Roadmap (`README.md`).
@@ -23,10 +23,18 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, rap
 
 ## 3. 🛠️ Implémentation
 - Respecte les conventions. Commits atomiques.
-- **Vérifie ton code** : Pas d'erreurs de syntaxe, imports corrects. Exécute les tests unitaires de base.
-- Si bloqué, utilise AIVC ou demande à l'utilisateur en dernier recours.
+- **Vérifie ton code** : Pas d'erreurs de syntaxe, imports corrects. Exécute les tests unitaires *très basiques* si possible rapidement.
+- **PAS de run long** : Laisse l'exécution critique au Reviewer.
 
-## 4. 📝 Rapport & Arrêt
-1. **Fais ton rapport directement dans le chat** (résumé des changements, commandes exactes à lancer pour tester).
+## 4. 📝 Livrable (Walkthrough)
+Crée le fichier `walkthroughs/issue-XX.md` (XX = numéro de l'issue) :
+1. Titre et lien de l'issue.
+2. Résumé des changements.
+3. Commandes exactes pour tester l'implémentation (pour le prochain agent Reviewer).
+
+**Commit ce fichier** et mets à jour la Roadmap pour ajouter le lien vers ce walkthrough.
+
+## 5. 🛑 Arrêt
+1. Rapporte tes actions dans le chat.
 2. Fais un `remember` dans AIVC.
-3. **ARRÊTE-TOI**. Ne ferme PAS l'issue. L'utilisateur invoquera le Reviewer ensuite.
+3. **ARRÊTE-TOI**. Ne ferme PAS l'issue. Demande à l'utilisateur d'invoquer le Reviewer.
