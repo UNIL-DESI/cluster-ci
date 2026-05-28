@@ -1098,22 +1098,8 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
 
     # --- Case 2: Historical (Remote Worker) ---
     rev = request.args.get('rev')
-    
-    # Try to find default commit hash from DB if not provided
-    if not rev:
-        try:
-            with get_db_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT commit_hash FROM jobs
-                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                    ORDER BY finished_at DESC LIMIT 1
-                ''', (repo_full_name,))
-                row = cursor.fetchone()
-                if row:
-                    rev = row['commit_hash']
-        except Exception as e:
-            app.logger.error(f"Error fetching default commit hash for historical view: {e}")
+    # When no rev is specified, the worker will fetch latest and use origin/main.
+    # This ensures we always show the latest state, not a stale job commit.
 
     with remote_viewers_lock:
         if repo_full_name in remote_viewers:
@@ -1322,9 +1308,20 @@ def api_latest_artifacts(repo):
         last_run = cursor.fetchone()
 
     if not last_run:
-        return jsonify([])
+        # No completed job: fallback to latest commit on origin/main
+        commit_hash = None
+        local_repo_path = find_local_repo(repo)
+        if local_repo_path:
+            # Fetch latest to ensure we have the most recent state
+            subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+            res_rev = subprocess.run(["git", "rev-parse", "origin/main"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
+            if res_rev.returncode == 0:
+                commit_hash = res_rev.stdout.strip()
+        if not commit_hash:
+            return jsonify([])
+    else:
+        commit_hash = last_run['commit_hash']
 
-    commit_hash = last_run['commit_hash']
     local_repo_path = find_local_repo(repo)
 
     if not local_repo_path:
