@@ -1337,6 +1337,9 @@ def api_latest_artifacts(repo):
         return jsonify([])
 
     try:
+        # 0. Ensure the commit is locally available before any git operations
+        subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+
         # 1. Fetch dvc.yaml content at that commit
         dvc_yaml_content = ""
         try:
@@ -1348,6 +1351,7 @@ def api_latest_artifacts(repo):
 
         # If no dvc.yaml or it is empty, return empty list (no artifacts declared in pipeline)
         if not dvc_yaml_content:
+            print(f"[Artifacts] No dvc.yaml found for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify([])
 
         import yaml
@@ -1359,8 +1363,7 @@ def api_latest_artifacts(repo):
 
         paths, patterns = extract_metrics_and_plots_paths(dvc_yaml_data)
 
-        # 2. Ensure the commit is locally available, then ls-tree
-        subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+        # 2. List all files at that commit
         cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
 
@@ -1380,7 +1383,7 @@ def api_latest_artifacts(repo):
                         "size": 0,
                         "isout": True
                     })
-            app.logger.info(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}")
+            print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify(files)
         else:
             app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
