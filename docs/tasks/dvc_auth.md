@@ -12,7 +12,7 @@ Therefore, a robust "silent" authentication mechanism must be added to the orche
 ## 3. Objectives (Definition of Done)
 - The `run_research_pipeline.sh` orchestrator must load environment variables present in a global `.env` or `.env.secrets` file (located at the `cluster-ci` root).
 - Variables must be correctly exported so that `uv run dvc repro` has transparent access to them.
-- Validate that the browser-opening deadlock never triggers when accessing GDrive if GCP variables are present.
+- Validate that the browser-opening deadlock never triggers when accessing cloud remotes if credentials are present.
 
 ## 4. Implementation Completed (2026-04-13)
 The `src/runner/run_research_pipeline.sh` orchestrator was modified to dynamically source `.env` and `.env.secrets` using:
