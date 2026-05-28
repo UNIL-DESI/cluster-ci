@@ -101,9 +101,15 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
         fi
     }
 
-    if [ "$ROLE" == "headnode" ] && [ -z "$CLUSTER_TOKEN" ] && [ ! -f "$INSTALL_DIR/.env" ]; then
-        # Génération d'un token aléatoire pour le cluster
-        CLUSTER_TOKEN=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
+    if [ "$ROLE" == "headnode" ]; then
+        if [ -z "$CLUSTER_TOKEN" ] && [ ! -f "$INSTALL_DIR/.env" ]; then
+            # Génération d'un token aléatoire pour le cluster
+            CLUSTER_TOKEN=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
+        fi
+        if [ -z "$HEADNODE_URL" ]; then
+            # Par défaut sur le headnode, le service tourne sur localhost:5000
+            HEADNODE_URL="http://localhost:5000"
+        fi
     fi
 
     update_env_var "GITHUB_PAT" "$GITHUB_PAT"
