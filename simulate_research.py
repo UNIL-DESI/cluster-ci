@@ -40,10 +40,50 @@ with open("artifacts/metrics.json", "w") as f:
 time.sleep(2)
 
 print("🖼️ Step 4: Plotting results (PNG)...")
-# Minimal valid 1x1 Red PNG encoded in base64 to avoid requiring Pillow/matplotlib
-png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-with open("artifacts/plot.png", "wb") as f:
-    f.write(base64.b64decode(png_b64))
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Main plot: training curves
+    epochs = list(range(1, 21))
+    train_loss = [0.8 * (0.85 ** e) + random.uniform(-0.02, 0.02) for e in epochs]
+    val_loss = [0.9 * (0.83 ** e) + random.uniform(-0.03, 0.03) for e in epochs]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(epochs, train_loss, 'b-o', label='Train Loss', markersize=4)
+    ax.plot(epochs, val_loss, 'r-s', label='Val Loss', markersize=4)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Training Progress')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig("artifacts/plot.png", dpi=100)
+    plt.close(fig)
+    print("   ✅ plot.png generated with matplotlib")
+
+    # Random plot: accuracy vs learning rate
+    lrs = [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1]
+    accs = [round(random.uniform(0.6, 0.99), 3) for _ in lrs]
+    fig2, ax2 = plt.subplots(figsize=(8, 5))
+    ax2.semilogx(lrs, accs, 'g-^', markersize=8, linewidth=2)
+    ax2.set_xlabel('Learning Rate')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Accuracy vs Learning Rate')
+    ax2.grid(True, alpha=0.3)
+    fig2.tight_layout()
+    fig2.savefig("artifacts/random_plot.png", dpi=100)
+    plt.close(fig2)
+    print("   ✅ random_plot.png generated with matplotlib")
+except ImportError:
+    # Fallback: minimal valid 1x1 PNG if matplotlib is not available
+    print("   ⚠️ matplotlib not available, using placeholder PNGs")
+    png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    with open("artifacts/plot.png", "wb") as f:
+        f.write(base64.b64decode(png_b64))
+    with open("artifacts/random_plot.png", "wb") as f:
+        f.write(base64.b64decode(png_b64) + os.urandom(16))
 
 print("📊 Step 5: Generating random metrics table (CSV)...")
 with open("artifacts/random_table.csv", "w", newline="") as f:
@@ -53,10 +93,6 @@ with open("artifacts/random_table.csv", "w", newline="") as f:
         loss = round(random.uniform(0.01, 0.5), 4)
         accuracy = round(random.uniform(0.7, 0.99), 4)
         writer.writerow([epoch, loss, accuracy])
-
-print("🖼️ Step 6: Generating random plot (PNG with random bytes appended)...")
-with open("artifacts/random_plot.png", "wb") as f:
-    f.write(base64.b64decode(png_b64) + os.urandom(16))
 
 print("✅ Research pipeline completed successfully! Artifacts written to artifacts/")
 # Force DVC rerun: 2
