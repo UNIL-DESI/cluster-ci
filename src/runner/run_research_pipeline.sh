@@ -66,15 +66,24 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
         exit 1
     fi
     echo "🌐 Delegation Mode enabled. Submitting job to scheduler..."
+
+    # JIT Network Connectivity check (timeout: 3s)
+    # Fail fast and gracefully without spawning ppng log pipes if the headnode is offline
+    echo "Connecting to headnode at $HEADNODE_URL (checking connectivity)..."
+    if ! python3 -c "import requests, sys; requests.get('$HEADNODE_URL/check_space', timeout=3)" &>/dev/null; then
+        echo "Error: Connection to headnode at $HEADNODE_URL timed out or failed (limit: 3s)." >&2
+        echo "   Please check that the headnode service is running and accessible." >&2
+        exit 1
+    fi
     
     # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)
     # This ensures the python script receives the signal and completes its graceful cancellation HTTP call.
     trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."' TERM INT
 
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
     fi
     exit ${PIPESTATUS[0]}
 fi
