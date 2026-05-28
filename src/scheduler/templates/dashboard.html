@@ -1155,6 +1155,7 @@
                                             <input type="text" id="artifact-search" class="form-control ps-5 rounded-pill border-slate-200" placeholder="Rechercher par nom ou dossier..." style="font-size: 0.9rem; font-weight: 500; height: 42px;">
                                         </div>
                                     </div>
+                                    <div id="stage-filter-chips" class="d-flex flex-wrap gap-2 mb-3" style="display: none;"></div>
                                     <div id="artifacts-tree-container" class="py-2">
                                         <div class="text-center py-5">
                                             <div class="spinner-border text-primary" role="status"></div>
@@ -1337,7 +1338,27 @@
                             <div class="text-slate-500">Aucun artefact (DVC) n'a été trouvé pour le dernier run complété de ce projet.</div>
                         </div>
                     `;
+                    const chipsContainer = document.getElementById('stage-filter-chips');
+                    if (chipsContainer) chipsContainer.style.display = 'none';
                     return;
+                }
+
+                // Build stage filter chips
+                const stages = [...new Set(files.map(f => f.stage).filter(Boolean))];
+                const chipsContainer = document.getElementById('stage-filter-chips');
+                if (chipsContainer && stages.length > 1) {
+                    window._activeStageFilters = new Set();
+                    chipsContainer.style.display = 'flex';
+                    chipsContainer.innerHTML = stages.sort().map(stage => `
+                        <button class="btn btn-sm rounded-pill border stage-chip" 
+                                data-stage="${escapeHtml(stage)}" 
+                                onclick="toggleStageChip(this)"
+                                style="font-size: 0.8rem; font-weight: 500; padding: 4px 14px; background: #f1f5f9; color: #475569; border-color: #cbd5e1; transition: all 0.2s;">
+                            <i class="bi bi-funnel me-1" style="font-size: 0.7rem;"></i>${escapeHtml(stage)}
+                        </button>
+                    `).join('');
+                } else if (chipsContainer) {
+                    chipsContainer.style.display = 'none';
                 }
 
                 let latestCommitHash = 'main';
@@ -1383,7 +1404,9 @@
                             path: file.path,
                             size: file.size,
                             isout: file.isout,
-                            createdAt: file.created_at
+                            createdAt: file.created_at,
+                            stage: file.stage || '',
+                            artifactType: file.artifact_type || ''
                         };
                     } else {
                         if (!current.children[part]) {
@@ -1415,14 +1438,18 @@
                 const rev = window.latestCommitHash || 'main';
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;
 
+                const stageBadge = node.stage ? `<span class="badge rounded-pill ms-2" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: ${node.artifactType === 'metric' ? '#dbeafe' : node.artifactType === 'plot' ? '#dcfce7' : '#f1f5f9'}; color: ${node.artifactType === 'metric' ? '#1e40af' : node.artifactType === 'plot' ? '#166534' : '#475569'};">${escapeHtml(node.stage)}</span>` : '';
+
                 return `
                     <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded" 
                          style="margin-left: ${depth * 15}px; cursor: pointer; background: #fff;" 
                          onclick="previewFile('${downloadUrl}', '${escapeHtml(node.path).replace(/'/g, "\\'")}', ${node.size || 0})"
-                         data-path="${escapeHtml(node.path).toLowerCase()}">
+                         data-path="${escapeHtml(node.path).toLowerCase()}"
+                         data-stage="${escapeHtml(node.stage || '')}">
                         <div class="d-flex align-items-center text-truncate">
                             <i class="bi ${icon} text-primary me-2 fs-5"></i>
                             <span class="file-name text-slate-700 font-medium text-truncate">${escapeHtml(node.name)}</span>
+                            ${stageBadge}
                         </div>
                         <span class="badge bg-slate-100 text-slate-500 rounded-pill font-normal small">${sizeStr}</span>
                     </div>
@@ -1479,18 +1506,48 @@
         }
 
         function filterArtifacts(query) {
-            const q = query.toLowerCase().trim();
-            
+            applyAllArtifactFilters();
+        }
+
+        function toggleStageChip(btn) {
+            const stage = btn.getAttribute('data-stage');
+            if (!window._activeStageFilters) window._activeStageFilters = new Set();
+
+            if (window._activeStageFilters.has(stage)) {
+                window._activeStageFilters.delete(stage);
+                btn.style.background = '#f1f5f9';
+                btn.style.color = '#475569';
+                btn.style.borderColor = '#cbd5e1';
+            } else {
+                window._activeStageFilters.add(stage);
+                btn.style.background = '#3b82f6';
+                btn.style.color = '#fff';
+                btn.style.borderColor = '#3b82f6';
+            }
+
+            applyAllArtifactFilters();
+        }
+
+        function applyAllArtifactFilters() {
+            const searchInput = document.getElementById('artifact-search');
+            const q = searchInput ? searchInput.value.toLowerCase().trim() : '';
+            const activeStages = window._activeStageFilters || new Set();
+            const hasStageFilter = activeStages.size > 0;
+
             const fileNodes = document.querySelectorAll('.file-node');
             fileNodes.forEach(node => {
                 const path = node.getAttribute('data-path');
-                if (!q || path.includes(q)) {
+                const stage = node.getAttribute('data-stage') || '';
+                const matchesText = !q || path.includes(q);
+                const matchesStage = !hasStageFilter || activeStages.has(stage);
+                if (matchesText && matchesStage) {
                     node.style.setProperty('display', 'flex', 'important');
                 } else {
                     node.style.setProperty('display', 'none', 'important');
                 }
             });
 
+            // Update folder visibility
             const folderNodes = Array.from(document.querySelectorAll('.artifact-folder-node'));
             folderNodes.sort((a, b) => {
                 const aDepth = (a.getAttribute('data-path').match(/\//g) || []).length;
@@ -1502,18 +1559,14 @@
                 const childrenContainer = folder.querySelector('.folder-children');
                 if (childrenContainer) {
                     const hasVisibleFiles = Array.from(childrenContainer.children).some(child => {
-                        if (child.classList.contains('file-node')) {
-                            return child.style.display !== 'none';
-                        }
-                        if (child.classList.contains('artifact-folder-node')) {
-                            return child.style.display !== 'none';
-                        }
+                        if (child.classList.contains('file-node')) return child.style.display !== 'none';
+                        if (child.classList.contains('artifact-folder-node')) return child.style.display !== 'none';
                         return false;
                     });
 
                     if (hasVisibleFiles) {
                         folder.style.setProperty('display', 'block', 'important');
-                        if (q) {
+                        if (q || hasStageFilter) {
                             const folderId = childrenContainer.id.replace('-children', '');
                             const chevron = document.getElementById(`${folderId}-chevron`);
                             const icon = document.getElementById(`${folderId}-icon`);

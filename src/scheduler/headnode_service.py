@@ -1374,65 +1374,74 @@ def api_hydra_params(repo, commit):
         return jsonify({"error": str(e)}), 500
 
 def extract_metrics_and_plots_paths(dvc_yaml_data):
-    paths = set()
-    patterns = []
+    """Extract metrics/plots paths from dvc.yaml, with stage name and type info.
     
-    def resolve_item(item):
+    Returns:
+        path_info: dict mapping path -> {"stage": str, "type": "metric"|"plot"}
+        pattern_info: list of (compiled_regex, stage_name, type_str)
+    """
+    path_info = {}       # path -> {"stage": stage_name, "type": "metric"|"plot"}
+    pattern_info = []    # [(compiled_regex, stage_name, type_str)]
+    
+    def resolve_item(item, stage_name, artifact_type):
         if not item:
             return
         if isinstance(item, list):
             for x in item:
-                resolve_item(x)
+                resolve_item(x, stage_name, artifact_type)
         elif isinstance(item, dict):
             for k in item.keys():
                 if isinstance(k, str):
-                    add_path(k)
+                    add_path(k, stage_name, artifact_type)
         elif isinstance(item, str):
-            add_path(item)
+            add_path(item, stage_name, artifact_type)
             
-    def add_path(p):
+    def add_path(p, stage_name, artifact_type):
         if "${" in p:
             # Transform to regex pattern
             # e.g., "artifacts/metrics-${item}.json" -> "^artifacts/metrics-.*\.json$"
             pattern_str = re.escape(p)
             pattern_str = re.sub(r'\\\$\\\{[^}]+\\\}', '.*', pattern_str)
             try:
-                patterns.append(re.compile(f"^{pattern_str}$"))
+                pattern_info.append((re.compile(f"^{pattern_str}$"), stage_name, artifact_type))
             except Exception:
                 pass
         else:
-            paths.add(p)
+            path_info[p] = {"stage": stage_name, "type": artifact_type}
 
     if isinstance(dvc_yaml_data, dict):
         stages = dvc_yaml_data.get("stages", {})
         if isinstance(stages, dict):
-            for stage_def in stages.values():
+            for stage_name, stage_def in stages.items():
                 if not isinstance(stage_def, dict):
                     continue
                 
                 # Check metrics & plots in stage
-                resolve_item(stage_def.get("metrics"))
-                resolve_item(stage_def.get("plots"))
+                for art_type, key in [("metric", "metrics"), ("plot", "plots")]:
+                    resolve_item(stage_def.get(key), stage_name, art_type)
                 
                 # Check if it is a foreach / do
                 do_block = stage_def.get("do", {})
                 if isinstance(do_block, dict):
-                    resolve_item(do_block.get("metrics"))
-                    resolve_item(do_block.get("plots"))
+                    for art_type, key in [("metric", "metrics"), ("plot", "plots")]:
+                        resolve_item(do_block.get(key), stage_name, art_type)
                     
         # DVC 1.0 or other styles might have top level plots/metrics
-        resolve_item(dvc_yaml_data.get("plots"))
-        resolve_item(dvc_yaml_data.get("metrics"))
+        for art_type, key in [("metric", "metrics"), ("plot", "plots")]:
+            resolve_item(dvc_yaml_data.get(key), "_top_level", art_type)
         
-    return paths, patterns
+    return path_info, pattern_info
 
-def is_matching_artifact(file_path, paths, patterns):
-    if file_path in paths:
-        return True
-    for pat in patterns:
+def is_matching_artifact(file_path, path_info, pattern_info):
+    """Check if file_path is a declared artifact. Returns (stage, type) or None."""
+    if file_path in path_info:
+        info = path_info[file_path]
+        return info["stage"], info["type"]
+    for pat, stage_name, art_type in pattern_info:
         if pat.match(file_path):
-            return True
-    return False
+            return stage_name, art_type
+    return None
+
 
 @app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
 def api_latest_artifacts(repo):
@@ -1502,7 +1511,7 @@ def api_latest_artifacts(repo):
             app.logger.error(f"Error parsing dvc.yaml for {repo}: {e}")
             dvc_yaml_data = {}
 
-        paths, patterns = extract_metrics_and_plots_paths(dvc_yaml_data)
+        path_info, pattern_info = extract_metrics_and_plots_paths(dvc_yaml_data)
 
         # 2. List all files at that commit
         cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
@@ -1517,13 +1526,17 @@ def api_latest_artifacts(repo):
                 if any(line.startswith(p) for p in [".git/", ".github/", ".dvc/", ".idea/", ".vscode/"]):
                     continue
                 # Only keep files matching the metrics and plots from dvc.yaml
-                if is_matching_artifact(line, paths, patterns):
+                match_result = is_matching_artifact(line, path_info, pattern_info)
+                if match_result:
+                    stage_name, artifact_type = match_result
                     files.append({
                         "path": line,
                         "is_dir": False,
                         "size": 0,
                         "isout": True,
-                        "created_at": run_created_at
+                        "created_at": run_created_at,
+                        "stage": stage_name,
+                        "artifact_type": artifact_type
                     })
             print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify(files)

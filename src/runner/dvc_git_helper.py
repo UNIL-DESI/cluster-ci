@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import argparse
 import subprocess
@@ -18,6 +19,35 @@ def log_warn(msg):
 
 def log_success(msg):
     print(f"✅ [DVC-Git-Helper] {msg}")
+
+def _resolve_foreach_var(text, item_val):
+    """Replace ${item} (and ${item.attr} variants) with the concrete foreach value."""
+    if not isinstance(text, str):
+        return text
+    # ${item.safe_name} or ${item} — replace all with the string value
+    return re.sub(r'\$\{item(?:\.[^}]+)?\}', str(item_val), text)
+
+def _resolve_entries(entries, item_val):
+    """Deep-clone entries list/dict, replacing ${item} with the concrete value."""
+    if isinstance(entries, list):
+        resolved = []
+        for entry in entries:
+            if isinstance(entry, str):
+                resolved.append(_resolve_foreach_var(entry, item_val))
+            elif isinstance(entry, dict):
+                resolved.append({
+                    _resolve_foreach_var(k, item_val): v
+                    for k, v in entry.items()
+                })
+            else:
+                resolved.append(entry)
+        return resolved
+    elif isinstance(entries, dict):
+        return {
+            _resolve_foreach_var(k, item_val): v
+            for k, v in entries.items()
+        }
+    return entries
 
 def inject_cache_false(dvc_yaml_path):
     if not os.path.exists(dvc_yaml_path):
@@ -64,9 +94,16 @@ def inject_cache_false(dvc_yaml_path):
     # Process stages
     if 'stages' in data:
         for stage_name, stage in data['stages'].items():
+            # Direct stage metrics/plots
             for key in ['metrics', 'plots']:
                 if key in stage:
                     process_entries(stage[key], stage, key)
+            # Foreach/do stage metrics/plots
+            do_block = stage.get('do', {})
+            if isinstance(do_block, dict):
+                for key in ['metrics', 'plots']:
+                    if key in do_block:
+                        process_entries(do_block[key], do_block, key)
 
     # Process top-level metrics and plots
     for key in ['metrics', 'plots']:
@@ -109,9 +146,22 @@ def get_cache_false_paths(dvc_yaml_path):
     if 'stages' in data:
         for stage in data['stages'].values():
             wdir = stage.get('wdir', '.')
+            foreach_items = stage.get('foreach', None)
+            do_block = stage.get('do', {})
+
+            # Direct stage metrics/plots
             for key in ['metrics', 'plots']:
                 if key in stage:
                     extract_from_entries(stage[key], wdir)
+
+            # Foreach/do stage: resolve ${item} for each foreach value
+            if foreach_items and isinstance(do_block, dict):
+                for item_val in foreach_items:
+                    do_wdir = do_block.get('wdir', wdir)
+                    for key in ['metrics', 'plots']:
+                        if key in do_block:
+                            resolved = _resolve_entries(do_block[key], item_val)
+                            extract_from_entries(resolved, do_wdir)
 
     for key in ['metrics', 'plots']:
         if key in data:
