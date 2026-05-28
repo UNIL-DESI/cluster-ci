@@ -594,40 +594,35 @@ def artifacts(repo_owner, repo_name, rev, file_path):
 
     # --- Strategy 1 & 2: P2P Worker Proxy (Primary Path) ---
     # Workers have DVC caches from executing jobs — no remote storage needed.
+    # Try ALL online workers: the DVC cache may only exist on one specific worker.
+    workers_to_try = []
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        # Try to find a worker that executed a job for this EXACT revision
+        # Get all distinct online workers that have run jobs for this repo
         cursor.execute('''
-            SELECT w.service_url
+            SELECT DISTINCT w.service_url
             FROM jobs j
             JOIN workers w ON j.worker_id = w.worker_id
-            WHERE j.repo = ? AND j.commit_hash = ? AND w.status = 'online'
-            ORDER BY j.finished_at DESC LIMIT 1
-        ''', (repo_slug, rev))
-        worker = cursor.fetchone()
+            WHERE j.repo = ? AND w.status = 'online'
+            ORDER BY j.finished_at DESC
+        ''', (repo_slug,))
+        workers_to_try = [row['service_url'] for row in cursor.fetchall() if row['service_url']]
 
-        # Fallback: any online worker that has run jobs for this repo
-        if not worker:
-            cursor.execute('''
-                SELECT w.service_url
-                FROM jobs j
-                JOIN workers w ON j.worker_id = w.worker_id
-                WHERE j.repo = ? AND w.status = 'online'
-                ORDER BY j.finished_at DESC LIMIT 1
-            ''', (repo_slug,))
-            worker = cursor.fetchone()
-
-    if worker and worker['service_url']:
-        inline_param = "&inline=true" if request.args.get("inline") == "true" else ""
-        worker_url = f"{worker['service_url']}/api/worker/dvc/get?repo={repo_slug}&rev={rev}&path={file_path}{inline_param}"
-        app.logger.info(f"[P2P] Proxying artifact {file_path}@{rev} to worker {worker['service_url']}")
+    inline_param = "&inline=true" if request.args.get("inline") == "true" else ""
+    for worker_url_base in workers_to_try:
+        worker_url = f"{worker_url_base}/api/worker/dvc/get?repo={repo_slug}&rev={rev}&path={file_path}{inline_param}"
+        app.logger.info(f"[P2P] Proxying artifact {file_path}@{rev} to worker {worker_url_base}")
         try:
             resp = proxy_request(worker_url)
-            if resp.status_code < 500:
+            if resp.status_code < 400:
                 return resp
-            app.logger.warning(f"[P2P] Worker proxy returned {resp.status_code}, falling back to local extraction")
+            if resp.status_code >= 500:
+                app.logger.warning(f"[P2P] Worker {worker_url_base} returned {resp.status_code}, trying next worker")
+                continue
+            # 404: file not on this worker's cache, try next
+            app.logger.info(f"[P2P] Worker {worker_url_base} returned 404, trying next worker")
         except Exception as e:
-            app.logger.warning(f"[P2P] Worker proxy failed: {e}, falling back to local extraction")
+            app.logger.warning(f"[P2P] Worker {worker_url_base} proxy failed: {e}, trying next worker")
 
     # --- Strategy 3: Local Headnode DVC Extraction (Last Resort) ---
     request_id = str(uuid.uuid4())
@@ -1687,22 +1682,8 @@ def api_latest_artifacts(repo):
             app.logger.warning(f"Failed to get per-file dates: {e}")
 
         # 5. Return all artifacts declared in dvc.lock
-        # 6. Filter: only include artifacts that actually exist in git at origin/main
-        # Files declared in dvc.lock but never produced (OOM crash, stage failure)
-        # would cause 404 errors when the user tries to view them.
-        existing_files = set()
-        try:
-            cmd_tree = ["git", "ls-tree", "-r", "--name-only", ref]
-            result_tree = subprocess.run(cmd_tree, capture_output=True, text=True, cwd=local_repo_path, timeout=10)
-            if result_tree.returncode == 0:
-                existing_files = set(result_tree.stdout.strip().split("\n"))
-        except Exception as e:
-            app.logger.warning(f"git ls-tree failed for {repo}: {e}")
-
         files = []
         for artifact in artifacts:
-            if artifact["path"] not in existing_files:
-                continue
             artifact_date = file_dates.get(artifact["path"], run_created_at)
             files.append({
                 "path": artifact["path"],
@@ -1714,7 +1695,7 @@ def api_latest_artifacts(repo):
                 "artifact_type": artifact["artifact_type"]
             })
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref}, declared={len(artifacts)}, in_git={len(existing_files)})", flush=True)
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref})", flush=True)
         return jsonify(files)
 
     except Exception as e:

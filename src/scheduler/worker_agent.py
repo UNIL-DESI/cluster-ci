@@ -1094,7 +1094,37 @@ def worker_dvc_get():
                              mimetype=mime_type,
                              download_name=os.path.basename(file_path))
 
-        return jsonify({"error": f"File not found via DVC or filesystem: {file_path}"}), 404
+        # Strategy 3: DVC cache direct lookup via md5 hash from dvc.lock
+        # When sync_metrics failed (e.g. OOM), the file is NOT in git and NOT
+        # on the filesystem, but IS in the local DVC cache with its md5 hash.
+        try:
+            lock_path = os.path.join(repo_path, "dvc.lock")
+            if os.path.exists(lock_path):
+                import yaml as _yaml
+                with open(lock_path, 'r') as lf:
+                    lock_data = _yaml.safe_load(lf) or {}
+                # Search all stages for the file path and its md5
+                for stage_name, stage_data in lock_data.get("stages", {}).items():
+                    for out_list_key in ("outs", "metrics", "plots"):
+                        for out_entry in stage_data.get(out_list_key, []):
+                            if out_entry.get("path") == file_path and out_entry.get("md5"):
+                                md5 = out_entry["md5"]
+                                cache_file = os.path.join(
+                                    repo_path, ".dvc", "cache", "files", "md5",
+                                    md5[:2], md5[2:]
+                                )
+                                if os.path.exists(cache_file):
+                                    logger.info(f"[P2P] Serving {file_path} from DVC cache (md5={md5[:12]})")
+                                    return send_file(
+                                        cache_file,
+                                        as_attachment=(disposition == "attachment"),
+                                        mimetype=mime_type,
+                                        download_name=os.path.basename(file_path)
+                                    )
+        except Exception as e:
+            logger.warning(f"[P2P] DVC cache lookup failed for {file_path}: {e}")
+
+        return jsonify({"error": f"File not found via DVC, git, filesystem, or cache: {file_path}"}), 404
 
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
