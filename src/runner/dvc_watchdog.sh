@@ -10,6 +10,7 @@ fi
 
 LAST_MOD=0
 LOCK_FILE="dvc.lock"
+STATUS_FILE=".dvc/tmp/iterative-status.json"
 
 # Wait a few seconds initially to let things settle
 sleep 2
@@ -21,6 +22,19 @@ while true; do
             if [ "$LAST_MOD" -ne 0 ]; then
                 # Wait 2 seconds to ensure DVC finishes writing to lock file
                 sleep 2
+
+                # Guard: skip sync if a DVC stage is actively running (avoid race condition)
+                if [ -f "$STATUS_FILE" ]; then
+                    IS_RUNNING=$(python3 -c "import json,sys; d=json.load(open('$STATUS_FILE')); print(d.get('running', False))" 2>/dev/null || echo "False")
+                    if [ "$IS_RUNNING" = "True" ]; then
+                        echo "[Watchdog] Stage actively running, deferring sync until stage completes..."
+                        # Update LAST_MOD so we re-check on next loop iteration
+                        LAST_MOD=$CURRENT_MOD
+                        sleep 2
+                        continue
+                    fi
+                fi
+
                 echo "[Watchdog] dvc.lock modification detected. Syncing to Git..."
                 docker exec \
                     -e HEADNODE_URL="$HEADNODE_URL" \
@@ -36,3 +50,4 @@ while true; do
     fi
     sleep 2
 done
+

@@ -839,7 +839,12 @@ def get_free_port():
 
 @app.route('/api/worker/dvc-viewer/start', methods=['POST'])
 def start_dvc_viewer():
-    """Start an on-demand dvc-viewer historical instance on a free port."""
+    """Start an on-demand dvc-viewer historical instance on a free port.
+
+    Uses a git worktree for isolation (avoids corrupting the main working directory)
+    and symlinks the DVC cache for instant local checkout (no network required).
+    Metrics/plots are in Git (cache: false), heavy outs are in .dvc/cache.
+    """
     data = request.get_json() or {}
     repo = data.get('repo')
     rev = data.get('rev')
@@ -850,40 +855,73 @@ def start_dvc_viewer():
     if not os.path.exists(repo_path):
         return jsonify({"error": f"Repository '{repo}' not found on this worker"}), 404
 
+    # Deterministic worktree path: same repo+rev reuses the same directory
+    repo_safe = repo.replace('/', '-')
+    rev_short = (rev or 'main')[:12]
+    worktree_dir = f"/tmp/dvc-viewer-{repo_safe}-{rev_short}"
+
     try:
-        # 1. Update and Sync: git fetch
+        # 1. Fetch latest commits
         logger.info(f"Fetching latest commits for {repo}...")
         subprocess.run(["git", "fetch", "--all", "--prune"], cwd=repo_path, capture_output=True, timeout=30)
 
-        # Checkout target revision if specified, else default to main branch
-        if rev:
-            logger.info(f"Checking out revision {rev} for {repo}...")
-            res_co = subprocess.run(["git", "checkout", "-f", rev], cwd=repo_path, capture_output=True, text=True, timeout=15)
-            if res_co.returncode != 0:
-                logger.warning(f"git checkout failed: {res_co.stderr.strip()}")
-        else:
-            logger.info(f"No revision specified, checkout main for {repo}...")
-            subprocess.run(["git", "checkout", "-f", "main"], cwd=repo_path, capture_output=True, timeout=15)
-            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, capture_output=True, timeout=15)
+        # Prune stale worktree entries (e.g., from deleted /tmp directories)
+        subprocess.run(["git", "worktree", "prune"], cwd=repo_path, capture_output=True, timeout=10)
 
-        # 2. Pull physical DVC cache in background (non-blocking)
-        def bg_dvc_pull():
-            try:
-                logger.info(f"Executing background DVC pull for {repo}...")
-                subprocess.run([DVC_CMD, "pull"], cwd=repo_path, capture_output=True, timeout=120)
-                logger.info(f"Background DVC pull completed for {repo}")
-            except Exception as e:
-                logger.warning(f"Background DVC pull failed or timed out: {e}")
+        # 2. Create an isolated git worktree (does not affect the main working directory)
+        if os.path.exists(worktree_dir):
+            logger.info(f"Cleaning up previous worktree at {worktree_dir}")
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=repo_path, capture_output=True, timeout=15)
+            if os.path.exists(worktree_dir):
+                shutil.rmtree(worktree_dir, ignore_errors=True)
 
-        threading.Thread(target=bg_dvc_pull, daemon=True).start()
+        target_rev = rev or "origin/main"
+        logger.info(f"Creating isolated worktree at {worktree_dir} for revision {target_rev}")
+        res_wt = subprocess.run(
+            ["git", "worktree", "add", "--detach", worktree_dir, target_rev],
+            cwd=repo_path, capture_output=True, text=True, timeout=30
+        )
+        if res_wt.returncode != 0:
+            logger.error(f"git worktree add failed: {res_wt.stderr.strip()}")
+            return jsonify({"error": f"Failed to create worktree: {res_wt.stderr.strip()}"}), 500
 
-        # 3. Dynamic Port allocation and start
+        # 3. Symlink the DVC cache from the main repo (instant, no network)
+        # Metrics/plots are already in Git (cache: false) and available from the worktree.
+        # Heavy outs live in the local .dvc/cache, restored below via dvc checkout.
+        worktree_dvc_dir = os.path.join(worktree_dir, ".dvc")
+        os.makedirs(worktree_dvc_dir, exist_ok=True)
+
+        source_cache = os.path.join(repo_path, ".dvc", "cache")
+        target_cache = os.path.join(worktree_dvc_dir, "cache")
+        if os.path.exists(source_cache) and not os.path.exists(target_cache):
+            os.symlink(source_cache, target_cache)
+            logger.info(f"Symlinked DVC cache: {source_cache} -> {target_cache}")
+
+        # Copy DVC config files so dvc checkout can locate the cache
+        for config_file in ["config", "config.local"]:
+            src = os.path.join(repo_path, ".dvc", config_file)
+            dst = os.path.join(worktree_dvc_dir, config_file)
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy2(src, dst)
+
+        # 4. Restore DVC-tracked files from local cache (synchronous, no network)
+        logger.info(f"Running dvc checkout in worktree for {repo}...")
+        res_checkout = subprocess.run(
+            [DVC_CMD, "checkout"], cwd=worktree_dir,
+            capture_output=True, text=True, timeout=60
+        )
+        if res_checkout.returncode != 0:
+            logger.warning(f"dvc checkout non-zero ({res_checkout.returncode}): {res_checkout.stderr.strip()}")
+            # Non-fatal: metrics/plots are still available from Git, only heavy outs may be missing
+
+        # 5. Start dvc-viewer in the isolated worktree
         port = get_free_port()
         logger.info(f"Starting historical dvc-viewer for {repo} on port {port}")
 
         viewer_env = os.environ.copy()
         viewer_env["CLUSTER_CI_MODE"] = "executor"
-        viewer_env["DVC_VIEWER_PROJECT_DIR"] = repo_path
+        viewer_env["DVC_VIEWER_PROJECT_DIR"] = worktree_dir
         viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
         dvc_viewer_bin = get_executable("dvc-viewer")
@@ -891,7 +929,7 @@ def start_dvc_viewer():
 
         proc = subprocess.Popen(
             cmd,
-            cwd=repo_path,
+            cwd=worktree_dir,
             env=viewer_env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
@@ -900,11 +938,10 @@ def start_dvc_viewer():
         # Robustly wait for the TCP port to be open and listening
         start_wait = time.time()
         port_open = False
-        while time.time() - start_wait < 20:  # 20 seconds max timeout
+        while time.time() - start_wait < 20:
             if proc.poll() is not None:
                 break
-            
-            # Connect probe
+
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.5)
             try:
@@ -922,13 +959,20 @@ def start_dvc_viewer():
                 proc.terminate()
             except:
                 pass
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=repo_path, capture_output=True)
             return jsonify({"error": "dvc-viewer failed to start or open port"}), 500
 
-        logger.info(f"Historical dvc-viewer successfully started for {repo} on port {port}")
+        logger.info(f"Historical dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
         return jsonify({"status": "ok", "port": port})
 
     except Exception as e:
         logger.error(f"Error starting historical dvc-viewer: {e}")
+        try:
+            subprocess.run(["git", "worktree", "remove", "--force", worktree_dir],
+                           cwd=repo_path, capture_output=True)
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
 def get_executable(name):

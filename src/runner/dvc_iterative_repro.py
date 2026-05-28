@@ -2,7 +2,35 @@ import sys
 import subprocess
 import re
 import os
+import json
 from collections import defaultdict, deque
+
+
+ITERATIVE_STATUS_FILE = os.path.join(".dvc", "tmp", "iterative-status.json")
+
+
+def write_status(stage_name):
+    """Write the iterative status file for the dvc-viewer to detect running stages."""
+    os.makedirs(os.path.dirname(ITERATIVE_STATUS_FILE), exist_ok=True)
+    status = {
+        "running": True,
+        "stage": stage_name,
+        "pid": os.getpid(),
+    }
+    try:
+        with open(ITERATIVE_STATUS_FILE, "w") as f:
+            json.dump(status, f)
+    except OSError:
+        pass
+
+
+def clear_status():
+    """Remove the iterative status file."""
+    try:
+        if os.path.exists(ITERATIVE_STATUS_FILE):
+            os.remove(ITERATIVE_STATUS_FILE)
+    except OSError:
+        pass
 
 def get_dvc_dag(targets):
     """
@@ -130,9 +158,11 @@ def main():
         print(f"🚀 Executing stage: {stage}")
         print(f"==================================================")
         
+        write_status(stage)
         stage_cmd = ["dvc", "repro", stage] + flags
         ret = subprocess.run(stage_cmd)
         if ret.returncode != 0:
+            clear_status()
             print(f"❌ Stage {stage} failed with code {ret.returncode}")
             print(f"💾 Committing and pushing failure state to GitHub...")
             subprocess.run(["git", "add", "."], check=False)
@@ -161,6 +191,7 @@ def main():
         print(f"✅ Stage {stage} completed successfully.")
         print(f"==================================================")
             
+    clear_status()
     print(f"\n✅ Iterative reproduction completed successfully.")
 
 if __name__ == "__main__":
