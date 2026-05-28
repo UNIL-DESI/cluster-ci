@@ -255,6 +255,11 @@ def submit_job():
     commit_hash = data.get('commit_hash')
 
     # 1. AUTO-CANCELLATION: Automatically cancel active jobs according to branch category
+    # - Draft branches (cluster-draft/*): Cancel ALL active jobs (pending/assigned/running)
+    #   for the same user/branch — aggressive fast-iteration mode.
+    # - Non-draft branches (main, feature/*, etc.): Only cancel PENDING jobs on the same
+    #   branch. Running/assigned jobs are preserved so they can finish gracefully.
+    #   This enforces "only one pending per branch" — new submissions replace the queued one.
     jobs_to_cancel = []
     is_draft = branch.startswith("cluster-draft/") if branch else False
     if branch and repo:
@@ -262,26 +267,28 @@ def submit_job():
             with get_db_conn() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT job_id, branch, username FROM jobs
+                    SELECT job_id, branch, username, status FROM jobs
                     WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
                 ''', (repo,))
                 active_jobs = cursor.fetchall()
                 for aj in active_jobs:
                     aj_branch = aj['branch'] or ''
                     aj_user = aj['username'] or ''
+                    aj_status = aj['status']
                     
-                    # Target active job for immediate cancellation if:
-                    # - It's on the exact same branch (new push/commit on same branch)
-                    # - OR it's a draft branch belonging to the same user (e.g. cluster-draft/{user})
-                    # - OR the new job is not a draft and the active job is also not a draft (mainline pipeline replacement)
-                    if aj_branch == branch:
-                        jobs_to_cancel.append(aj['job_id'])
-                    elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
-                        jobs_to_cancel.append(aj['job_id'])
-                    elif aj_branch == f"cluster-draft/{username}":
-                        jobs_to_cancel.append(aj['job_id'])
-                    elif not is_draft and not aj_branch.startswith("cluster-draft/"):
-                        jobs_to_cancel.append(aj['job_id'])
+                    if is_draft:
+                        # Draft branches: aggressive cancellation (cancel everything for same user/branch)
+                        if aj_branch == branch:
+                            jobs_to_cancel.append(aj['job_id'])
+                        elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
+                            jobs_to_cancel.append(aj['job_id'])
+                        elif aj_branch == f"cluster-draft/{username}":
+                            jobs_to_cancel.append(aj['job_id'])
+                    else:
+                        # Non-draft branches: only cancel PENDING jobs on the exact same branch.
+                        # Running/assigned jobs are left untouched to finish their execution.
+                        if aj_branch == branch and aj_status == 'pending':
+                            jobs_to_cancel.append(aj['job_id'])
         except Exception as e:
             app.logger.error(f"Error identifying active jobs to cancel: {e}")
 

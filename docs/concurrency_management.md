@@ -1,46 +1,51 @@
 # Concurrency Management & Signal Propagation
 
-This document describes how Cluster-CI handles GitHub Actions job cancellations and ensures that compute resources on Workers are correctly freed.
+This document describes how Cluster-CI handles GitHub Actions job concurrency and ensures that compute resources on Workers are correctly freed.
 
-## Problem Statement
+## Concurrency Model
 
-When a new commit is pushed to a branch, GitHub Actions may cancel existing runs for that same branch if the `concurrency` key is used. GitHub sends a `SIGTERM` signal to the runner process.
+Cluster-CI uses a **dual-mode concurrency strategy** based on branch type:
 
-In a distributed architecture:
-1. The **Headnode** receives the `SIGTERM`.
-2. The **Worker** (Lenovo) is executing the actual DVC pipeline.
+### Draft Branches (`cluster-draft/*`) — Aggressive Cancel
 
-If the Headnode simply dies, the Worker continues the computation, creating "zombie" jobs that waste RAM and CPU.
+Used by `cluster-run` for fast iteration. A new submission **immediately cancels** any active job (pending, assigned, or running) for the same user/branch.
 
-## Solution: Signal Propagation
+- GHA: `cancel-in-progress: true` → kills the old workflow run instantly.
+- Headnode: auto-cancels all active jobs matching the same user or draft branch.
+- Worker: receives `/cancel/<job_id>` → eradicates process tree, purges VRAM, frees RAM.
 
-We implemented a propagation mechanism to ensure the Worker is notified when a job is cancelled on the Headnode.
+### Non-Draft Branches (`main`, `feature/*`, etc.) — Queue & Replace
 
-### 1. Granular Concurrency Groups
+Used for production pipelines. A new submission **does not cancel** the running job.
 
-In `.github/workflows/cluster-ci.yml`, the concurrency group is set to:
+- GHA: `cancel-in-progress: false` → the new workflow is **queued** until the active one finishes. GHA itself enforces "only one pending per concurrency group" — any older pending run is cancelled.
+- Headnode: only cancels **pending** jobs on the same branch (not running/assigned). This enforces "only one pending per branch" at the scheduler level too.
+- Worker: the running job completes normally without interruption.
+
+**Example scenario on `main`:**
+1. Job A is **running** on `main`.
+2. User pushes → Job B is submitted → joins the queue as **pending**.
+3. User pushes again → Job B (pending) is **cancelled** and replaced by Job C.
+4. Job A finishes → Job C starts executing.
+
+## GHA Concurrency Configuration
+
+In `.github/workflows/cluster-ci.yml`:
 ```yaml
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ startsWith(github.ref_name, 'cluster-draft/') }}
 ```
-This ensures that only jobs on the same branch/PR are cancelled, allowing multiple researchers to work on different branches simultaneously without interrupting each other.
 
-### 2. Signal Interception on Headnode
+The concurrency group is scoped per branch (`github.ref`), ensuring that different branches/PRs never interfere with each other.
 
-The `src/scheduler/submit_job.py` script (which runs on the Headnode) intercepts `SIGINT` and `SIGTERM` signals. When a signal is received:
-- It queries the Headnode API to find the assigned Worker's `service_url`.
-- It sends a POST request to the Worker's `/cancel/<job_id>` endpoint.
-- It updates the job status to `failed` with exit code `-15` (SIGTERM).
+## Signal Propagation (Draft Branches)
 
-### 3. Process Tree Termination on Worker
+When GHA cancels a workflow run (draft branches only), the signal propagation chain is:
 
-The `src/scheduler/worker_agent.py` exposes the `/cancel/<job_id>` route. When called:
-- It verifies that the `job_id` matches the currently running job.
-- It uses `psutil` to recursively kill the entire process tree of the CI job (including DVC and all sub-processes).
-- This immediately frees the reserved RAM for other jobs.
-
-## Flow Diagram
+1. **GHA → Headnode**: GitHub sends `SIGTERM` to the runner process executing `submit_job.py`.
+2. **Headnode → Worker**: `submit_job.py` intercepts the signal and sends a POST to the Worker's `/cancel/<job_id>` endpoint.
+3. **Worker**: Eradicates the entire process tree (host PID SIGKILL), removes Docker containers (`docker rm -f`), and purges Ollama VRAM.
 
 ```text
 GitHub Actions -> [SIGTERM] -> Headnode (submit_job.py)
@@ -51,3 +56,14 @@ GitHub Actions -> [SIGTERM] -> Headnode (submit_job.py)
                                      v
                           [Kill Process Tree] -> RAM Free
 ```
+
+## Headnode Auto-Cancellation Logic
+
+On every `/submit_job` call, the headnode scans active jobs and applies cancellation rules:
+
+| Branch Type | Pending | Assigned | Running |
+|-------------|---------|----------|---------|
+| `cluster-draft/*` | ✅ Cancel | ✅ Cancel | ✅ Cancel |
+| Non-draft (`main`, etc.) | ✅ Cancel | ❌ Preserve | ❌ Preserve |
+
+Cancelled job IDs are injected into the new job's environment via `CLUSTER_CANCELLED_RUNS`, so the worker can log which runs were replaced.
