@@ -1618,22 +1618,26 @@ def api_latest_artifacts(repo):
         return jsonify([])
 
     try:
-        # 0. Ensure the commit is locally available before any git operations
+        # 0. Ensure we have the latest state from remote
         subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
 
-        # 1. Fetch dvc.yaml content at that commit (for type classification)
+        # Use origin/main HEAD for dvc.yaml and dvc.lock to get the latest pipeline state,
+        # regardless of which commit the last completed job ran on.
+        ref = "origin/main"
+
+        # 1. Fetch dvc.yaml content (for type classification)
         dvc_yaml_data = {}
         try:
-            res_yaml = subprocess.run(["git", "show", f"{commit_hash}:dvc.yaml"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
+            res_yaml = subprocess.run(["git", "show", f"{ref}:dvc.yaml"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
             if res_yaml.returncode == 0 and res_yaml.stdout.strip():
                 dvc_yaml_data = yaml.safe_load(res_yaml.stdout) or {}
         except Exception as e:
             app.logger.error(f"Error git show dvc.yaml for {repo}: {e}")
 
-        # 2. Fetch dvc.lock content at that commit (source of truth for resolved paths)
+        # 2. Fetch dvc.lock content (source of truth for resolved paths)
         dvc_lock_data = {}
         try:
-            res_lock = subprocess.run(["git", "show", f"{commit_hash}:dvc.lock"], cwd=local_repo_path, capture_output=True, text=True, timeout=10)
+            res_lock = subprocess.run(["git", "show", f"{ref}:dvc.lock"], cwd=local_repo_path, capture_output=True, text=True, timeout=10)
             if res_lock.returncode == 0 and res_lock.stdout.strip():
                 dvc_lock_data = yaml.safe_load(res_lock.stdout) or {}
         except Exception as e:
@@ -1641,34 +1645,29 @@ def api_latest_artifacts(repo):
 
         # If neither dvc.yaml nor dvc.lock exist, return empty list
         if not dvc_yaml_data and not dvc_lock_data:
-            print(f"[Artifacts] No dvc.yaml/dvc.lock found for {repo} at {commit_hash[:12]}", flush=True)
+            print(f"[Artifacts] No dvc.yaml/dvc.lock found for {repo} at {ref}", flush=True)
             return jsonify([])
 
         # 3. Extract artifacts from dvc.lock using dvc.yaml for classification
         artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
 
-        # 4. Verify which artifacts actually exist in the git tree at this commit
-        cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
-
-        existing_files = set()
-        if result.returncode == 0:
-            existing_files = set(result.stdout.strip().split("\n"))
-
+        # 4. Return all artifacts declared in dvc.lock
+        # No git ls-tree filtering: dvc.lock is the source of truth for what was produced.
+        # Files may not be committed to git yet (sync_metrics may have failed), but they
+        # were produced by the pipeline and should be displayed.
         files = []
         for artifact in artifacts:
-            if artifact["path"] in existing_files:
-                files.append({
-                    "path": artifact["path"],
-                    "is_dir": False,
-                    "size": 0,
-                    "isout": True,
-                    "created_at": run_created_at,
-                    "stage": artifact["stage"],
-                    "artifact_type": artifact["artifact_type"]
-                })
+            files.append({
+                "path": artifact["path"],
+                "is_dir": False,
+                "size": 0,
+                "isout": True,
+                "created_at": run_created_at,
+                "stage": artifact["stage"],
+                "artifact_type": artifact["artifact_type"]
+            })
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]} (from dvc.lock: {len(artifacts)} declared)", flush=True)
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
         return jsonify(files)
 
     except Exception as e:
