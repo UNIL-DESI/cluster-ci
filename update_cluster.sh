@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# Parse flags
+ADD_WORKER=false
+for arg in "$@"; do
+    case $arg in
+        --add-worker) ADD_WORKER=true ;;
+    esac
+done
+
 ENV_FILE=".env"
 
 # Ensure sshpass is installed
@@ -47,41 +55,46 @@ fi
 
 if [ -z "$WORKER_COUNT" ]; then
     WORKER_COUNT=0
-    echo "--- Workers Configuration ---"
-else
-    echo "--- $WORKER_COUNT existing Worker(s) found in configuration ---"
 fi
 
-while true; do
-    if [ "$WORKER_COUNT" -eq 0 ]; then
-        prompt_msg="Add a worker? (Y/n): "
-    else
-        prompt_msg="Add another new worker? (y/N): "
-    fi
-    
-    read -p "$prompt_msg" add_worker
-    
-    if [ "$WORKER_COUNT" -eq 0 ]; then
-        if [[ "$add_worker" =~ ^[Nn] ]]; then
-            break
+# Only enter worker addition flow if --add-worker flag is passed
+if [ "$ADD_WORKER" = true ]; then
+    echo "--- Workers Configuration (--add-worker mode) ---"
+    echo "--- $WORKER_COUNT existing Worker(s) found in configuration ---"
+
+    while true; do
+        if [ "$WORKER_COUNT" -eq 0 ]; then
+            prompt_msg="Add a worker? (Y/n): "
+        else
+            prompt_msg="Add another new worker? (y/N): "
         fi
-    else
-        if [[ ! "$add_worker" =~ ^[OoYy] ]]; then
-            break
+        
+        read -p "$prompt_msg" add_worker
+        
+        if [ "$WORKER_COUNT" -eq 0 ]; then
+            if [[ "$add_worker" =~ ^[Nn] ]]; then
+                break
+            fi
+        else
+            if [[ ! "$add_worker" =~ ^[OoYy] ]]; then
+                break
+            fi
         fi
-    fi
-    
-    WORKER_COUNT=$((WORKER_COUNT + 1))
-    read -p "Worker $WORKER_COUNT IP: " w_ip
-    read -p "SSH User: " w_user
-    read -rs -p "SSH Password: " w_pass
-    echo ""
-    
-    export "WORKER_${WORKER_COUNT}_IP"="$w_ip"
-    export "WORKER_${WORKER_COUNT}_USER"="$w_user"
-    export "WORKER_${WORKER_COUNT}_PASS"="$w_pass"
-    update_needed=true
-done
+        
+        WORKER_COUNT=$((WORKER_COUNT + 1))
+        read -p "Worker $WORKER_COUNT IP: " w_ip
+        read -p "SSH User: " w_user
+        read -rs -p "SSH Password: " w_pass
+        echo ""
+        
+        export "WORKER_${WORKER_COUNT}_IP"="$w_ip"
+        export "WORKER_${WORKER_COUNT}_USER"="$w_user"
+        export "WORKER_${WORKER_COUNT}_PASS"="$w_pass"
+        update_needed=true
+    done
+else
+    echo "--- $WORKER_COUNT existing Worker(s) in configuration (use --add-worker to add more) ---"
+fi
 
 if [ "$update_needed" = true ]; then
     echo "📝 Saving credentials to $ENV_FILE..."
@@ -159,11 +172,11 @@ echo "Pausing for 10s to allow services to start..."
 sleep 10
 
 echo "🚀 Submitting Job 1..."
-uv run src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
+python3 src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
 JOB1=$!
 
 echo "🚀 Submitting Job 2..."
-uv run src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
+python3 src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
 JOB2=$!
 
 wait $JOB1
