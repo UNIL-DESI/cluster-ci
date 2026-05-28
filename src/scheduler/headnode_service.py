@@ -1651,23 +1651,56 @@ def api_latest_artifacts(repo):
         # 3. Extract artifacts from dvc.lock using dvc.yaml for classification
         artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
 
-        # 4. Return all artifacts declared in dvc.lock
-        # No git ls-tree filtering: dvc.lock is the source of truth for what was produced.
-        # Files may not be committed to git yet (sync_metrics may have failed), but they
-        # were produced by the pipeline and should be displayed.
+        # 4. Get per-file last-modified dates via a single git log call
+        # This gives us the actual commit date for each file, not just the job date.
+        file_dates = {}
+        try:
+            artifact_paths = [a["path"] for a in artifacts]
+            # Single git log call: get last commit date for each file in results/
+            res_dates = subprocess.run(
+                ["git", "log", ref, "--format=%aI", "--name-only", "--diff-filter=ACMR", "-1", "--"] + artifact_paths,
+                cwd=local_repo_path, capture_output=True, text=True, timeout=15
+            )
+            if res_dates.returncode == 0 and res_dates.stdout.strip():
+                # Parse: alternating lines of date then filenames
+                # But --name-only with -1 only shows the LAST commit globally.
+                # We need per-file dates. Use a different approach:
+                pass  # Fall through to per-file approach below
+
+            # Better approach: single command that lists all files with their dates
+            res_all = subprocess.run(
+                ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
+                cwd=local_repo_path, capture_output=True, text=True, timeout=15
+            )
+            if res_all.returncode == 0:
+                current_date = None
+                for line in res_all.stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("COMMIT_DATE:"):
+                        current_date = line[len("COMMIT_DATE:"):]
+                    elif current_date and line not in file_dates:
+                        # First occurrence = most recent commit for this file
+                        file_dates[line] = current_date
+        except Exception as e:
+            app.logger.warning(f"Failed to get per-file dates: {e}")
+
+        # 5. Return all artifacts declared in dvc.lock
         files = []
         for artifact in artifacts:
+            artifact_date = file_dates.get(artifact["path"], run_created_at)
             files.append({
                 "path": artifact["path"],
                 "is_dir": False,
                 "size": 0,
                 "isout": True,
-                "created_at": run_created_at,
+                "created_at": artifact_date,
                 "stage": artifact["stage"],
                 "artifact_type": artifact["artifact_type"]
             })
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref})", flush=True)
         return jsonify(files)
 
     except Exception as e:

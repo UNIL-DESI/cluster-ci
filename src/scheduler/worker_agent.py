@@ -1058,14 +1058,23 @@ def worker_dvc_get():
         # Strategy 1.5: Git-tracked file extraction (metrics, plots, configs)
         # Files declared with `cache: false` in dvc.yaml live in Git, not DVC cache.
         # `dvc get` cannot retrieve them, but `git show` can at any revision.
+        # We try multiple refs: the requested rev, origin/main (latest sync), and HEAD.
+        subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path,
+                       capture_output=True, timeout=15)
+        refs_to_try = []
         if rev:
+            refs_to_try.append(rev)
+        refs_to_try.extend(["origin/main", "HEAD"])
+
+        for ref in refs_to_try:
             try:
                 res_git = subprocess.run(
-                    ["git", "show", f"{rev}:{file_path}"],
+                    ["git", "show", f"{ref}:{file_path}"],
                     cwd=repo_path, capture_output=True, timeout=10
                 )
                 if res_git.returncode == 0 and res_git.stdout:
-                    logger.info(f"[P2P] Serving git-tracked {file_path}@{rev[:12]} via git show")
+                    ref_label = ref[:12] if len(ref) > 12 else ref
+                    logger.info(f"[P2P] Serving git-tracked {file_path}@{ref_label} via git show")
                     filename = os.path.basename(file_path)
                     return Response(
                         res_git.stdout,
@@ -1073,7 +1082,7 @@ def worker_dvc_get():
                         headers={"Content-Disposition": f"{disposition}; filename=\"{filename}\""}
                     )
             except Exception as e:
-                logger.warning(f"[P2P] git show fallback failed for {file_path}@{rev}: {e}")
+                logger.warning(f"[P2P] git show fallback failed for {file_path}@{ref}: {e}")
 
         # Strategy 2: Direct filesystem fallback (P2P — file produced by dvc repro)
         # When no remote storage is configured, dvc get fails but the file

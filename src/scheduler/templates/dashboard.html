@@ -1148,11 +1148,28 @@
                                         <h5 class="card-title text-slate-800 mb-0 font-bold d-flex align-items-center gap-2">
                                             <i class="bi bi-folder2-open text-primary"></i> Explorateur d'Artefacts Actuels
                                         </h5>
-                                        <div class="search-box position-relative" style="width: 320px;">
-                                            <span class="position-absolute top-50 translate-middle-y ms-3 text-slate-400">
-                                                <i class="bi bi-search"></i>
-                                            </span>
-                                            <input type="text" id="artifact-search" class="form-control ps-5 rounded-pill border-slate-200" placeholder="Rechercher par nom ou dossier..." style="font-size: 0.9rem; font-weight: 500; height: 42px;">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <div class="dropdown">
+                                                <button class="btn btn-sm btn-outline-secondary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-sort-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
+                                                    <i class="bi bi-sort-down"></i> Trier
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="artifact-sort-btn">
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('path-asc'); return false;"><i class="bi bi-sort-alpha-down me-2"></i>Path (A→Z)</a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('path-desc'); return false;"><i class="bi bi-sort-alpha-up me-2"></i>Path (Z→A)</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-asc'); return false;"><i class="bi bi-sort-alpha-down me-2"></i>Nom fichier (A→Z)</a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-desc'); return false;"><i class="bi bi-sort-alpha-up me-2"></i>Nom fichier (Z→A)</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('date-desc'); return false;"><i class="bi bi-sort-numeric-down me-2"></i>Date (récent→ancien)</a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('date-asc'); return false;"><i class="bi bi-sort-numeric-up me-2"></i>Date (ancien→récent)</a></li>
+                                                </ul>
+                                            </div>
+                                            <div class="search-box position-relative" style="width: 320px;">
+                                                <span class="position-absolute top-50 translate-middle-y ms-3 text-slate-400">
+                                                    <i class="bi bi-search"></i>
+                                                </span>
+                                                <input type="text" id="artifact-search" class="form-control ps-5 rounded-pill border-slate-200" placeholder="Rechercher par nom ou dossier..." style="font-size: 0.9rem; font-weight: 500; height: 42px;">
+                                            </div>
                                         </div>
                                     </div>
                                     <div id="stage-filter-chips" class="d-flex flex-wrap gap-2 mb-3" style="display: none;"></div>
@@ -1369,10 +1386,10 @@
                     }
                 }
                 window.latestCommitHash = latestCommitHash;
+                window._artifactFiles = files;
+                window._artifactSortMode = window._artifactSortMode || 'tree';
 
-                const treeRoot = buildTreeFromPaths(files);
-                const htmlContent = renderTreeNode(treeRoot);
-                container.innerHTML = htmlContent;
+                renderArtifactView(files, window._artifactSortMode);
 
             } catch (err) {
                 container.innerHTML = `
@@ -1381,6 +1398,68 @@
                         <div>Erreur: ${err.message}</div>
                     </div>
                 `;
+            }
+        }
+
+        function renderArtifactView(files, mode) {
+            const container = document.getElementById('artifacts-tree-container');
+            if (!mode || mode === 'tree') {
+                const treeRoot = buildTreeFromPaths(files);
+                container.innerHTML = renderTreeNode(treeRoot);
+                return;
+            }
+
+            // Flat sorted view
+            let sorted = [...files];
+            switch(mode) {
+                case 'path-asc':  sorted.sort((a,b) => a.path.localeCompare(b.path)); break;
+                case 'path-desc': sorted.sort((a,b) => b.path.localeCompare(a.path)); break;
+                case 'name-asc':  sorted.sort((a,b) => a.path.split('/').pop().localeCompare(b.path.split('/').pop())); break;
+                case 'name-desc': sorted.sort((a,b) => b.path.split('/').pop().localeCompare(a.path.split('/').pop())); break;
+                case 'date-desc': sorted.sort((a,b) => (b.created_at || '').localeCompare(a.created_at || '')); break;
+                case 'date-asc':  sorted.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || '')); break;
+            }
+
+            const [owner, name] = currentState.repo.split('/');
+            const rev = window.latestCommitHash || 'main';
+
+            container.innerHTML = sorted.map(f => {
+                const fileName = f.path.split('/').pop();
+                const ext = fileName.split('.').pop().toLowerCase();
+                let icon = 'bi-file-earmark-text';
+                if (['png','jpg','jpeg','svg','webp'].includes(ext)) icon = 'bi-file-earmark-image';
+                else if (ext === 'csv') icon = 'bi-file-earmark-spreadsheet';
+                else if (['json','yaml','yml'].includes(ext)) icon = 'bi-file-earmark-code';
+
+                const dateStr = f.created_at ? new Date(f.created_at).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+                const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(f.path)}`;
+                const stageBadge = f.stage ? `<span class="badge rounded-pill ms-2" style="font-size:0.7rem;font-weight:500;padding:2px 8px;background:${f.artifact_type==='metric'?'#dbeafe':'#dcfce7'};color:${f.artifact_type==='metric'?'#1e40af':'#166534'};">${escapeHtml(f.stage)}</span>` : '';
+
+                return `
+                    <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded"
+                         style="cursor:pointer;background:#fff;"
+                         onclick="previewFile('${downloadUrl}','${escapeHtml(f.path).replace(/'/g,"\\\'")}',${f.size||0})"
+                         data-path="${escapeHtml(f.path).toLowerCase()}"
+                         data-stage="${escapeHtml(f.stage||'')}">
+                        <div class="d-flex align-items-center text-truncate">
+                            <i class="bi ${icon} text-primary me-2 fs-5"></i>
+                            <span class="file-name text-slate-700 font-medium">${escapeHtml(f.path)}</span>
+                            ${stageBadge}
+                        </div>
+                        <span class="badge bg-slate-100 text-slate-500 rounded-pill font-normal small">${dateStr}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function sortArtifacts(mode) {
+            window._artifactSortMode = mode;
+            if (window._artifactFiles) {
+                renderArtifactView(window._artifactFiles, mode);
+                // Update button label
+                const labels = {'path-asc':'Path A→Z','path-desc':'Path Z→A','name-asc':'Nom A→Z','name-desc':'Nom Z→A','date-desc':'Récent','date-asc':'Ancien'};
+                const btn = document.getElementById('artifact-sort-btn');
+                if (btn) btn.innerHTML = `<i class="bi bi-sort-down"></i> ${labels[mode] || 'Trier'}`;
             }
         }
 
