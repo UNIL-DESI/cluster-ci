@@ -843,6 +843,7 @@ def start_dvc_viewer():
     data = request.get_json() or {}
     repo = data.get('repo')
     rev = data.get('rev')
+    p2p_url = data.get('p2p_url')
     if not repo:
         return jsonify({"error": "Missing 'repo' parameter"}), 400
 
@@ -870,6 +871,19 @@ def start_dvc_viewer():
         def bg_dvc_pull():
             try:
                 logger.info(f"Executing background DVC pull for {repo}...")
+                if p2p_url:
+                    logger.info(f"[P2P] Dynamic remote pull from {p2p_url} configured for historical view.")
+                    peer_remote_url = f"{p2p_url}/{repo}/.dvc/cache/files/md5"
+                    subprocess.run([DVC_CMD, "remote", "add", "-f", "peer_remote", peer_remote_url, "--local"], cwd=repo_path, capture_output=True)
+                    # Attempt pulling from peer remote
+                    res = subprocess.run([DVC_CMD, "pull", "-r", "peer_remote"], cwd=repo_path, capture_output=True, timeout=120)
+                    if res.returncode == 0:
+                        logger.info(f"[P2P] Background DVC pull from peer_remote completed successfully for {repo}")
+                        return
+                    else:
+                        logger.warning(f"[P2P] Background DVC pull from peer_remote failed: {res.stderr.strip()}. Attempting default pull fallback...")
+                
+                # Fallback or default pull
                 subprocess.run([DVC_CMD, "pull"], cwd=repo_path, capture_output=True, timeout=120)
                 logger.info(f"Background DVC pull completed for {repo}")
             except Exception as e:

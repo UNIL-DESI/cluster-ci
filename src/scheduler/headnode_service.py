@@ -996,18 +996,21 @@ def view_project(owner, repo, path=''):
         return redirect(url_for('dashboard'), code=302)
 
     repo_full_name = f"{owner}/{repo}"
+    mode = request.args.get('mode')
 
     # --- Case 1: Live (Running on a worker) ---
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT w.service_url, j.viewer_port
-            FROM jobs j
-            JOIN workers w ON j.worker_id = w.worker_id
-            WHERE j.repo = ? AND j.status = 'running'
-            ORDER BY j.started_at DESC LIMIT 1
-        ''', (repo_full_name,))
-        job = cursor.fetchone()
+    job = None
+    if mode != 'history':
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT w.service_url, j.viewer_port
+                FROM jobs j
+                JOIN workers w ON j.worker_id = w.worker_id
+                WHERE j.repo = ? AND j.status = 'running'
+                ORDER BY j.started_at DESC LIMIT 1
+            ''', (repo_full_name,))
+            job = cursor.fetchone()
 
     if job and job['service_url']:
         worker_base_url = job['service_url']
@@ -1115,6 +1118,27 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         except Exception as e:
             app.logger.error(f"Error fetching default commit hash for historical view: {e}")
 
+    if not rev:
+        return "No completed runs found for this repository to display in the historical DVC Viewer.", 404
+
+    # P2P discovery: find any worker (even offline) that ran the job for this specific commit to extract its P2P URL
+    p2p_url = None
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT w.service_url
+                FROM jobs j
+                JOIN workers w ON j.worker_id = w.worker_id
+                WHERE j.repo = ? AND j.commit_hash = ? AND w.service_url IS NOT NULL
+                ORDER BY j.finished_at DESC LIMIT 1
+            ''', (repo_full_name, rev))
+            row = cursor.fetchone()
+            if row:
+                p2p_url = f"{row['service_url']}/fetch_artifact"
+    except Exception as e:
+        app.logger.error(f"Error retrieving origin worker for P2P dynamic URL: {e}")
+
     with remote_viewers_lock:
         if repo_full_name in remote_viewers:
             viewer = remote_viewers[repo_full_name]
@@ -1137,17 +1161,28 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         # Smart worker selection based on cache locality
         with get_db_conn() as conn:
             cursor = conn.cursor()
-            # 1. Try to find the last online worker that ran a job for this repo
+            # 1. Try to find the exact online worker that ran this commit
             cursor.execute('''
                 SELECT w.worker_id, w.service_url
                 FROM jobs j
                 JOIN workers w ON j.worker_id = w.worker_id
-                WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
+                WHERE j.repo = ? AND j.commit_hash = ? AND w.status = 'online' AND w.service_url IS NOT NULL
                 ORDER BY j.finished_at DESC LIMIT 1
-            ''', (repo_full_name,))
+            ''', (repo_full_name, rev))
             worker = cursor.fetchone()
 
-            # 2. Otherwise, fall back to any online worker
+            # 2. Try to find the last online worker that ran a job for this repo
+            if not worker:
+                cursor.execute('''
+                    SELECT w.worker_id, w.service_url
+                    FROM jobs j
+                    JOIN workers w ON j.worker_id = w.worker_id
+                    WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
+                    ORDER BY j.finished_at DESC LIMIT 1
+                ''', (repo_full_name,))
+                worker = cursor.fetchone()
+
+            # 3. Otherwise, fall back to any online worker
             if not worker:
                 cursor.execute('''
                     SELECT worker_id, service_url
@@ -1163,11 +1198,11 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         worker_id = worker['worker_id']
         worker_url = worker['service_url']
 
-        app.logger.info(f"Requesting worker {worker_url} to start historical dvc-viewer for {repo_full_name} at revision {rev}")
+        app.logger.info(f"Requesting worker {worker_url} to start historical dvc-viewer for {repo_full_name} at revision {rev} with P2P URL {p2p_url}")
         try:
             resp = requests.post(
                 f"{worker_url}/api/worker/dvc-viewer/start",
-                json={"repo": repo_full_name, "rev": rev},
+                json={"repo": repo_full_name, "rev": rev, "p2p_url": p2p_url},
                 timeout=60
             )
             if resp.status_code != 200:
