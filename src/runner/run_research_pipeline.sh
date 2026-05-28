@@ -469,25 +469,31 @@ if [ -n "$DVC_REMOTE_P2P_URL" ]; then
 
     log_info "Fetching data from peer (best-effort P2P pull)..."
     rm -f /tmp/p2p_pull.log
-    if docker_exec "dvc pull --force -r peer_remote" 2>/tmp/p2p_pull.log; then
+    if docker_exec "dvc pull --force --allow-missing -r peer_remote" 2>/tmp/p2p_pull.log; then
         log_success "P2P transfer successful."
     else
-        log_warn "P2P pull incomplete or failed. Attempting fallback pull from default remote..."
-        if docker_exec "dvc pull --force" >>/tmp/p2p_pull.log 2>&1; then
-            log_success "Fallback pull from default remote successful."
-        else
-            log_warn "Fallback pull also failed or incomplete. Details of the error:"
-            if [ -s /tmp/p2p_pull.log ]; then
-                log_warn "--- DVC Pull Error Diagnostic Log ---"
-                tail -n 20 /tmp/p2p_pull.log | while read -r line; do
-                    log_warn "  $line"
-                done
-                log_warn "-------------------------------------"
+        log_warn "P2P pull incomplete or failed."
+        # Only attempt fallback if a default remote is actually configured
+        if docker_exec "dvc remote list 2>/dev/null | head -1 | grep -q ."; then
+            log_info "Attempting fallback pull from default remote..."
+            if docker_exec "dvc pull --force --allow-missing" >>/tmp/p2p_pull.log 2>&1; then
+                log_success "Fallback pull from default remote successful."
             else
-                log_warn "No detailed error log available."
+                log_warn "Fallback pull also failed or incomplete. Details of the error:"
+                if [ -s /tmp/p2p_pull.log ]; then
+                    log_warn "--- DVC Pull Error Diagnostic Log ---"
+                    tail -n 20 /tmp/p2p_pull.log | while read -r line; do
+                        log_warn "  $line"
+                    done
+                    log_warn "-------------------------------------"
+                else
+                    log_warn "No detailed error log available."
+                fi
             fi
-            log_info "dvc repro will regenerate missing stages (best-effort)."
+        else
+            log_info "No default DVC remote configured. Skipping fallback pull."
         fi
+        log_info "dvc repro will regenerate missing stages (best-effort)."
     fi
 fi
 
