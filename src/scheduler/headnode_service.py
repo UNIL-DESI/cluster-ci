@@ -1687,8 +1687,22 @@ def api_latest_artifacts(repo):
             app.logger.warning(f"Failed to get per-file dates: {e}")
 
         # 5. Return all artifacts declared in dvc.lock
+        # 6. Filter: only include artifacts that actually exist in git at origin/main
+        # Files declared in dvc.lock but never produced (OOM crash, stage failure)
+        # would cause 404 errors when the user tries to view them.
+        existing_files = set()
+        try:
+            cmd_tree = ["git", "ls-tree", "-r", "--name-only", ref]
+            result_tree = subprocess.run(cmd_tree, capture_output=True, text=True, cwd=local_repo_path, timeout=10)
+            if result_tree.returncode == 0:
+                existing_files = set(result_tree.stdout.strip().split("\n"))
+        except Exception as e:
+            app.logger.warning(f"git ls-tree failed for {repo}: {e}")
+
         files = []
         for artifact in artifacts:
+            if artifact["path"] not in existing_files:
+                continue
             artifact_date = file_dates.get(artifact["path"], run_created_at)
             files.append({
                 "path": artifact["path"],
@@ -1700,7 +1714,7 @@ def api_latest_artifacts(repo):
                 "artifact_type": artifact["artifact_type"]
             })
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref})", flush=True)
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref}, declared={len(artifacts)}, in_git={len(existing_files)})", flush=True)
         return jsonify(files)
 
     except Exception as e:
