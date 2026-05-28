@@ -249,20 +249,25 @@ def stream_logs(run_id, commit_sha):
             status = "queued"
             conclusion = None
             try:
-                res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 if res.returncode == 0:
                     info = json.loads(res.stdout)
                     status = info.get("status")
                     conclusion = info.get("conclusion")
+                    url = info.get("url", "URL non disponible")
                     if status == "completed" or conclusion:
                         if conclusion == "success":
                             print("\n✅ Cluster-CI run completed successfully!")
                             return 0
                         elif conclusion == "cancelled":
-                            print("\n⚠️  Cluster-CI run was cancelled.")
+                            print("\n⚠️ [ERREUR] L'exécution a été annulée.")
+                            print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
+                            print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
                             return 1
                         else:
-                            print(f"\n❌ Cluster-CI run finished with status: {conclusion or 'failed'}")
+                            print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
+                            print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                            print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
                             return 1
             except Exception:
                 pass
@@ -524,11 +529,14 @@ def shadow_run():
 
     # Check final status
     conclusion = "unknown"
+    url = "URL non disponible"
     for _ in range(5):
         try:
-            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
-                conclusion = json.loads(res.stdout).get("conclusion", "unknown")
+                info = json.loads(res.stdout)
+                conclusion = info.get("conclusion", "unknown")
+                url = info.get("url", "URL non disponible")
                 if conclusion and conclusion != "null":
                     break
         except Exception:
@@ -572,8 +580,14 @@ def shadow_run():
         except Exception as e:
             print(f"❌ Failed to auto-sync results from cluster: {e}", file=sys.stderr)
             raise
+    elif conclusion == "cancelled":
+        print("\n⚠️ [ERREUR] L'exécution a été annulée.")
+        print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
+        print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
     else:
-        print(f"❌ Cluster-CI run finished with status: {conclusion or 'unknown'}")
+        print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'unknown'}")
+        print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+        print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
 
 def main():
     # Force standard output streams to use UTF-8 to prevent UnicodeEncodeError under Windows CMD/PowerShell
