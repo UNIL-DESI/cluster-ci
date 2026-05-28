@@ -32,7 +32,7 @@ Ce script injecte :
 1. Le workflow Github Actions (`.github/workflows/cluster-ci.yml`)
 2. Le fichier de contrôle DVC (`.cluster-ci`)
 3. **Le fichier de directives pour agents (`AGENTS.md`)** contenant les contraintes d'architecture du cluster (Python 3.12, PyTorch 2.12, CUDA 13.2) afin d'éviter les erreurs de dépendances de l'IA sur ce dépôt.
-4. **Le Scanner Pre-flight (Git Hook)** : Un hook de pre-commit interactif qui valide la compatibilité locale avec le cluster ARM64 et propose des corrections automatiques.
+4. **Le Scanner Pre-flight (Git Hook)** : Un hook de pre-commit interactif qui valide la compatibilité locale avec le cluster ARM64 et propose des corrections automatiques (avec détection robuste du binaire Python évitant le stub factice du Windows Store sur Windows).
 5. **Le CLI `cluster-run`** : Commande locale pour soumettre et suivre des jobs directement depuis votre terminal (voir ci-dessous).
 
 #### Commande `cluster-run`
