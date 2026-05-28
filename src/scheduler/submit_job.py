@@ -187,14 +187,37 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         print(f"❌ Failed to submit job: {e}")
         sys.exit(1)
 
-def wait_for_job(headnode_url, job_id):
+def wait_for_job(headnode_url, job_id, branch=None):
     """Polls the headnode for job status and streams logs from the worker."""
     if not headnode_url:
         print("Error: HEADNODE_URL is required to check job status.")
         sys.exit(1)
     print(f"⏳ Waiting for job {job_id} to complete...")
 
+    is_draft_branch = branch and branch.startswith("cluster-draft/")
+
     def signal_handler(sig, frame):
+        token = os.environ.get("CLUSTER_TOKEN")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        # === NON-DRAFT BRANCHES: Detach GHA without killing the worker job ===
+        # The worker job continues running independently. We clear gh_run_id
+        # so clean_ghosts won't kill it when it sees the GHA run as cancelled.
+        if not is_draft_branch:
+            try:
+                requests.post(f"{headnode_url}/update_job_status", json={
+                    "job_id": job_id,
+                    "detach_gha": True
+                }, headers=headers, timeout=10)
+            except Exception:
+                pass
+            try:
+                print(f"\n🔄 GHA workflow replaced (branch: {branch}). Job {job_id} continues running on worker.")
+            except (BrokenPipeError, Exception):
+                pass
+            sys.exit(128 + sig)
+
+        # === DRAFT BRANCHES: Full cancellation propagation (fast-iteration mode) ===
         worker_url = None
         cancel_error = None
         
@@ -215,8 +238,6 @@ def wait_for_job(headnode_url, job_id):
                     cancel_error = e
 
         try:
-            token = os.environ.get("CLUSTER_TOKEN")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
             requests.post(f"{headnode_url}/update_job_status", json={
                 "job_id": job_id,
                 "status": "failed",
@@ -512,5 +533,5 @@ if __name__ == '__main__':
             print(f"⚠️ Failed to parse ALL_GITHUB_SECRETS: {e}")
 
     job_id = submit_job(args.headnode, args.repo, args.branch, args.gh_token, env_vars)
-    exit_code = wait_for_job(args.headnode, job_id)
+    exit_code = wait_for_job(args.headnode, job_id, branch=args.branch)
     sys.exit(exit_code)

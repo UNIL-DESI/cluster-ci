@@ -441,6 +441,19 @@ def worker_poll(worker_id):
 def update_job_status():
     data = request.json
     job_id = data.get('job_id')
+
+    # Handle GHA detachment (non-draft branch workflow replacement).
+    # When GHA cancels a workflow due to concurrency on a non-draft branch,
+    # submit_job.py sends detach_gha=True instead of a full cancellation.
+    # We clear gh_run_id so clean_ghosts won't kill the still-running worker job.
+    if data.get('detach_gha'):
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE jobs SET gh_run_id = NULL WHERE job_id = ?', (job_id,))
+            conn.commit()
+        app.logger.info(f"🔗 GHA detached from job {job_id} (non-draft branch concurrency replacement — worker job continues)")
+        return jsonify({"status": "ok", "message": "GHA run detached, worker job preserved"})
+
     status = data.get('status')
     exit_code = data.get('exit_code')
     commit_hash = data.get('commit_hash')

@@ -27,7 +27,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref_name, 'cluster-draft/') }}
+  cancel-in-progress: true
 
 jobs:
   execute-on-cluster:
