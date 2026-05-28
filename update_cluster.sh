@@ -172,14 +172,21 @@ echo "Pausing for 10s to allow services to start..."
 sleep 10
 
 echo "🚀 Submitting Job 1..."
-python3 src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
+curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $CLUSTER_TOKEN" \
+    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
 JOB1=$!
 
 echo "🚀 Submitting Job 2..."
-python3 src/scheduler/submit_job.py "$TARGET_REPO/cluster-ci" "main" --headnode "http://$HEADNODE_IP:5000" &
+curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $CLUSTER_TOKEN" \
+    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
 JOB2=$!
 
 wait $JOB1
 wait $JOB2
 
+echo ""
 echo "🎉 Cluster test complete! All nodes are operational."
