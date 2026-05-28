@@ -150,7 +150,7 @@ def register_worker():
 
     return jsonify({"status": "ok"})
 
-def cancel_job_cleanly(job_id, exit_code=-15):
+def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
     """
     Cancels a job cleanly:
     - If pending: updates DB status to failed, exit_code = exit_code.
@@ -167,15 +167,23 @@ def cancel_job_cleanly(job_id, exit_code=-15):
         job = cursor.fetchone()
 
     if not job:
+        app.logger.warning(f"🔍 cancel_job_cleanly({job_id}): job not found in DB. reason={reason}")
         return False
 
     status = job['status']
+    job_repo = job.get('repo', '?')
+    job_branch = job.get('branch', '?')
+    job_user = job.get('username', '?')
+    app.logger.info(f"🛑 cancel_job_cleanly({job_id}): status={status}, repo={job_repo}, branch={job_branch}, user={job_user}, exit_code={exit_code}, reason={reason}")
+
     if status not in ['pending', 'assigned', 'running']:
+        app.logger.info(f"🛑 cancel_job_cleanly({job_id}): skipped — status '{status}' is not cancellable")
         return False
 
     # 1. Worker cancellation if active on worker
     if status in ['assigned', 'running'] and job['service_url']:
         try:
+            app.logger.info(f"🛑 cancel_job_cleanly({job_id}): sending /cancel to worker {job['service_url']}")
             requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
         except Exception as e:
             app.logger.error(f"Failed to send cancel to worker {job['service_url']} for job {job_id}: {e}")
@@ -192,6 +200,7 @@ def cancel_job_cleanly(job_id, exit_code=-15):
                     "Accept": "application/vnd.github.v3+json"
                 }
                 gh_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel"
+                app.logger.info(f"🛑 cancel_job_cleanly({job_id}): cancelling GHA run {run_id} for {repo}")
                 requests.post(gh_url, headers=headers, timeout=5)
         except Exception as e:
             app.logger.error(f"Failed to cancel GH Action for job {job_id}: {e}")
@@ -206,6 +215,7 @@ def cancel_job_cleanly(job_id, exit_code=-15):
         ''', (exit_code, job_id))
         conn.commit()
 
+    app.logger.info(f"🛑 cancel_job_cleanly({job_id}): done — job marked as failed")
     return True
 
 @app.route('/submit_job', methods=['POST'])
@@ -261,7 +271,9 @@ def submit_job():
     #   branch. Running/assigned jobs are preserved so they can finish gracefully.
     #   This enforces "only one pending per branch" — new submissions replace the queued one.
     jobs_to_cancel = []
+    cancel_reasons = {}  # job_id -> reason string for tracing
     is_draft = branch.startswith("cluster-draft/") if branch else False
+    app.logger.info(f"📋 [AUTO-CANCEL] New submission: repo={repo}, branch={branch}, user={username}, is_draft={is_draft}")
     if branch and repo:
         try:
             with get_db_conn() as conn:
@@ -271,32 +283,45 @@ def submit_job():
                     WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
                 ''', (repo,))
                 active_jobs = cursor.fetchall()
+                app.logger.info(f"📋 [AUTO-CANCEL] Found {len(active_jobs)} active job(s) for repo={repo}")
                 for aj in active_jobs:
                     aj_branch = aj['branch'] or ''
                     aj_user = aj['username'] or ''
                     aj_status = aj['status']
+                    aj_id = aj['job_id']
                     
                     if is_draft:
                         # Draft branches: aggressive cancellation (cancel everything for same user/branch)
                         if aj_branch == branch:
-                            jobs_to_cancel.append(aj['job_id'])
+                            jobs_to_cancel.append(aj_id)
+                            cancel_reasons[aj_id] = f"draft:same_branch ({aj_branch}), status={aj_status}"
                         elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
-                            jobs_to_cancel.append(aj['job_id'])
+                            jobs_to_cancel.append(aj_id)
+                            cancel_reasons[aj_id] = f"draft:same_user ({aj_user}), aj_branch={aj_branch}, status={aj_status}"
                         elif aj_branch == f"cluster-draft/{username}":
-                            jobs_to_cancel.append(aj['job_id'])
+                            jobs_to_cancel.append(aj_id)
+                            cancel_reasons[aj_id] = f"draft:user_branch_match ({aj_branch}), status={aj_status}"
+                        else:
+                            app.logger.debug(f"📋 [AUTO-CANCEL] SKIP {aj_id}: draft mode but no rule matched (aj_branch={aj_branch}, aj_user={aj_user}, status={aj_status})")
                     else:
                         # Non-draft branches: only cancel PENDING jobs on the exact same branch.
                         # Running/assigned jobs are left untouched to finish their execution.
                         if aj_branch == branch and aj_status == 'pending':
-                            jobs_to_cancel.append(aj['job_id'])
+                            jobs_to_cancel.append(aj_id)
+                            cancel_reasons[aj_id] = f"branch:replace_pending (same branch={aj_branch})"
+                        else:
+                            app.logger.info(f"📋 [AUTO-CANCEL] PRESERVED {aj_id}: branch mode, aj_branch={aj_branch}, status={aj_status} (only pending on same branch are replaced)")
         except Exception as e:
             app.logger.error(f"Error identifying active jobs to cancel: {e}")
 
     # Cancel identified jobs cleanly outside the active insertion transaction to prevent SQLite locks
+    if jobs_to_cancel:
+        app.logger.info(f"📋 [AUTO-CANCEL] Cancelling {len(jobs_to_cancel)} job(s): {', '.join(f'{jid} ({cancel_reasons.get(jid, '?')})' for jid in jobs_to_cancel)}")
+    else:
+        app.logger.info(f"📋 [AUTO-CANCEL] No jobs to cancel")
     for j_id in jobs_to_cancel:
         try:
-            app.logger.info(f"Auto-cancelling active job {j_id} on {repo} branch {branch} category match")
-            cancel_job_cleanly(j_id, exit_code=-15)
+            cancel_job_cleanly(j_id, exit_code=-15, reason=cancel_reasons.get(j_id, "auto-cancel"))
         except Exception as e:
             app.logger.error(f"Failed to auto-cancel job {j_id}: {e}")
 
@@ -436,7 +461,7 @@ def update_job_status():
         if status == 'failed' and current_status in ['assigned', 'running'] and exit_code is not None and int(exit_code) < 0:
             conn.commit()  # Release current transaction before calling cancel_job_cleanly to avoid SQLite locks
             app.logger.info(f"🔄 Routing external cancellation signal ({exit_code}) for job {job_id} through cancel_job_cleanly")
-            cancel_job_cleanly(job_id, exit_code=exit_code)
+            cancel_job_cleanly(job_id, exit_code=exit_code, reason=f"external_signal(exit_code={exit_code})")
             return jsonify({"status": "ok", "message": "Cancellation signal routed cleanly"})
 
         if status == 'running':
@@ -487,11 +512,11 @@ def clean_ghosts():
                 conclusion = run_data.get('conclusion')
                 if status == 'completed' or conclusion is not None:
                     app.logger.info(f"Ghost job detected: {job['job_id']} (GH status: {status}, conclusion: {conclusion}). Marking as failed & releasing worker resources.")
-                    cancel_job_cleanly(job['job_id'], exit_code=-15)
+                    cancel_job_cleanly(job['job_id'], exit_code=-15, reason=f"ghost_cleanup(gh_status={status}, conclusion={conclusion})")
                     cleaned += 1
             elif resp.status_code == 404:
                 app.logger.info(f"Ghost job detected (404): {job['job_id']}. Marking as failed & releasing worker resources.")
-                cancel_job_cleanly(job['job_id'], exit_code=-15)
+                cancel_job_cleanly(job['job_id'], exit_code=-15, reason="ghost_cleanup(gh_404)")
                 cleaned += 1
             else:
                 err_msg = f"Unexpected response status {resp.status_code} from GitHub API for job {job['job_id']}"
