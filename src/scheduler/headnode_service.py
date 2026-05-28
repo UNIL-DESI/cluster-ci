@@ -22,6 +22,8 @@ import time
 import threading
 import re
 import json
+import yaml
+import hashlib
 import tempfile
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -49,7 +51,6 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # Derive a stable secret_key from CLUSTER_TOKEN so sessions survive service restarts.
 # os.urandom(24) would invalidate all sessions on every restart.
-import hashlib
 _token = os.environ.get("CLUSTER_TOKEN", "")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or hashlib.sha256(f"flask-session-{_token}".encode()).digest()
 
@@ -1354,7 +1355,7 @@ def api_latest_artifacts(repo):
             print(f"[Artifacts] No dvc.yaml found for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify([])
 
-        import yaml
+
         try:
             dvc_yaml_data = yaml.safe_load(dvc_yaml_content) or {}
         except Exception as e:

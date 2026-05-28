@@ -11,7 +11,8 @@ dependencies = [
     "psutil",
     "requests",
     "authlib",
-    "python-dotenv"
+    "python-dotenv",
+    "pyyaml"
 ]
 
 [project.optional-dependencies]
