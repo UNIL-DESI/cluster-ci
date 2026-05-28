@@ -47,7 +47,11 @@ UV_CMD = get_executable("uv")
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+# Derive a stable secret_key from CLUSTER_TOKEN so sessions survive service restarts.
+# os.urandom(24) would invalidate all sessions on every restart.
+import hashlib
+_token = os.environ.get("CLUSTER_TOKEN", "")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or hashlib.sha256(f"flask-session-{_token}".encode()).digest()
 
 oauth = OAuth(app)
 oauth.register(
