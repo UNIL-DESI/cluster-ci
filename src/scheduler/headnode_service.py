@@ -1067,6 +1067,7 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
     const scrollElement = document.getElementById('log-scroll');
     const statusElement = document.getElementById('poll-status');
     let offset = 0;
+    const basePath = '/view/{owner}/{repo}/';
 
     async function pollLogs() {{
         try {{
@@ -1081,13 +1082,24 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         }} catch (e) {{ console.error("Log fetch error", e); }}
     }}
 
+    async function sendHeartbeat() {{
+        // Keep the dvc-viewer alive by sending heartbeats through the proxy.
+        // Without this, the viewer's inactivity daemon would kill it before
+        // any real client connects.
+        try {{
+            await fetch(basePath + 'api/heartbeat', {{ cache: 'no-store' }});
+        }} catch (e) {{ /* viewer not ready yet, ignore */ }}
+    }}
+
     async function checkApp() {{
         try {{
-            const resp = await fetch(window.location.href, {{ method: 'HEAD', cache: 'no-store' }});
-            if (resp.status === 200) {{
+            // Use the heartbeat endpoint as a lightweight health check.
+            // This avoids the full HTML proxy + session/redirect issues of HEAD requests.
+            const resp = await fetch(basePath + 'api/heartbeat', {{ cache: 'no-store' }});
+            if (resp.ok) {{
                 statusElement.textContent = "✅ App is Ready! Redirecting...";
                 statusElement.style.color = "#4ade80";
-                setTimeout(() => window.location.reload(), 500);
+                setTimeout(() => window.location.href = basePath, 500);
                 return;
             }}
         }} catch (e) {{ }}
@@ -1095,7 +1107,9 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
     }}
 
     setInterval(pollLogs, 2000);
+    setInterval(sendHeartbeat, 5000);
     pollLogs();
+    sendHeartbeat();
     checkApp();
 </script>
 </body></html>""", 502
