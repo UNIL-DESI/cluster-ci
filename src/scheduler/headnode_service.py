@@ -1245,6 +1245,67 @@ def proxy_request(target_url, base_href=None):
     except Exception as e:
         return f"Proxy Error: {str(e)}", 502
 
+def extract_metrics_and_plots_paths(dvc_yaml_data):
+    paths = set()
+    patterns = []
+    
+    def resolve_item(item):
+        if not item:
+            return
+        if isinstance(item, list):
+            for x in item:
+                resolve_item(x)
+        elif isinstance(item, dict):
+            for k in item.keys():
+                if isinstance(k, str):
+                    add_path(k)
+        elif isinstance(item, str):
+            add_path(item)
+            
+    def add_path(p):
+        if "${" in p:
+            # Transform to regex pattern
+            # e.g., "artifacts/metrics-${item}.json" -> "^artifacts/metrics-.*\.json$"
+            pattern_str = re.escape(p)
+            pattern_str = re.sub(r'\\\$\\\{[^}]+\\\}', '.*', pattern_str)
+            try:
+                patterns.append(re.compile(f"^{pattern_str}$"))
+            except Exception:
+                pass
+        else:
+            paths.add(p)
+
+    if isinstance(dvc_yaml_data, dict):
+        stages = dvc_yaml_data.get("stages", {})
+        if isinstance(stages, dict):
+            for stage_def in stages.values():
+                if not isinstance(stage_def, dict):
+                    continue
+                
+                # Check metrics & plots in stage
+                resolve_item(stage_def.get("metrics"))
+                resolve_item(stage_def.get("plots"))
+                
+                # Check if it is a foreach / do
+                do_block = stage_def.get("do", {})
+                if isinstance(do_block, dict):
+                    resolve_item(do_block.get("metrics"))
+                    resolve_item(do_block.get("plots"))
+                    
+        # DVC 1.0 or other styles might have top level plots/metrics
+        resolve_item(dvc_yaml_data.get("plots"))
+        resolve_item(dvc_yaml_data.get("metrics"))
+        
+    return paths, patterns
+
+def is_matching_artifact(file_path, paths, patterns):
+    if file_path in paths:
+        return True
+    for pat in patterns:
+        if pat.match(file_path):
+            return True
+    return False
+
 @app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
 def api_latest_artifacts(repo):
     if 'user' not in session:
@@ -1271,7 +1332,29 @@ def api_latest_artifacts(repo):
         return jsonify([])
 
     try:
-        # Run git ls-tree to list all files at that commit
+        # 1. Fetch dvc.yaml content at that commit
+        dvc_yaml_content = ""
+        try:
+            res_yaml = subprocess.run(["git", "show", f"{commit_hash}:dvc.yaml"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
+            if res_yaml.returncode == 0:
+                dvc_yaml_content = res_yaml.stdout
+        except Exception as e:
+            app.logger.error(f"Error git show dvc.yaml for {repo}: {e}")
+
+        # If no dvc.yaml or it is empty, return empty list (no artifacts declared in pipeline)
+        if not dvc_yaml_content:
+            return jsonify([])
+
+        import yaml
+        try:
+            dvc_yaml_data = yaml.safe_load(dvc_yaml_content) or {}
+        except Exception as e:
+            app.logger.error(f"Error parsing dvc.yaml for {repo}: {e}")
+            dvc_yaml_data = {}
+
+        paths, patterns = extract_metrics_and_plots_paths(dvc_yaml_data)
+
+        # 2. Run git ls-tree to list all files at that commit
         cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
         
@@ -1289,12 +1372,14 @@ def api_latest_artifacts(repo):
                 # Filter out system and config directories
                 if any(line.startswith(p) for p in [".git/", ".github/", ".dvc/", ".idea/", ".vscode/"]):
                     continue
-                files.append({
-                    "path": line,
-                    "is_dir": False,
-                    "size": 0,
-                    "isout": True
-                })
+                # Only keep files matching the metrics and plots from dvc.yaml
+                if is_matching_artifact(line, paths, patterns):
+                    files.append({
+                        "path": line,
+                        "is_dir": False,
+                        "size": 0,
+                        "isout": True
+                    })
             return jsonify(files)
         else:
             app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
