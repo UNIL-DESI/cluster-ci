@@ -1443,6 +1443,137 @@ def is_matching_artifact(file_path, path_info, pattern_info):
     return None
 
 
+def extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data):
+    """Extract all metrics/plots artifacts from dvc.lock using dvc.yaml for type classification.
+    
+    dvc.lock contains the resolved paths (no ${item} variables) for each stage.
+    dvc.yaml contains the template patterns that tell us if a path is a metric or plot.
+    
+    Returns:
+        list of dicts: [{"path": str, "stage": str, "artifact_type": "metric"|"plot"}, ...]
+    """
+    # 1. Build type classifier from dvc.yaml (metrics vs plots patterns)
+    path_info, pattern_info = extract_metrics_and_plots_paths(dvc_yaml_data)
+    
+    # 2. Also build a set of all metrics/plots paths declared in dvc.yaml 
+    #    for stages WITHOUT foreach (these have no ${} and are exact paths)
+    declared_metrics_paths = set()
+    declared_plots_paths = set()
+    if isinstance(dvc_yaml_data, dict):
+        stages = dvc_yaml_data.get("stages", {})
+        if isinstance(stages, dict):
+            for stage_name, stage_def in stages.items():
+                if not isinstance(stage_def, dict):
+                    continue
+                # Direct stage metrics/plots
+                for paths_set, key in [(declared_metrics_paths, "metrics"), (declared_plots_paths, "plots")]:
+                    _collect_paths(stage_def.get(key), paths_set)
+                # foreach/do block
+                do_block = stage_def.get("do", {})
+                if isinstance(do_block, dict):
+                    for paths_set, key in [(declared_metrics_paths, "metrics"), (declared_plots_paths, "plots")]:
+                        _collect_paths(do_block.get(key), paths_set)
+
+    # 3. Extract all outs from dvc.lock stages
+    artifacts = []
+    seen_paths = set()
+    
+    if not isinstance(dvc_lock_data, dict):
+        return artifacts
+        
+    lock_stages = dvc_lock_data.get("stages", dvc_lock_data)
+    if not isinstance(lock_stages, dict):
+        return artifacts
+    
+    for stage_name, stage_def in lock_stages.items():
+        if not isinstance(stage_def, dict):
+            continue
+            
+        outs = stage_def.get("outs", [])
+        if not isinstance(outs, list):
+            continue
+            
+        for out_entry in outs:
+            if not isinstance(out_entry, dict):
+                continue
+            file_path = out_entry.get("path")
+            if not file_path or file_path in seen_paths:
+                continue
+            
+            # Classify: is this path a metric or plot?
+            artifact_type = _classify_artifact_type(
+                file_path, path_info, pattern_info,
+                declared_metrics_paths, declared_plots_paths
+            )
+            
+            if artifact_type:
+                # Clean stage name: "step_foo@tomplay" -> "step_foo"
+                clean_stage = stage_name.split("@")[0] if "@" in stage_name else stage_name
+                artifacts.append({
+                    "path": file_path,
+                    "stage": clean_stage,
+                    "artifact_type": artifact_type
+                })
+                seen_paths.add(file_path)
+    
+    return artifacts
+
+def _collect_paths(item, paths_set):
+    """Recursively collect all path strings from a metrics/plots declaration."""
+    if not item:
+        return
+    if isinstance(item, list):
+        for x in item:
+            _collect_paths(x, paths_set)
+    elif isinstance(item, dict):
+        for k in item.keys():
+            if isinstance(k, str):
+                paths_set.add(k)
+    elif isinstance(item, str):
+        paths_set.add(item)
+
+def _classify_artifact_type(file_path, path_info, pattern_info,
+                            declared_metrics_paths, declared_plots_paths):
+    """Determine if a file is a metric, plot, or not an artifact.
+    
+    Uses multiple strategies:
+    1. Exact match in path_info (non-foreach paths from dvc.yaml)
+    2. Regex match in pattern_info (foreach paths from dvc.yaml)  
+    3. Check if the path matches any declared metric/plot template after variable resolution
+    
+    Returns: "metric", "plot", or None
+    """
+    # Strategy 1: Exact match from dvc.yaml (non-foreach stages)
+    if file_path in path_info:
+        return path_info[file_path]["type"]
+    
+    # Strategy 2: Regex pattern match (foreach stages)
+    for pat, stage_name, art_type in pattern_info:
+        if pat.match(file_path):
+            return art_type
+    
+    # Strategy 3: Check if file_path could match any declared template
+    # by checking if it matches after removing the variable part
+    for mp in declared_metrics_paths:
+        if "${" in mp:
+            # Build a simple prefix/suffix match
+            parts = mp.split("${")
+            prefix = parts[0]
+            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
+            if file_path.startswith(prefix) and file_path.endswith(suffix):
+                return "metric"
+    
+    for pp in declared_plots_paths:
+        if "${" in pp:
+            parts = pp.split("${")
+            prefix = parts[0]
+            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
+            if file_path.startswith(prefix) and file_path.endswith(suffix):
+                return "plot"
+    
+    return None
+
+
 @app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
 def api_latest_artifacts(repo):
     if 'user' not in session:
@@ -1490,59 +1621,55 @@ def api_latest_artifacts(repo):
         # 0. Ensure the commit is locally available before any git operations
         subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
 
-        # 1. Fetch dvc.yaml content at that commit
-        dvc_yaml_content = ""
+        # 1. Fetch dvc.yaml content at that commit (for type classification)
+        dvc_yaml_data = {}
         try:
             res_yaml = subprocess.run(["git", "show", f"{commit_hash}:dvc.yaml"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
-            if res_yaml.returncode == 0:
-                dvc_yaml_content = res_yaml.stdout
+            if res_yaml.returncode == 0 and res_yaml.stdout.strip():
+                dvc_yaml_data = yaml.safe_load(res_yaml.stdout) or {}
         except Exception as e:
             app.logger.error(f"Error git show dvc.yaml for {repo}: {e}")
 
-        # If no dvc.yaml or it is empty, return empty list (no artifacts declared in pipeline)
-        if not dvc_yaml_content:
-            print(f"[Artifacts] No dvc.yaml found for {repo} at {commit_hash[:12]}", flush=True)
+        # 2. Fetch dvc.lock content at that commit (source of truth for resolved paths)
+        dvc_lock_data = {}
+        try:
+            res_lock = subprocess.run(["git", "show", f"{commit_hash}:dvc.lock"], cwd=local_repo_path, capture_output=True, text=True, timeout=10)
+            if res_lock.returncode == 0 and res_lock.stdout.strip():
+                dvc_lock_data = yaml.safe_load(res_lock.stdout) or {}
+        except Exception as e:
+            app.logger.error(f"Error git show dvc.lock for {repo}: {e}")
+
+        # If neither dvc.yaml nor dvc.lock exist, return empty list
+        if not dvc_yaml_data and not dvc_lock_data:
+            print(f"[Artifacts] No dvc.yaml/dvc.lock found for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify([])
 
+        # 3. Extract artifacts from dvc.lock using dvc.yaml for classification
+        artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
 
-        try:
-            dvc_yaml_data = yaml.safe_load(dvc_yaml_content) or {}
-        except Exception as e:
-            app.logger.error(f"Error parsing dvc.yaml for {repo}: {e}")
-            dvc_yaml_data = {}
-
-        path_info, pattern_info = extract_metrics_and_plots_paths(dvc_yaml_data)
-
-        # 2. List all files at that commit
+        # 4. Verify which artifacts actually exist in the git tree at this commit
         cmd = ["git", "ls-tree", "-r", "--name-only", commit_hash]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=local_repo_path, timeout=5)
 
+        existing_files = set()
         if result.returncode == 0:
-            files = []
-            for line in result.stdout.strip().split("\n"):
-                if not line:
-                    continue
-                # Filter out system and config directories
-                if any(line.startswith(p) for p in [".git/", ".github/", ".dvc/", ".idea/", ".vscode/"]):
-                    continue
-                # Only keep files matching the metrics and plots from dvc.yaml
-                match_result = is_matching_artifact(line, path_info, pattern_info)
-                if match_result:
-                    stage_name, artifact_type = match_result
-                    files.append({
-                        "path": line,
-                        "is_dir": False,
-                        "size": 0,
-                        "isout": True,
-                        "created_at": run_created_at,
-                        "stage": stage_name,
-                        "artifact_type": artifact_type
-                    })
-            print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
-            return jsonify(files)
-        else:
-            app.logger.error(f"Git ls-tree failed for {repo}: {result.stderr}")
-            return jsonify([])
+            existing_files = set(result.stdout.strip().split("\n"))
+
+        files = []
+        for artifact in artifacts:
+            if artifact["path"] in existing_files:
+                files.append({
+                    "path": artifact["path"],
+                    "is_dir": False,
+                    "size": 0,
+                    "isout": True,
+                    "created_at": run_created_at,
+                    "stage": artifact["stage"],
+                    "artifact_type": artifact["artifact_type"]
+                })
+
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]} (from dvc.lock: {len(artifacts)} declared)", flush=True)
+        return jsonify(files)
 
     except Exception as e:
         app.logger.error(f"Error listing latest artifacts from local Git for {repo}: {e}")
