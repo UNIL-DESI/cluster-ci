@@ -21,11 +21,24 @@ def log_success(msg):
     print(f"✅ [DVC-Git-Helper] {msg}")
 
 def _resolve_foreach_var(text, item_val):
-    """Replace ${item} (and ${item.attr} variants) with the concrete foreach value."""
+    """Replace ${item} (and ${item.attr} variants) with the concrete foreach value.
+    
+    Handles two cases:
+    - ${item}: replaced with str(item_val) (works for strings and simple values)
+    - ${item.attr}: when item_val is a dict, replaced with item_val[attr]
+    """
     if not isinstance(text, str):
         return text
-    # ${item.safe_name} or ${item} — replace all with the string value
-    return re.sub(r'\$\{item(?:\.[^}]+)?\}', str(item_val), text)
+    
+    def _replace_match(match):
+        attr = match.group(1)  # e.g. ".safe_name" or None
+        if attr and isinstance(item_val, dict):
+            # ${item.safe_name} -> item_val["safe_name"]
+            attr_name = attr.lstrip(".")
+            return str(item_val.get(attr_name, match.group(0)))
+        return str(item_val)
+    
+    return re.sub(r'\$\{item(\.[^}]+)?\}', _replace_match, text)
 
 def _resolve_entries(entries, item_val):
     """Deep-clone entries list/dict, replacing ${item} with the concrete value."""
