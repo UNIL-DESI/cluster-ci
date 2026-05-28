@@ -415,7 +415,7 @@
 
     <!-- Preview Modal -->
     <div class="modal fade" id="previewModal" tabindex="-1" aria-labelledby="previewModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width: 95%;">
             <div class="modal-content">
                 <div class="modal-header d-flex flex-column align-items-start">
                     <div class="d-flex w-100 justify-content-between align-items-center">
@@ -424,11 +424,30 @@
                     </div>
                     <div id="preview-version-nav" class="w-100 mt-3 d-none"></div>
                 </div>
-                <div class="modal-body">
-                    <div id="preview-loading" class="text-center py-5 d-none">
-                        <div class="spinner-border text-primary" role="status"></div>
+                <div class="modal-body p-0">
+                    <div class="row g-0" style="min-height: 500px;">
+                        <!-- Left: Artifact content -->
+                        <div class="col-md-8 p-3 border-end" style="overflow-y: auto; max-height: 70vh;">
+                            <div id="preview-loading" class="text-center py-5 d-none">
+                                <div class="spinner-border text-primary" role="status"></div>
+                            </div>
+                            <div id="preview-content"></div>
+                        </div>
+                        <!-- Right: Hydra/Config parameters -->
+                        <div class="col-md-4 p-0" style="overflow-y: auto; max-height: 70vh; background: var(--bg-subtle, #f8fafc);">
+                            <div class="p-3">
+                                <h6 class="text-slate-600 mb-3 d-flex align-items-center gap-2">
+                                    <i class="bi bi-gear-fill text-primary"></i> Paramètres de Configuration
+                                </h6>
+                                <div id="hydra-params-container">
+                                    <div class="text-center py-4">
+                                        <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+                                        <div class="text-muted small mt-2">Chargement des configs...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div id="preview-content"></div>
                 </div>
                 <div class="modal-footer">
                     <a id="preview-download-btn" href="#" class="btn btn-primary" target="_blank">Download</a>
@@ -503,6 +522,9 @@
             // Load file content (the latest or initially targeted version)
             await loadPreviewContent(url, path, size);
 
+            // Load Hydra params in parallel (non-blocking)
+            loadHydraParams();
+
             // Fetch the physical version history of the artifact
             try {
                 const historyUrl = `/api/projects/${currentState.repo}/artifact/history?path=${encodeURIComponent(path)}`;
@@ -543,6 +565,93 @@
                 console.error("Error loading version history:", err);
                 navContainer.innerHTML = `<div class="alert alert-warning py-2 px-3 m-0 small w-100"><i class="bi bi-exclamation-circle me-1"></i>Historique non disponible pour cet artefact (${err.message}).</div>`;
             }
+        }
+
+        async function loadHydraParams() {
+            const container = document.getElementById('hydra-params-container');
+            if (!container) return;
+
+            // Determine the commit to use
+            const commit = window.latestCommitHash || (currentState && currentState.commitHash) || 'main';
+            const repo = currentState && currentState.repo;
+            if (!repo) {
+                container.innerHTML = '<div class="text-muted small">Aucun projet sélectionné.</div>';
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/api/projects/${repo}/run/${commit}/hydra-params`);
+                if (!resp.ok) throw new Error('Erreur serveur');
+                const data = await resp.json();
+
+                if (!data.configs || data.configs.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-3">
+                            <i class="bi bi-file-earmark-x text-slate-400 fs-4 d-block mb-2"></i>
+                            <div class="text-muted small">Aucun fichier de configuration YAML trouvé dans les dépendances du pipeline.</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = data.configs.map((cfg, idx) => {
+                    const fileName = cfg.path.split('/').pop();
+                    const folderPath = cfg.path.includes('/') ? cfg.path.substring(0, cfg.path.lastIndexOf('/')) : '';
+                    const stagesBadges = cfg.stages.map(s => `<span class="badge bg-primary bg-opacity-10 text-primary rounded-pill" style="font-size: 0.7rem; font-weight: 500;">${escapeHtml(s)}</span>`).join(' ');
+
+                    return `
+                        <div class="card border-0 shadow-sm mb-2" style="background: white;">
+                            <div class="card-header p-2 px-3 d-flex align-items-center justify-content-between" 
+                                 style="cursor: pointer; background: rgba(248,250,252,0.8); border-bottom: 1px solid #e2e8f0;"
+                                 onclick="document.getElementById('hydra-cfg-${idx}').classList.toggle('d-none'); this.querySelector('.bi-chevron-down, .bi-chevron-right').classList.toggle('bi-chevron-down'); this.querySelector('.bi-chevron-down, .bi-chevron-right').classList.toggle('bi-chevron-right');">
+                                <div class="d-flex align-items-center gap-2 text-truncate">
+                                    <i class="bi bi-chevron-down text-slate-400" style="font-size: 0.75rem;"></i>
+                                    <i class="bi bi-file-earmark-code text-amber-500"></i>
+                                    <span class="font-medium text-slate-800 small text-truncate" title="${escapeHtml(cfg.path)}">${escapeHtml(fileName)}</span>
+                                </div>
+                            </div>
+                            <div id="hydra-cfg-${idx}" class="card-body p-0">
+                                ${folderPath ? `<div class="px-3 pt-2"><span class="text-muted" style="font-size: 0.7rem;"><i class="bi bi-folder2 me-1"></i>${escapeHtml(folderPath)}</span></div>` : ''}
+                                <div class="px-3 py-1">${stagesBadges}</div>
+                                <div class="px-2 pb-2">
+                                    ${renderYamlTree(cfg.content, 0)}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                console.error("Error loading Hydra params:", err);
+                container.innerHTML = `<div class="text-muted small py-3 text-center"><i class="bi bi-exclamation-circle me-1"></i>Impossible de charger les paramètres (${err.message}).</div>`;
+            }
+        }
+
+        function renderYamlTree(obj, depth) {
+            if (obj === null || obj === undefined) return '<span class="text-muted small">null</span>';
+            if (typeof obj !== 'object') {
+                // Primitive value
+                const valClass = typeof obj === 'number' ? 'text-info' : (typeof obj === 'boolean' ? 'text-warning' : 'text-success');
+                return `<span class="${valClass}" style="font-family: var(--font-mono); font-size: 0.8rem;">${escapeHtml(String(obj))}</span>`;
+            }
+            if (Array.isArray(obj)) {
+                if (obj.length === 0) return '<span class="text-muted small">[]</span>';
+                return '<div style="margin-left: ' + (depth > 0 ? 12 : 0) + 'px;">' +
+                    obj.map(item => `<div class="d-flex align-items-start gap-1 py-0"><span class="text-slate-400" style="font-size: 0.75rem;">•</span>${renderYamlTree(item, depth + 1)}</div>`).join('') +
+                    '</div>';
+            }
+            // Object
+            const entries = Object.entries(obj);
+            if (entries.length === 0) return '<span class="text-muted small">{}</span>';
+            return '<div style="margin-left: ' + (depth > 0 ? 12 : 0) + 'px;">' +
+                entries.map(([key, val]) => {
+                    const isNested = val !== null && typeof val === 'object';
+                    return `<div class="py-0">
+                        <span class="text-slate-700 font-medium" style="font-size: 0.8rem;">${escapeHtml(key)}</span><span class="text-slate-400">:</span>
+                        ${isNested ? renderYamlTree(val, depth + 1) : ' ' + renderYamlTree(val, depth + 1)}
+                    </div>`;
+                }).join('') +
+                '</div>';
         }
 
         async function loadPreviewContent(url, path, size) {
@@ -1273,7 +1382,8 @@
                             isDir: false,
                             path: file.path,
                             size: file.size,
-                            isout: file.isout
+                            isout: file.isout,
+                            createdAt: file.created_at
                         };
                     } else {
                         if (!current.children[part]) {
@@ -1300,7 +1410,7 @@
                 else if (ext === 'csv') icon = 'bi-file-earmark-spreadsheet';
                 else if (['json', 'yaml', 'yml'].includes(ext)) icon = 'bi-file-earmark-code';
 
-                const sizeStr = node.size ? formatBytes(node.size) : 'Fichier DVC';
+                const sizeStr = node.size ? formatBytes(node.size) : (node.createdAt ? new Date(node.createdAt).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—');
                 const [owner, name] = currentState.repo.split('/');
                 const rev = window.latestCommitHash || 'main';
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;

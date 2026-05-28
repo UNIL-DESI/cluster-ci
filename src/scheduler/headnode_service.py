@@ -1250,6 +1250,84 @@ def proxy_request(target_url, base_href=None):
     except Exception as e:
         return f"Proxy Error: {str(e)}", 502
 
+@app.route('/api/projects/<path:repo>/run/<commit>/hydra-params', methods=['GET'])
+def api_hydra_params(repo, commit):
+    """Extract Hydra/YAML config parameters from dvc.yaml deps at a specific revision.
+
+    Scans dvc.yaml stages for .yaml/.yml dependency files, groups them by
+    config file, and returns their parsed content. This uses the deps declared
+    by researchers rather than guessing the Hydra directory structure.
+    """
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    local_repo_path = find_local_repo(repo)
+    if not local_repo_path:
+        return jsonify({"error": "Repository not found on headnode"}), 404
+
+    try:
+        # 1. Get dvc.yaml at this commit
+        res = subprocess.run(
+            ["git", "show", f"{commit}:dvc.yaml"],
+            cwd=local_repo_path, capture_output=True, text=True, timeout=5
+        )
+        if res.returncode != 0:
+            return jsonify({"configs": []})
+
+        dvc_data = yaml.safe_load(res.stdout) or {}
+        stages = dvc_data.get("stages", {})
+
+        # 2. Collect all YAML deps across all stages
+        yaml_deps = {}  # path -> set of stage names that reference it
+        for stage_name, stage_def in stages.items():
+            if not isinstance(stage_def, dict):
+                continue
+
+            deps_list = stage_def.get("deps", [])
+            # Handle foreach/do pattern
+            do_block = stage_def.get("do", {})
+            if isinstance(do_block, dict):
+                deps_list = (deps_list or []) + (do_block.get("deps", []) or [])
+
+            if not deps_list:
+                continue
+
+            for dep in deps_list:
+                dep_path = dep if isinstance(dep, str) else (list(dep.keys())[0] if isinstance(dep, dict) else None)
+                if not dep_path:
+                    continue
+                # Skip template variables, hash files, and non-YAML deps
+                if "${" in dep_path or ".dvc-viewer/" in dep_path:
+                    continue
+                if dep_path.endswith(('.yaml', '.yml')):
+                    if dep_path not in yaml_deps:
+                        yaml_deps[dep_path] = set()
+                    yaml_deps[dep_path].add(stage_name)
+
+        # 3. Fetch content of each YAML config at the commit
+        configs = []
+        for config_path, stage_names in sorted(yaml_deps.items()):
+            try:
+                res_cfg = subprocess.run(
+                    ["git", "show", f"{commit}:{config_path}"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
+                )
+                if res_cfg.returncode == 0 and res_cfg.stdout.strip():
+                    parsed = yaml.safe_load(res_cfg.stdout)
+                    configs.append({
+                        "path": config_path,
+                        "stages": sorted(stage_names),
+                        "content": parsed if parsed else {}
+                    })
+            except Exception:
+                continue
+
+        return jsonify({"configs": configs})
+
+    except Exception as e:
+        app.logger.error(f"Error fetching Hydra params for {repo}@{commit}: {e}")
+        return jsonify({"error": str(e)}), 500
+
 def extract_metrics_and_plots_paths(dvc_yaml_data):
     paths = set()
     patterns = []
@@ -1346,6 +1424,8 @@ def api_latest_artifacts(repo):
     else:
         commit_hash = last_run['commit_hash']
 
+    run_created_at = last_run['created_at'] if last_run else None
+
     local_repo_path = find_local_repo(repo)
 
     if not local_repo_path:
@@ -1397,7 +1477,8 @@ def api_latest_artifacts(repo):
                         "path": line,
                         "is_dir": False,
                         "size": 0,
-                        "isout": True
+                        "isout": True,
+                        "created_at": run_created_at
                     })
             print(f"[Artifacts] Returning {len(files)} artifacts for {repo} at {commit_hash[:12]}", flush=True)
             return jsonify(files)

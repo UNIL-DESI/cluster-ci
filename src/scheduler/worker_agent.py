@@ -1055,6 +1055,26 @@ def worker_dvc_get():
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+        # Strategy 1.5: Git-tracked file extraction (metrics, plots, configs)
+        # Files declared with `cache: false` in dvc.yaml live in Git, not DVC cache.
+        # `dvc get` cannot retrieve them, but `git show` can at any revision.
+        if rev:
+            try:
+                res_git = subprocess.run(
+                    ["git", "show", f"{rev}:{file_path}"],
+                    cwd=repo_path, capture_output=True, timeout=10
+                )
+                if res_git.returncode == 0 and res_git.stdout:
+                    logger.info(f"[P2P] Serving git-tracked {file_path}@{rev[:12]} via git show")
+                    filename = os.path.basename(file_path)
+                    return Response(
+                        res_git.stdout,
+                        mimetype=mime_type,
+                        headers={"Content-Disposition": f"{disposition}; filename=\"{filename}\""}
+                    )
+            except Exception as e:
+                logger.warning(f"[P2P] git show fallback failed for {file_path}@{rev}: {e}")
+
         # Strategy 2: Direct filesystem fallback (P2P — file produced by dvc repro)
         # When no remote storage is configured, dvc get fails but the file
         # is already on disk from the last pipeline execution.
