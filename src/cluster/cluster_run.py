@@ -518,7 +518,6 @@ def shadow_run():
         time.sleep(1)
 
     if conclusion == "success":
-        print("✅ Cluster-CI run completed successfully.")
         print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
         try:
             # 1. Fetch the latest commits on the draft branch
@@ -528,7 +527,7 @@ def shadow_run():
             base_ref = COMMIT_SHA if COMMIT_SHA else "HEAD"
             
             # 3. Detect files modified by the execution on the cluster
-            res_diff = subprocess.run(["git", "diff", base_ref, f"origin/{BRANCH}", "--name-only"], capture_output=True, text=True)
+            res_diff = subprocess.run(["git", "diff", base_ref, f"origin/{BRANCH}", "--name-only", "--diff-filter=AM"], capture_output=True, text=True)
             if res_diff.returncode == 0:
                 cluster_files = []
                 for line in res_diff.stdout.splitlines():
@@ -553,15 +552,9 @@ def shadow_run():
                 )
         except Exception as e:
             print(f"❌ Failed to auto-sync results from cluster: {e}", file=sys.stderr)
-            raise
-    elif conclusion == "cancelled":
-        print("\n⚠️ [ERREUR] L'exécution a été annulée.")
-        print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
-        print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+            sys.exit(1)
     else:
-        print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'unknown'}")
-        print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
-        print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+        sys.exit(1)
 
 def main():
     # Force standard output streams to use UTF-8 to prevent UnicodeEncodeError under Windows CMD/PowerShell
