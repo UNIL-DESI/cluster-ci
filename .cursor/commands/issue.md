@@ -1,14 +1,13 @@
 ---
 alwaysApply: false
-description: Artisan implémenteur. Prend la première issue, l'implémente, crée un walkthrough et s'arrête.
+description: Artisan implémenteur. Prend la première issue, l'implémente, produit un artefact walkthrough et s'arrête.
 ---
 
 # Issue Workflow
 
 **Objectif** : Implémenter l'issue la plus urgente de A à Z.
 
-> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre et testé basiquement.
-> **🚫 AUCUNE EXÉCUTION LONGUE.** Tu ne DOIS JAMAIS exécuter de commandes longues (pipelines, runs complexes). Si ta tâche consiste essentiellement à cela, vérifie statiquement le code, prépare la commande, et délègue l'exécution via le walkthrough.
+> **📦 TU ES UN ARTISAN.** Ton livrable doit être propre, testé et fonctionnel.
 > **🚫 PAS DE SOUS-AGENTS.** Tu fais le travail et tu t'arrêtes. Le Reviewer prendra le relais ensuite.
 
 ## 1. 🔍 Démarrage
@@ -23,16 +22,21 @@ description: Artisan implémenteur. Prend la première issue, l'implémente, cr�
 
 ## 3. 🛠️ Implémentation
 - Respecte les conventions. Commits atomiques.
-- **Vérifie ton code** : Pas d'erreurs de syntaxe, imports corrects. Exécute les tests unitaires *très basiques* si possible rapidement.
-- **PAS de run long** : Laisse l'exécution critique au Reviewer.
+- **Vérifie que ça fonctionne** : tu peux exécuter les commandes nécessaires (y compris longues) pour tester ton implémentation :
+  - ✅ Compilation / syntaxe
+  - ✅ Imports corrects, linting
+  - ✅ Tests unitaires
+  - ✅ Exécution de la commande principale pour vérifier le bon fonctionnement
+  - ✅ Corrections rapides si tu constates des problèmes évidents
+- **Ton objectif** : livrer un code qui FONCTIONNE. Ne fais pas perdre leur temps aux Reviewers avec des erreurs triviales. Teste, constate, corrige les gros problèmes, et consigne la commande de test dans le walkthrough.
 
 ## 4. 📝 Livrable (Walkthrough)
-Crée le fichier `walkthroughs/issue-XX.md` (XX = numéro de l'issue) :
+Crée un **artefact** `walkthrough.md` (via le système d'artefacts, PAS un fichier physique dans le repo) contenant :
 1. Titre et lien de l'issue.
 2. Résumé des changements.
 3. Commandes exactes pour tester l'implémentation (pour le prochain agent Reviewer).
 
-**Commit ce fichier** et mets à jour la Roadmap pour ajouter le lien vers ce walkthrough.
+Cet artefact sera partagé automatiquement avec le Reviewer qui prendra le relais.
 
 ## 5. 🛑 Arrêt
 1. Rapporte tes actions dans le chat.

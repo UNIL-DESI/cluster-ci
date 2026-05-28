@@ -518,79 +518,41 @@ def shadow_run():
 
     if conclusion == "success":
         print("✅ Cluster-CI run completed successfully.")
-        print("📥 Fetching updated dvc.lock and metrics from cluster...")
+        print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
         try:
             # 1. Fetch the latest commits on the draft branch
-            subprocess.run(["git", "fetch", "origin", BRANCH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "fetch", "origin", BRANCH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             
-            # 2. Check if local workspace is clean
-            status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-            is_clean = not status_res.stdout.strip()
+            # 2. Determine base ref for diff
+            base_ref = COMMIT_SHA if COMMIT_SHA else "HEAD"
             
-            merged_successfully = False
-            if is_clean:
-                print("🧹 Local workspace is clean. Attempting a safe merge to bring back DVC lock and metrics history...")
-                # Attempt to merge the draft branch into the current branch (retains commit stages cleanly)
-                merge_res = subprocess.run(["git", "merge", f"origin/{BRANCH}", "--no-edit"], capture_output=True, text=True)
-                if merge_res.returncode == 0:
-                    print("✅ Successfully merged all DVC lock and metrics history into your current branch!")
-                    merged_successfully = True
+            # 3. Detect files modified by the execution on the cluster
+            res_diff = subprocess.run(["git", "diff", base_ref, f"origin/{BRANCH}", "--name-only"], capture_output=True, text=True)
+            if res_diff.returncode == 0:
+                cluster_files = []
+                for line in res_diff.stdout.splitlines():
+                    name = line.strip()
+                    if name and not name.startswith(".cluster-ci"):
+                        cluster_files.append(name)
+                
+                if cluster_files:
+                    print(f"📂 Auto-syncing updated DVC results and metrics from cluster:")
+                    for f in cluster_files:
+                        print(f"   - {f}")
+                    # Force checkout of these files, overwriting any local copy
+                    subprocess.run(["git", "checkout", f"origin/{BRANCH}", "--"] + cluster_files, check=True)
+                    print("✅ Local workspace synchronized with cluster results successfully!")
                 else:
-                    subprocess.run(["git", "merge", "--abort"], capture_output=True)
-                    print("⚠️ Safe merge failed due to conflicts. Falling back to checkout of non-conflicting files...")
+                    print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
             else:
-                print("⚠️ Local workspace has uncommitted changes.")
-                print(f"💡 Suggestion: To safely bring back the complete DVC stage commit history, run:")
-                print(f"   git stash && git merge origin/{BRANCH} && git stash pop")
-                print("👉 Extracting only the non-conflicting files to protect your local modifications...")
-
-            if not merged_successfully:
-                # 3. Detect files changed by the cluster execution (excluding .cluster-ci-commit or other temporary markers)
-                res_diff = subprocess.run(["git", "diff", "HEAD", f"origin/{BRANCH}", "--name-only"], capture_output=True, text=True)
-                if res_diff.returncode == 0:
-                    cluster_files = []
-                    for line in res_diff.stdout.splitlines():
-                        name = line.strip()
-                        if name and not name.startswith(".cluster-ci"):
-                            cluster_files.append(name)
-                    
-                    if cluster_files:
-                        # Extract locally modified files paths
-                        local_modified = set()
-                        status_lines = status_res.stdout.splitlines()
-                        for s_line in status_lines:
-                            if len(s_line) > 3:
-                                # git status --porcelain format is "XY file_path"
-                                local_file = s_line[3:].strip()
-                                # Handle quotes if any
-                                if local_file.startswith('"') and local_file.endswith('"'):
-                                    local_file = local_file[1:-1]
-                                local_modified.add(local_file)
-                        
-                        conflicting_files = [f for f in cluster_files if f in local_modified]
-                        non_conflicting_files = [f for f in cluster_files if f not in local_modified]
-                        
-                        if non_conflicting_files:
-                            print(f"📂 Syncing non-conflicting modified files from cluster: {', '.join(non_conflicting_files)}")
-                            # Checkout these files from the remote draft branch
-                            subprocess.run(["git", "checkout", f"origin/{BRANCH}", "--"] + non_conflicting_files, check=True)
-                            print("✅ Local workspace synchronized with non-conflicting cluster artifacts.")
-                        
-                        if conflicting_files:
-                            print(f"\n⚠️ WARNING: The following files were modified on the cluster but have local modifications (CONFLICTS):")
-                            for f in conflicting_files:
-                                print(f"   - {f}")
-                            print(f"👉 These conflicting files were NOT modified locally to prevent overwriting your work.")
-                            print(f"💡 Suggestion: To resolve these conflicts and get all cluster results, run:")
-                            print(f"   git stash && git merge origin/{BRANCH} && git stash pop")
-                    else:
-                        print("ℹ️ No changes detected in the cluster execution.")
-                else:
-                    # Fallback to checkout dvc.lock directly if diff command fails
-                    subprocess.run(["git", "checkout", f"origin/{BRANCH}", "--", "dvc.lock"], check=True)
-                    print("✅ Synchronized local dvc.lock.")
+                raise RuntimeError(
+                    f"FATAL: 'git diff {base_ref} origin/{BRANCH} --name-only' failed "
+                    f"(exit code {res_diff.returncode}). Cannot determine which files "
+                    f"were modified on the cluster. Stderr: {res_diff.stderr}"
+                )
         except Exception as e:
-            print(f"⚠️ Failed to auto-sync dvc.lock/metrics from cluster: {e}")
+            print(f"❌ Failed to auto-sync results from cluster: {e}", file=sys.stderr)
+            raise
     else:
         print(f"❌ Cluster-CI run finished with status: {conclusion or 'unknown'}")
 
