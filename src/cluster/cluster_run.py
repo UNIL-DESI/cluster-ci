@@ -241,6 +241,9 @@ def stream_logs(run_id, commit_sha):
         pass
 
     try:
+        consecutive_failures = 0
+        MAX_RECONNECTS = 5
+
         while True:
             # 1. Check GHA status
             status = "queued"
@@ -265,7 +268,7 @@ def stream_logs(run_id, commit_sha):
                 pass
 
             # 2. Try live streaming if possible
-            if has_curl and commit_sha:
+            if has_curl and commit_sha and consecutive_failures < MAX_RECONNECTS:
                 proc = subprocess.Popen(
                     ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                     stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace"
@@ -291,10 +294,16 @@ def stream_logs(run_id, commit_sha):
 
                 try:
                     for line in proc.stdout:
+                        line_stripped = line.rstrip('\r\n')
+                        # Detect ppng.io connection error (stream is dead)
+                        if "has been established already" in line_stripped:
+                            consecutive_failures += 1
+                            break
                         if not received_data:
                             print("🟢 Live stream connected.")
                             received_data = True
-                        print_line(line.rstrip('\r\n'), force=True)
+                            consecutive_failures = 0  # Reset on successful data
+                        print_line(line_stripped, force=True)
                         last_gha_poll_time = time.time()
                 except Exception:
                     pass
@@ -304,13 +313,21 @@ def stream_logs(run_id, commit_sha):
                         proc.terminate()
                         proc.wait(timeout=1)
                     except: pass
+
+                if not received_data:
+                    consecutive_failures += 1
+
+                if consecutive_failures >= MAX_RECONNECTS:
+                    print(f"⚠️  Live stream unavailable after {MAX_RECONNECTS} attempts. Falling back to GHA polling.")
             
             # 3. Fallback / Idle Poll
             if time.time() - last_gha_poll_time > 10:
                 display_clean_queue_status(run_id)
                 last_gha_poll_time = time.time()
             
-            time.sleep(2)
+            # Exponential backoff on reconnection failures
+            backoff = min(2 ** consecutive_failures, 10) if consecutive_failures > 0 else 2
+            time.sleep(backoff)
 
     except KeyboardInterrupt:
         raise
