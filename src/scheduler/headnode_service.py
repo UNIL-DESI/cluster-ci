@@ -1310,6 +1310,7 @@ def api_latest_artifacts(repo):
                 SELECT commit_hash, branch, job_id, created_at 
                 FROM jobs 
                 WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                      AND (branch IS NULL OR branch NOT LIKE 'cluster-draft/%')
                 ORDER BY created_at DESC LIMIT 1
             ''', (repo,))
             last_run = cursor.fetchone()
@@ -1416,6 +1417,7 @@ def api_artifact_history(repo):
                 SELECT job_id, branch, commit_hash, created_at, status 
                 FROM jobs 
                 WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                      AND (branch IS NULL OR branch NOT LIKE 'cluster-draft/%')
                 ORDER BY created_at DESC
             ''', (repo,))
             runs = [dict(row) for row in cursor.fetchall()]
