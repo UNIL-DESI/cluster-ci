@@ -502,8 +502,9 @@ else
     # IMPORTANT: On utilise --pid=container:${MAIN_CONTAINER_NAME} pour voir les processus du job principal
     docker rm -f "$VIEWER_CONTAINER_NAME" 2>/dev/null || true
     docker run --rm \
-    --name "$VIEWER_CONTAINER_NAME" \
+        --name "$VIEWER_CONTAINER_NAME" \
         $COMMON_LABELS \
+        --pid=container:${MAIN_CONTAINER_NAME} \
         --entrypoint "" \
         -v "$(pwd):/workspace" -w /workspace \
         -v "$HOME_CACHE_VOLUME:/home/user" \
