@@ -1297,15 +1297,19 @@ def api_latest_artifacts(repo):
     if 'user' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT commit_hash, branch, job_id, created_at 
-            FROM jobs 
-            WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-            ORDER BY created_at DESC LIMIT 1
-        ''', (repo,))
-        last_run = cursor.fetchone()
+    last_run = None
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT commit_hash, branch, job_id, created_at 
+                FROM jobs 
+                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            ''', (repo,))
+            last_run = cursor.fetchone()
+    except Exception:
+        pass  # DB may be empty or table may not exist — fall through to fallback
 
     if not last_run:
         # No completed job: fallback to latest commit on origin/main
@@ -1400,15 +1404,19 @@ def api_artifact_history(repo):
         return jsonify({"error": "Repository not cloned on headnode"}), 404
 
     # Fetch completed runs
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT job_id, branch, commit_hash, created_at, status 
-            FROM jobs 
-            WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-            ORDER BY created_at DESC
-        ''', (repo,))
-        runs = [dict(row) for row in cursor.fetchall()]
+    runs = []
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT job_id, branch, commit_hash, created_at, status 
+                FROM jobs 
+                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                ORDER BY created_at DESC
+            ''', (repo,))
+            runs = [dict(row) for row in cursor.fetchall()]
+    except Exception:
+        pass
 
     if not runs:
         return jsonify([])
