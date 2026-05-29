@@ -395,6 +395,57 @@ def clean_old_results():
     if removed > 0:
         print(f"🧹 Purged {removed} old result file(s) to ensure a fresh start.")
 
+def fetch_cluster_results(branch, commit_sha=None):
+    """Fetch and checkout files modified by the cluster from the draft branch.
+
+    Returns True if sync succeeded, False otherwise.
+    """
+    try:
+        # 1. Fetch the latest commits on the draft branch
+        subprocess.run(
+            ["git", "fetch", "origin", branch],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+        )
+
+        # 2. Determine base ref for diff
+        base_ref = commit_sha if commit_sha else "HEAD"
+
+        # 3. Detect files modified by the execution on the cluster
+        res_diff = subprocess.run(
+            ["git", "diff", base_ref, f"origin/{branch}", "--name-only", "--diff-filter=AM"],
+            capture_output=True, text=True,
+        )
+        if res_diff.returncode != 0:
+            print(
+                f"⚠️  Could not diff against origin/{branch} (exit code {res_diff.returncode}).",
+                file=sys.stderr,
+            )
+            return False
+
+        cluster_files = []
+        for line in res_diff.stdout.splitlines():
+            name = line.strip()
+            if name and not name.startswith(".cluster-ci"):
+                cluster_files.append(name)
+
+        if cluster_files:
+            print("📂 Auto-syncing updated DVC results and metrics from cluster:")
+            for f in cluster_files:
+                print(f"   - {f}")
+            # Force checkout of these files, overwriting any local copy
+            subprocess.run(
+                ["git", "checkout", f"origin/{branch}", "--"] + cluster_files,
+                check=True,
+            )
+            print("✅ Local workspace synchronized with cluster results successfully!")
+        else:
+            print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
+        return True
+    except Exception as e:
+        print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
+        return False
+
+
 def shadow_run():
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
@@ -517,43 +568,16 @@ def shadow_run():
             pass
         time.sleep(1)
 
-    if conclusion == "success":
-        print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
-        try:
-            # 1. Fetch the latest commits on the draft branch
-            subprocess.run(["git", "fetch", "origin", BRANCH], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            
-            # 2. Determine base ref for diff
-            base_ref = COMMIT_SHA if COMMIT_SHA else "HEAD"
-            
-            # 3. Detect files modified by the execution on the cluster
-            res_diff = subprocess.run(["git", "diff", base_ref, f"origin/{BRANCH}", "--name-only", "--diff-filter=AM"], capture_output=True, text=True)
-            if res_diff.returncode == 0:
-                cluster_files = []
-                for line in res_diff.stdout.splitlines():
-                    name = line.strip()
-                    if name and not name.startswith(".cluster-ci"):
-                        cluster_files.append(name)
-                
-                if cluster_files:
-                    print(f"📂 Auto-syncing updated DVC results and metrics from cluster:")
-                    for f in cluster_files:
-                        print(f"   - {f}")
-                    # Force checkout of these files, overwriting any local copy
-                    subprocess.run(["git", "checkout", f"origin/{BRANCH}", "--"] + cluster_files, check=True)
-                    print("✅ Local workspace synchronized with cluster results successfully!")
-                else:
-                    print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
-            else:
-                raise RuntimeError(
-                    f"FATAL: 'git diff {base_ref} origin/{BRANCH} --name-only' failed "
-                    f"(exit code {res_diff.returncode}). Cannot determine which files "
-                    f"were modified on the cluster. Stderr: {res_diff.stderr}"
-                )
-        except Exception as e:
-            print(f"❌ Failed to auto-sync results from cluster: {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
+    # Always sync results back, regardless of success or failure.
+    # Even on failure, earlier stages may have produced valuable metrics,
+    # plots, and dvc.lock updates that must be preserved locally.
+    print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
+    sync_success = fetch_cluster_results(BRANCH, COMMIT_SHA)
+
+    if conclusion != "success":
+        if sync_success:
+            print("ℹ️  Results from completed stages have been synced despite the failure.")
+        print(f"❌ Run finished with conclusion: {conclusion}")
         sys.exit(1)
 
 def main():
@@ -564,7 +588,7 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
-    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel"],
+    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync"],
                         help="Action to perform (default: submit a new shadow run)")
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view' or 'cancel'")
@@ -613,6 +637,15 @@ def main():
 
         # Fallback to historical logs if completed
         subprocess.run(["gh", "run", "view", str(run_id), "--log"])
+
+    elif args.command == "sync":
+        check_gh_auth()
+        user = get_current_user()
+        branch = f"cluster-draft/{user}"
+        print(f"📥 Manual sync from origin/{branch}...")
+        success = fetch_cluster_results(branch)
+        if not success:
+            sys.exit(1)
 
     elif args.command == "cancel":
         run_id = args.run_id
