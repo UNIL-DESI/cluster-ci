@@ -49,6 +49,9 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 | `cluster-run list` | Liste les runs récents |
 | `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
 | `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |
+| `cluster-run sync` | Rapatrie manuellement les résultats (métriques, plots, dvc.lock) depuis le cluster |
+
+**Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions.
 
 ### Cluster Deployment (Headnode & Workers)
 
@@ -95,7 +98,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
 # Principaux résultats
 
-- **Status**: Operational & secured against zombie processes (Last updated: 25 May 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates and hardware-level VRAM purging.
+- **Status**: Operational & secured against zombie processes (Last updated: 28 May 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates and hardware-level VRAM purging.
 
 # Documentation Index
 
