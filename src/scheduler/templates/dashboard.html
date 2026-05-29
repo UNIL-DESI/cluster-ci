@@ -42,14 +42,38 @@
         }
 
         .navbar-premium {
-            background-color: var(--bg-card);
-            border-bottom: 1px solid var(--border-color);
-            box-shadow: var(--shadow-sm);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 0.6rem 0;
         }
         .navbar-premium .navbar-brand {
             font-weight: 700;
-            color: var(--primary) !important;
+            color: #ffffff !important;
             letter-spacing: -0.025em;
+            font-size: 1.2rem;
+        }
+        .navbar-premium .navbar-brand i {
+            color: #60a5fa;
+        }
+        .navbar-premium .navbar-text {
+            color: #94a3b8 !important;
+        }
+        .navbar-premium .navbar-text strong {
+            color: #e2e8f0;
+        }
+        .navbar-cluster-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(96,165,250,0.12);
+            border: 1px solid rgba(96,165,250,0.2);
+            border-radius: 9999px;
+            padding: 3px 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #93c5fd;
+            margin-left: 12px;
         }
 
         .breadcrumb-premium {
@@ -381,15 +405,205 @@
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
         }
+
+        /* ===== Cluster Stats Bar (glassmorphism) ===== */
+        .cluster-stats-bar {
+            background: rgba(255,255,255,0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(226,232,240,0.6);
+            border-radius: var(--radius-lg);
+            padding: 16px 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+            animation: fadeSlideIn 0.4s ease;
+        }
+        .cluster-stats-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .cluster-stats-label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .worker-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .worker-dot.online { background-color: var(--success); box-shadow: 0 0 6px rgba(16,185,129,0.4); }
+        .worker-dot.busy { background-color: var(--primary); box-shadow: 0 0 6px rgba(37,99,235,0.4); animation: pulse-dot 2s infinite; }
+        .worker-dot.offline { background-color: var(--text-muted); opacity: 0.5; }
+        .worker-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-weight: 500;
+            background: var(--bg-page);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+            cursor: default;
+            position: relative;
+        }
+        .worker-chip:hover {
+            border-color: var(--primary);
+            background: var(--primary-light);
+        }
+        .worker-chip-tooltip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            z-index: 100;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+        .worker-chip-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #0f172a;
+        }
+        .worker-chip:hover .worker-chip-tooltip {
+            display: block;
+        }
+
+        /* ===== Live Indicator ===== */
+        .live-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        .live-indicator-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--success);
+            animation: pulse-dot 2s infinite;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+
+        /* ===== Enhanced Active Run Cards ===== */
+        .active-run-card {
+            background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+            border: 1px solid rgba(37,99,235,0.15);
+            border-left: 4px solid transparent;
+            border-image: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%) 1;
+            border-image-slice: 1;
+            border-radius: 0;
+            box-shadow: 0 4px 16px rgba(37,99,235,0.06);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+        }
+        .active-run-card {
+            border-radius: var(--radius-lg);
+            border-left: 4px solid var(--primary);
+            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 60%);
+        }
+        .active-run-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(37,99,235,0.1);
+        }
+        .active-run-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--primary);
+            animation: pulse-dot 1.5s infinite;
+            flex-shrink: 0;
+        }
+        .active-run-elapsed {
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--primary);
+            background: var(--primary-light);
+            padding: 2px 10px;
+            border-radius: 6px;
+        }
+        .btn-action {
+            font-weight: 500;
+            font-size: 0.85rem;
+            padding: 6px 14px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .btn-action:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* ===== Project Cards Enhanced ===== */
+        .project-card-premium {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .project-card-premium:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.06);
+            border-color: var(--primary);
+        }
+        .project-card-premium:hover .explorer-icon {
+            transform: scale(1.12) rotate(-3deg);
+        }
+
+        /* ===== Content Animations ===== */
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-refresh {
+            animation: fadeSlideIn 0.3s ease;
+        }
     </style>
 </head>
 <body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-premium">
         <div class="container">
-            <a class="navbar-brand" href="/"><i class="bi bi-cpu-fill me-2"></i>Cluster-CI</a>
-            <div class="navbar-text text-secondary">
-                <i class="bi bi-person-circle me-1"></i> Logged in as <strong>{{ user.login }}</strong>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger btn-sm ms-3"><i class="bi bi-box-arrow-right"></i> Logout</a>
+            <div class="d-flex align-items-center">
+                <a class="navbar-brand mb-0" href="/"><i class="bi bi-cpu-fill me-2"></i>Cluster-CI</a>
+                <span class="navbar-cluster-badge"><i class="bi bi-hdd-rack"></i> Cluster</span>
+            </div>
+            <div class="navbar-text">
+                <i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong>
+                <a href="{{ url_for('logout') }}" class="btn btn-sm ms-3" style="background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25);">
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                </a>
             </div>
         </div>
     </nav>
@@ -883,6 +1097,7 @@
 
         const container = document.getElementById('explorer-container');
         const breadcrumb = document.getElementById('breadcrumb');
+        const currentUser = '{{ user.login }}';
 
         let currentState = {
             view: 'root', // root, project, run
@@ -893,6 +1108,90 @@
             createdAt: null,
             subPath: '' // Current subfolder path within a run
         };
+
+        // ===== Cluster Stats =====
+        let lastStatsUpdate = Date.now();
+
+        async function loadClusterStats() {
+            const statsContainer = document.getElementById('cluster-stats-container');
+            if (!statsContainer) return;
+            if (currentState.view !== 'root') {
+                statsContainer.innerHTML = '';
+                return;
+            }
+            try {
+                const resp = await fetch('/scheduler_status');
+                if (!resp.ok) throw new Error('Status unavailable');
+                const data = await resp.json();
+                lastStatsUpdate = Date.now();
+
+                const workers = data.workers || [];
+                const queue = data.queue || [];
+                const onlineWorkers = workers.filter(w => w.status === 'online');
+                const busyWorkers = workers.filter(w => w.status === 'online' && w.active_job);
+                const idleWorkers = workers.filter(w => w.status === 'online' && !w.active_job);
+
+                const workerChips = workers.map(w => {
+                    const isOnline = w.status === 'online';
+                    const isBusy = isOnline && w.active_job;
+                    const dotClass = !isOnline ? 'offline' : (isBusy ? 'busy' : 'online');
+                    let tooltipContent = `${w.hostname || w.worker_id} — ${w.total_ram_gb || '?'} GB RAM`;
+                    if (isBusy) {
+                        const job = w.active_job;
+                        const elapsed = job.started_at ? formatElapsed(new Date(job.started_at + 'Z')) : '';
+                        tooltipContent += `<br><strong>${escapeHtml(job.repo || '')}</strong> @${escapeHtml(job.branch || '')}` +
+                                          `<br>par ${escapeHtml(job.username || '?')}` +
+                                          (elapsed ? ` — ${elapsed}` : '');
+                    }
+                    return `<span class="worker-chip">
+                        <span class="worker-dot ${dotClass}"></span>
+                        ${escapeHtml(w.hostname || w.worker_id)}
+                        <span class="worker-chip-tooltip">${tooltipContent}</span>
+                    </span>`;
+                }).join('');
+
+                statsContainer.innerHTML = `
+                    <div class="cluster-stats-bar">
+                        <div class="cluster-stats-section">
+                            <div class="cluster-stats-label">Workers</div>
+                            <span class="badge-premium badge-success-premium">
+                                <i class="bi bi-check-circle-fill"></i> ${onlineWorkers.length}/${workers.length} en ligne
+                            </span>
+                            <span class="badge-premium badge-primary-premium">
+                                <i class="bi bi-cpu"></i> ${busyWorkers.length} actif${busyWorkers.length > 1 ? 's' : ''}
+                            </span>
+                            <span class="badge-premium" style="background:#f0fdf4;color:#166534;">
+                                <i class="bi bi-pause-circle"></i> ${idleWorkers.length} libre${idleWorkers.length > 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        <div class="cluster-stats-section">
+                            ${workerChips}
+                        </div>
+                        <div class="cluster-stats-section">
+                            <span class="badge-premium badge-warning-premium">
+                                <i class="bi bi-hourglass-split"></i> ${queue.length} en file
+                            </span>
+                            <span class="live-indicator" id="live-indicator">
+                                <span class="live-indicator-dot"></span>
+                                <span id="stats-last-update">à l'instant</span>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                console.warn('Cluster stats unavailable:', err.message);
+                statsContainer.innerHTML = '';
+            }
+        }
+
+        function formatElapsed(startDate) {
+            const diff = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 1000));
+            if (diff < 60) return `${diff}s`;
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
+            const h = Math.floor(diff / 3600);
+            const m = Math.floor((diff % 3600) / 60);
+            return `${h}h ${m}m`;
+        }
 
         function updateBreadcrumb() {
             breadcrumb.innerHTML = '';
@@ -954,8 +1253,6 @@
             container.innerHTML = '<div class="col-12 text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
             
             // Only show cluster stats on the root view
-            const statsContainer = document.getElementById('cluster-stats-container');
-            if (statsContainer) statsContainer.innerHTML = '';
             loadClusterStats();
 
             try {
@@ -973,45 +1270,46 @@
                 if (activeRuns.length > 0) {
                     const runningHeader = document.createElement('div');
                     runningHeader.className = 'col-12 full-width mb-3 mt-2';
-                    runningHeader.innerHTML = '<h4 class="text-primary"><i class="bi bi-activity"></i> Active Cluster Runs</h4>';
+                    runningHeader.innerHTML = `<h4 class="d-flex align-items-center gap-2" style="color: var(--primary);">
+                        <i class="bi bi-activity"></i> Active Cluster Runs
+                        <span class="badge-premium badge-primary-premium">${activeRuns.length}</span>
+                    </h4>`;
                     container.appendChild(runningHeader);
 
                     activeRuns.forEach(run => {
                         const col = document.createElement('div');
-                        col.className = 'col-12 full-width mb-4';
+                        col.className = 'col-12 full-width mb-3';
                         const [owner, name] = run.repo.split('/');
                         const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
-                        
-                        const runDate = new Date(run.created_at).toLocaleString('en-US', {
-                            year: 'numeric', month: '2-digit', day: '2-digit',
-                            hour: '2-digit', minute: '2-digit', second: '2-digit'
-                        }).replace(',', '');
+                        const startedAt = run.created_at ? new Date(run.created_at) : null;
+                        const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
 
                         col.innerHTML = `
-                            <div class="card shadow-sm border-primary" style="background-color: #f8fbff;">
-                                <div class="card-body d-flex justify-content-between align-items-center">
-                                    <div class="d-flex align-items-center cursor-pointer" onclick="navigateToProject('${run.repo}')" style="cursor: pointer;">
-                                        <div class="me-3">
-                                            <div class="spinner-grow spinner-grow-sm text-primary" role="status"></div>
-                                        </div>
+                            <div class="active-run-card p-3 fade-refresh">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div class="d-flex align-items-center gap-3" onclick="navigateToProject('${run.repo}')" style="cursor: pointer;">
+                                        <div class="active-run-status"></div>
                                         <div>
-                                            <h5 class="card-title text-primary mb-1">
-                                                ${escapeHtml(run.repo)}
-                                            </h5>
-                                            <p class="card-text text-muted mb-0">
-                                                Branch: <strong>${escapeHtml(run.branch)}</strong> | Job ID: ${run.job_id.substring(0,8)}... | ${runDate}
-                                            </p>
+                                            <div class="d-flex align-items-center gap-2 mb-1">
+                                                <h6 class="mb-0" style="color: var(--primary); font-weight: 700;">${escapeHtml(run.repo)}</h6>
+                                                ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at}">${elapsedStr}</span>` : ''}
+                                            </div>
+                                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
+                                                <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
+                                                ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="d-flex gap-2">
-                                        <button class="btn btn-outline-danger" onclick="stopJob('${run.job_id}')">
-                                            <i class="bi bi-stop-circle"></i> Stop Job
+                                    <div class="d-flex gap-2 flex-shrink-0">
+                                        <button class="btn btn-outline-danger btn-action" onclick="stopJob('${run.job_id}')">
+                                            <i class="bi bi-stop-circle"></i> Stop
                                         </button>
-                                        <button class="btn btn-outline-primary" onclick="showLogs('${run.job_id}')">
-                                            <i class="bi bi-terminal"></i> View Logs
+                                        <button class="btn btn-outline-primary btn-action" onclick="showLogs('${run.job_id}')">
+                                            <i class="bi bi-terminal"></i> Logs
                                         </button>
-                                        <a href="${viewerUrl}" class="btn btn-primary" target="_blank">
-                                            <i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Open Web Application' : 'Open Live DVC-Viewer'}
+                                        <a href="${viewerUrl}" class="btn btn-primary btn-action" target="_blank">
+                                            <i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Web App' : 'DVC-Viewer'}
                                         </a>
                                     </div>
                                 </div>
@@ -1043,7 +1341,7 @@
                                 container.appendChild(queueHeader);
                             }
 
-                            const currentUser = '{{ user.login }}';
+                            // currentUser is defined globally
                             queueJobs.forEach(job => {
                                 const col = document.createElement('div');
                                 col.className = 'col-12 full-width mb-2';
@@ -1116,7 +1414,7 @@
                     col.className = 'col';
 
                     const card = document.createElement('div');
-                    card.className = 'card h-100 explorer-item shadow-sm position-relative';
+                    card.className = 'project-card-premium h-100 explorer-item position-relative';
                     card.onclick = () => navigateToProject(repoName);
 
                     const icon = document.createElement('i');
@@ -2489,12 +2787,117 @@
         // Initialize
         loadProjects();
 
-        // Periodically refresh cluster stats (every 10s)
-        setInterval(() => {
-            if (currentState.view === 'root') {
+        // ===== Smart Auto-Refresh (15s) =====
+        // Surgically update active runs, queue, and cluster stats without full reload
+        async function silentRefreshRootView() {
+            if (currentState.view !== 'root') return;
+            try {
+                // Refresh cluster stats
                 loadClusterStats();
+
+                // Refresh active runs section
+                const activeResp = await fetch('/api/runs/active');
+                if (activeResp.ok) {
+                    const activeRuns = await activeResp.json();
+                    const header = container.querySelector('.col-12.full-width.mb-3.mt-2');
+                    // Update active run cards in-place by finding existing ones
+                    const existingRunCards = container.querySelectorAll('.active-run-card');
+                    existingRunCards.forEach(card => {
+                        const col = card.closest('.col-12.full-width.mb-3');
+                        if (col) col.remove();
+                    });
+                    // Remove old header if active runs changed
+                    const oldHeader = container.querySelector('.col-12.full-width.mb-3.mt-2');
+                    if (oldHeader && oldHeader.querySelector('h4 .bi-activity')) {
+                        oldHeader.remove();
+                    }
+
+                    if (activeRuns.length > 0) {
+                        const runningHeader = document.createElement('div');
+                        runningHeader.className = 'col-12 full-width mb-3 mt-2';
+                        runningHeader.innerHTML = `<h4 class="d-flex align-items-center gap-2" style="color: var(--primary);">
+                            <i class="bi bi-activity"></i> Active Cluster Runs
+                            <span class="badge-premium badge-primary-premium">${activeRuns.length}</span>
+                        </h4>`;
+                        container.insertBefore(runningHeader, container.firstChild);
+
+                        activeRuns.forEach(run => {
+                            const col = document.createElement('div');
+                            col.className = 'col-12 full-width mb-3';
+                            const [owner, name] = run.repo.split('/');
+                            const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
+                            const startedAt = run.created_at ? new Date(run.created_at) : null;
+                            const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
+
+                            col.innerHTML = `
+                                <div class="active-run-card p-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div class="d-flex align-items-center gap-3" onclick="navigateToProject('${run.repo}')" style="cursor: pointer;">
+                                            <div class="active-run-status"></div>
+                                            <div>
+                                                <div class="d-flex align-items-center gap-2 mb-1">
+                                                    <h6 class="mb-0" style="color: var(--primary); font-weight: 700;">${escapeHtml(run.repo)}</h6>
+                                                    ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at}">${elapsedStr}</span>` : ''}
+                                                </div>
+                                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                    <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
+                                                    <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
+                                                    ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex gap-2 flex-shrink-0">
+                                            <button class="btn btn-outline-danger btn-action" onclick="stopJob('${run.job_id}')">
+                                                <i class="bi bi-stop-circle"></i> Stop
+                                            </button>
+                                            <button class="btn btn-outline-primary btn-action" onclick="showLogs('${run.job_id}')">
+                                                <i class="bi bi-terminal"></i> Logs
+                                            </button>
+                                            <a href="${viewerUrl}" class="btn btn-primary btn-action" target="_blank">
+                                                <i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Web App' : 'DVC-Viewer'}
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            // Insert after the header
+                            const divider = container.querySelector('.col-12.full-width.mt-4.mb-3');
+                            if (divider) {
+                                container.insertBefore(col, divider);
+                            } else {
+                                container.appendChild(col);
+                            }
+                        });
+                    }
+                }
+            } catch (err) {
+                console.warn('Silent refresh failed:', err.message);
             }
-        }, 10000);
+        }
+
+        setInterval(silentRefreshRootView, 15000);
+
+        // ===== Global Elapsed Timer (1s) =====
+        // Updates all live elapsed counters without triggering fetch
+        setInterval(() => {
+            // Update active-run-elapsed elements
+            document.querySelectorAll('.active-run-elapsed[data-started]').forEach(el => {
+                const started = new Date(el.dataset.started);
+                el.textContent = formatElapsed(started);
+            });
+            // Update queue elapsed elements
+            document.querySelectorAll('[data-queue-started]').forEach(el => {
+                const started = new Date(el.dataset.queueStarted);
+                el.textContent = formatElapsed(started);
+            });
+            // Update "last updated" indicator
+            const updateEl = document.getElementById('stats-last-update');
+            if (updateEl) {
+                const ago = Math.floor((Date.now() - lastStatsUpdate) / 1000);
+                if (ago < 5) updateEl.textContent = "à l'instant";
+                else updateEl.textContent = `il y a ${ago}s`;
+            }
+        }, 1000);
     </script>
 </body>
 </html>
