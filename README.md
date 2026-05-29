@@ -98,7 +98,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
 # Principaux résultats
 
-- **Status**: Operational & secured against zombie processes (Last updated: 28 May 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates and hardware-level VRAM purging.
+- **Status**: Operational & secured against zombie processes (Last updated: 29 May 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates and hardware-level VRAM purging.
 
 # Documentation Index
 
@@ -208,4 +208,5 @@ cluster-ci/
 - [/] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go](https://github.com/UNIL-DESI/cluster-ci/issues/107)
 - [/] [cluster-run CLI : Mojibake Windows, feedback suppression branche et verbosité scheduler](https://github.com/UNIL-DESI/cluster-ci/issues/108)
 - [x] [Bugs Interface Web : Filtre Artefacts et Synchro P2P de l'Historique DVC](https://github.com/UNIL-DESI/cluster-ci/issues/101)
+- [x] Fix Zombie Jobs : Guard branch-level dans le scheduler, cancellation headnode-aware dans `cluster-run`, auto-cancel dans la version déployée, et correction du crash HTTP 500 sur `/api/jobs/{id}/stop`
 
