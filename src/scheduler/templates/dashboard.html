@@ -1281,8 +1281,9 @@
                         col.className = 'col-12 full-width mb-3';
                         const [owner, name] = run.repo.split('/');
                         const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
-                        const startedAt = run.created_at ? new Date(run.created_at) : null;
+                        const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
                         const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
+                        const launchDate = startedAt ? startedAt.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
 
                         col.innerHTML = `
                             <div class="active-run-card p-3 fade-refresh">
@@ -1292,12 +1293,13 @@
                                         <div>
                                             <div class="d-flex align-items-center gap-2 mb-1">
                                                 <h6 class="mb-0" style="color: var(--primary); font-weight: 700;">${escapeHtml(run.repo)}</h6>
-                                                ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at}">${elapsedStr}</span>` : ''}
+                                                ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at + 'Z'}">${elapsedStr}</span>` : ''}
                                             </div>
                                             <div class="d-flex align-items-center gap-2 flex-wrap">
                                                 <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
                                                 <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
                                                 ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
+                                                ${launchDate ? `<span class="text-muted" style="font-size:0.75rem;"><i class="bi bi-calendar3 me-1"></i>Lancé le ${launchDate}</span>` : ''}
                                             </div>
                                         </div>
                                     </div>
@@ -2826,8 +2828,9 @@
                             col.className = 'col-12 full-width mb-3';
                             const [owner, name] = run.repo.split('/');
                             const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
-                            const startedAt = run.created_at ? new Date(run.created_at) : null;
+                            const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
                             const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
+                            const launchDate = startedAt ? startedAt.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
 
                             col.innerHTML = `
                                 <div class="active-run-card p-3">
@@ -2837,12 +2840,13 @@
                                             <div>
                                                 <div class="d-flex align-items-center gap-2 mb-1">
                                                     <h6 class="mb-0" style="color: var(--primary); font-weight: 700;">${escapeHtml(run.repo)}</h6>
-                                                    ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at}">${elapsedStr}</span>` : ''}
+                                                    ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at + 'Z'}">${elapsedStr}</span>` : ''}
                                                 </div>
                                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                                     <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
                                                     <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
                                                     ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
+                                                    ${launchDate ? `<span class="text-muted" style="font-size:0.75rem;"><i class="bi bi-calendar3 me-1"></i>Lancé le ${launchDate}</span>` : ''}
                                                 </div>
                                             </div>
                                         </div>

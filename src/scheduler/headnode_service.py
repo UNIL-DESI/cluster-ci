@@ -1641,7 +1641,7 @@ def _classify_artifact_type(file_path, path_info, pattern_info,
 
 @app.route('/api/projects/<path:repo>/branches', methods=['GET'])
 def api_project_branches(repo):
-    """List all distinct branches that have completed runs for this project."""
+    """List all distinct branches that have runs (completed or running) for this project."""
     if 'user' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -1652,7 +1652,8 @@ def api_project_branches(repo):
             cursor.execute('''
                 SELECT DISTINCT branch, MAX(created_at) as last_run
                 FROM jobs 
-                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                WHERE repo = ? AND status IN ('completed', 'running', 'assigned')
+                      AND commit_hash IS NOT NULL
                       AND branch IS NOT NULL
                 GROUP BY branch
                 ORDER BY last_run DESC
@@ -1673,51 +1674,7 @@ def api_latest_artifacts(repo):
     branch_filter = request.args.get('branches', '').strip()
     selected_branches = [b.strip() for b in branch_filter.split(',') if b.strip()] if branch_filter else None
 
-    last_run = None
-    try:
-        with get_db_conn() as conn:
-            cursor = conn.cursor()
-            if selected_branches:
-                placeholders = ','.join('?' for _ in selected_branches)
-                cursor.execute(f'''
-                    SELECT commit_hash, branch, job_id, created_at 
-                    FROM jobs 
-                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                          AND branch IN ({placeholders})
-                    ORDER BY created_at DESC LIMIT 1
-                ''', (repo, *selected_branches))
-            else:
-                # All branches including cluster-draft/*
-                cursor.execute('''
-                    SELECT commit_hash, branch, job_id, created_at 
-                    FROM jobs 
-                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                    ORDER BY created_at DESC LIMIT 1
-                ''', (repo,))
-            last_run = cursor.fetchone()
-    except Exception:
-        pass  # DB may be empty or table may not exist — fall through to fallback
-
-    if not last_run:
-        # No completed job: fallback to latest commit on origin/main
-        commit_hash = None
-        local_repo_path = find_local_repo(repo)
-        if local_repo_path:
-            subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
-            res_rev = subprocess.run(["git", "rev-parse", "origin/main"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
-            if res_rev.returncode == 0:
-                commit_hash = res_rev.stdout.strip()
-        if not commit_hash:
-            return jsonify([])
-        run_branch = 'main'
-    else:
-        commit_hash = last_run['commit_hash']
-        run_branch = last_run['branch'] or 'main'
-
-    run_created_at = last_run['created_at'] if last_run else None
-
     local_repo_path = find_local_repo(repo)
-
     if not local_repo_path:
         app.logger.warning(f"Local repo path not found for {repo}")
         return jsonify([])
@@ -1726,72 +1683,133 @@ def api_latest_artifacts(repo):
         # 0. Ensure we have the latest state from remote
         subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
 
-        # Use the commit_hash from the most recent completed run (any branch)
-        # to read dvc.yaml / dvc.lock — this ensures we see the latest results.
-        ref = commit_hash
-
-        # 1. Fetch dvc.yaml content (for type classification)
-        dvc_yaml_data = {}
+        # 1. Determine which branches to scan
+        branches_to_scan = []
         try:
-            res_yaml = subprocess.run(["git", "show", f"{ref}:dvc.yaml"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
-            if res_yaml.returncode == 0 and res_yaml.stdout.strip():
-                dvc_yaml_data = yaml.safe_load(res_yaml.stdout) or {}
-        except Exception as e:
-            app.logger.error(f"Error git show dvc.yaml for {repo}: {e}")
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT DISTINCT branch
+                    FROM jobs
+                    WHERE repo = ? AND status IN ('completed', 'running', 'assigned', 'failed')
+                          AND branch IS NOT NULL
+                ''', (repo,))
+                db_branches = [row['branch'] for row in cursor.fetchall()]
+                branches_to_scan = db_branches
+        except Exception:
+            pass
 
-        # 2. Fetch dvc.lock content (source of truth for resolved paths)
-        dvc_lock_data = {}
-        try:
-            res_lock = subprocess.run(["git", "show", f"{ref}:dvc.lock"], cwd=local_repo_path, capture_output=True, text=True, timeout=10)
-            if res_lock.returncode == 0 and res_lock.stdout.strip():
-                dvc_lock_data = yaml.safe_load(res_lock.stdout) or {}
-        except Exception as e:
-            app.logger.error(f"Error git show dvc.lock for {repo}: {e}")
+        # Always include main/master as fallback
+        if 'main' not in branches_to_scan:
+            branches_to_scan.append('main')
 
-        # If neither dvc.yaml nor dvc.lock exist, return empty list
-        if not dvc_yaml_data and not dvc_lock_data:
-            print(f"[Artifacts] No dvc.yaml/dvc.lock found for {repo} at {ref}", flush=True)
-            return jsonify([])
+        # Apply branch filter if specified
+        if selected_branches:
+            branches_to_scan = [b for b in branches_to_scan if b in selected_branches]
+            if not branches_to_scan:
+                branches_to_scan = selected_branches  # Use directly if no DB match
 
-        # 3. Extract artifacts from dvc.lock using dvc.yaml for classification
-        artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
+        # 2. For each branch, read dvc.lock from the latest Git HEAD (origin/<branch>)
+        #    This captures intermediate watchdog commits, not just the DB-recorded commit.
+        best_artifacts = {}  # path -> {artifact_data, date, branch}
 
-        # 4. Get per-file last-modified dates via a single git log call
-        file_dates = {}
-        try:
-            res_all = subprocess.run(
-                ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
-                cwd=local_repo_path, capture_output=True, text=True, timeout=15
+        for branch in branches_to_scan:
+            ref = f"origin/{branch}"
+
+            # Verify the ref exists
+            res_check = subprocess.run(
+                ["git", "rev-parse", "--verify", ref],
+                cwd=local_repo_path, capture_output=True, text=True, timeout=5
             )
-            if res_all.returncode == 0:
-                current_date = None
-                for line in res_all.stdout.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith("COMMIT_DATE:"):
-                        current_date = line[len("COMMIT_DATE:"):]
-                    elif current_date and line not in file_dates:
-                        file_dates[line] = current_date
-        except Exception as e:
-            app.logger.warning(f"Failed to get per-file dates: {e}")
+            if res_check.returncode != 0:
+                continue
 
-        # 5. Return all artifacts declared in dvc.lock with branch info
-        files = []
-        for artifact in artifacts:
-            artifact_date = file_dates.get(artifact["path"], run_created_at)
-            files.append({
-                "path": artifact["path"],
-                "is_dir": False,
-                "size": 0,
-                "isout": True,
-                "created_at": artifact_date,
-                "stage": artifact["stage"],
-                "artifact_type": artifact["artifact_type"],
-                "branch": run_branch
-            })
+            # Read dvc.yaml at this ref (for artifact type classification)
+            dvc_yaml_data = {}
+            try:
+                res_yaml = subprocess.run(
+                    ["git", "show", f"{ref}:dvc.yaml"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
+                )
+                if res_yaml.returncode == 0 and res_yaml.stdout.strip():
+                    dvc_yaml_data = yaml.safe_load(res_yaml.stdout) or {}
+            except Exception:
+                pass
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref}, branch={run_branch})", flush=True)
+            # Read dvc.lock at this ref (source of truth for resolved artifact paths)
+            dvc_lock_data = {}
+            try:
+                res_lock = subprocess.run(
+                    ["git", "show", f"{ref}:dvc.lock"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=10
+                )
+                if res_lock.returncode == 0 and res_lock.stdout.strip():
+                    dvc_lock_data = yaml.safe_load(res_lock.stdout) or {}
+            except Exception:
+                pass
+
+            if not dvc_yaml_data and not dvc_lock_data:
+                continue
+
+            # Extract artifacts from this branch
+            artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
+            if not artifacts:
+                continue
+
+            # Get the date of the latest commit that touched dvc.lock on this branch
+            branch_date = None
+            try:
+                res_date = subprocess.run(
+                    ["git", "log", ref, "-1", "--format=%aI", "--", "dvc.lock"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
+                )
+                if res_date.returncode == 0 and res_date.stdout.strip():
+                    branch_date = res_date.stdout.strip()
+            except Exception:
+                pass
+
+            # Get per-file last-modified dates for this branch
+            file_dates = {}
+            try:
+                res_all = subprocess.run(
+                    ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=15
+                )
+                if res_all.returncode == 0:
+                    current_date = None
+                    for line in res_all.stdout.splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("COMMIT_DATE:"):
+                            current_date = line[len("COMMIT_DATE:"):]
+                        elif current_date and line not in file_dates:
+                            file_dates[line] = current_date
+            except Exception:
+                pass
+
+            # For each artifact, keep the most recent version across branches
+            for artifact in artifacts:
+                path = artifact["path"]
+                artifact_date = file_dates.get(path, branch_date)
+
+                if path not in best_artifacts or (artifact_date and (
+                    not best_artifacts[path]["created_at"] or
+                    artifact_date > best_artifacts[path]["created_at"]
+                )):
+                    best_artifacts[path] = {
+                        "path": path,
+                        "is_dir": False,
+                        "size": 0,
+                        "isout": True,
+                        "created_at": artifact_date,
+                        "stage": artifact["stage"],
+                        "artifact_type": artifact["artifact_type"],
+                        "branch": branch
+                    }
+
+        files = list(best_artifacts.values())
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (scanned {len(branches_to_scan)} branches)", flush=True)
         return jsonify(files)
 
     except Exception as e:
