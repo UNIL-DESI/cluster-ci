@@ -5,6 +5,11 @@ import time
 import argparse
 import signal
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 def get_ram_requirement(repo=None, branch=None):
     """
     Reads RAM requirement from the .cluster-ci file.
@@ -410,9 +415,9 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                             except Exception:
                                                 pass
                                                 
-                                        diag_lines.append(f"      ● Machine {w['hostname']} ({comp_str}) : OCCUPÉE | Tâche [{active_job['repo'].split('/')[-1]}] par [{active_job['username']}] (depuis {duration_str}, reste au max {remaining_str} | utilise {active_job['ram_required_gb']:.1f} GB)")
+                                        diag_lines.append(f"      ● {w['hostname']} : OCCUPÉE par {active_job['username']} [{active_job['repo'].split('/')[-1]}] ({duration_str}, reste {remaining_str})")
                                     else:
-                                        diag_lines.append(f"      ○ Machine {w['hostname']} ({comp_str}) : LIBRE | RAM Physique : {w['total_ram_gb']:.1f} GB")
+                                        diag_lines.append(f"      ○ {w['hostname']} : LIBRE ({w['total_ram_gb']:.0f}GB RAM)")
                                         
                             # Waiting queue list
                             if len(queue) > 1:

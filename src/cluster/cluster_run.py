@@ -166,10 +166,17 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None):
     # 3. Delete the draft branch
     if branch:
         print(f"🧹 Deleting remote branch origin/{branch}...")
-        subprocess.run(
+        res = subprocess.run(
             ["git", "push", "origin", "--delete", branch, "--quiet"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
         )
+        if res.returncode == 0:
+            print("✅ Remote branch deleted successfully.")
+        else:
+            if "not found" in res.stderr.lower() or "does not exist" in res.stderr.lower() or "failed to push some refs" in res.stderr.lower():
+                print("ℹ️  Remote branch was already deleted or did not exist.")
+            else:
+                print(f"⚠️  Could not delete remote branch: {res.stderr.strip()}")
 
     # 4. Remove state file
     clear_run_state()
@@ -776,8 +783,15 @@ def main():
 
         print(f"🛑 Cancelling run {run_id}...")
         subprocess.run(["gh", "run", "cancel", run_id])
-        print(f"🧹 Deleting branch {branch}...")
-        subprocess.run(["git", "push", "origin", "--delete", branch, "--quiet"])
+        print(f"🧹 Deleting remote branch origin/{branch}...")
+        res = subprocess.run(["git", "push", "origin", "--delete", branch, "--quiet"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode == 0:
+            print("✅ Remote branch deleted successfully.")
+        else:
+            if "not found" in res.stderr.lower() or "does not exist" in res.stderr.lower() or "failed to push some refs" in res.stderr.lower():
+                print("ℹ️  Remote branch was already deleted or did not exist.")
+            else:
+                print(f"⚠️  Could not delete remote branch: {res.stderr.strip()}")
 
     else:
         # Submit shadow run
