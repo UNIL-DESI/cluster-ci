@@ -170,6 +170,8 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
         app.logger.warning(f"🔍 cancel_job_cleanly({job_id}): job not found in DB. reason={reason}")
         return False
 
+    job = dict(job)  # Convert sqlite3.Row to dict for .get() support
+
     status = job['status']
     job_repo = job.get('repo', '?')
     job_branch = job.get('branch', '?')
