@@ -17,6 +17,8 @@ import argparse
 import subprocess
 import threading
 import queue
+import urllib.request
+import urllib.error
 
 # Global variables for cleanup
 RUN_ID = None
@@ -26,6 +28,42 @@ USER_INTERRUPTED = False
 REPO_FULL_NAME = "UNIL-DESI/cluster-ci"
 STATE_FILE = ".cluster-ci-run.json"
 _CLEANUP_DONE = False
+
+def discover_headnode_url():
+    """Discover the headnode URL from environment or local .env file."""
+    # 1. Direct env var
+    url = os.environ.get("HEADNODE_URL")
+    if url:
+        return url
+    # 2. Parse .env file in repo root for HEADNODE_IP
+    env_file = os.path.join(os.getcwd(), ".env")
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("HEADNODE_IP="):
+                        ip = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        return f"http://{ip}:5000"
+        except Exception:
+            pass
+    return None
+
+def find_job_id_from_headnode(headnode_url, repo, branch):
+    """Query the headnode to find the active job_id for a given repo+branch."""
+    if not headnode_url:
+        return None
+    try:
+        url = f"{headnode_url}/api/projects/{repo}/runs"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            runs = json.loads(resp.read().decode())
+            for run in runs:
+                if run.get("status") in ("running", "assigned", "pending") and run.get("branch") == branch:
+                    return run.get("job_id")
+    except Exception:
+        pass
+    return None
 
 def print_line(line, force=False):
     if not line:
@@ -113,10 +151,14 @@ def get_repo_full_name():
         pass
     return REPO_FULL_NAME
 
-def save_run_state(run_id, branch, commit_sha):
+def save_run_state(run_id, branch, commit_sha, job_id=None, headnode_url=None):
     """Persist active run info to a state file for orphan detection."""
     try:
-        state = {"run_id": run_id, "branch": branch, "commit_sha": commit_sha, "pid": os.getpid()}
+        state = {
+            "run_id": run_id, "branch": branch, "commit_sha": commit_sha,
+            "pid": os.getpid(), "job_id": job_id, "headnode_url": headnode_url,
+            "cluster_token": os.environ.get("CLUSTER_TOKEN"),
+        }
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f)
     except Exception:
@@ -130,7 +172,28 @@ def clear_run_state():
     except Exception:
         pass
 
-def cancel_and_cleanup_run(run_id, branch, commit_sha=None):
+def _headnode_stop_job(job_id, headnode_url, cluster_token):
+    """Contact the headnode to stop a job (kills Docker containers, releases RAM)."""
+    if not job_id or not headnode_url:
+        return
+    try:
+        url = f"{headnode_url}/api/jobs/{job_id}/stop"
+        data = json.dumps({}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if cluster_token:
+            req.add_header("Authorization", f"Bearer {cluster_token}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"   Headnode: {result.get('message', 'Job stopped')}")
+    except urllib.error.HTTPError as e:
+        # 404 means job already cleaned up — that's fine
+        if e.code != 404:
+            print(f"   Headnode stop failed (HTTP {e.code}): {e.reason}")
+    except Exception as e:
+        print(f"   Could not reach headnode: {e}")
+
+def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnode_url=None, cluster_token=None):
     """Cancel a GHA run, sync partial results, and delete the draft branch.
     
     This is the single source of truth for run teardown, used by:
@@ -138,6 +201,11 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None):
     - Orphan recovery at startup
     - Signal handlers (Ctrl+C, SIGTERM)
     """
+    # 0. Stop job on headnode FIRST (kills Docker containers, releases worker RAM)
+    if job_id and headnode_url:
+        print("🔌 Stopping job on cluster headnode...")
+        _headnode_stop_job(job_id, headnode_url, cluster_token)
+
     # 1. Sync partial results before destroying anything
     try:
         print("📥 Syncing any partial results before cleanup...")
@@ -188,7 +256,25 @@ def cleanup():
         return
     _CLEANUP_DONE = True
     if BRANCH:
-        cancel_and_cleanup_run(RUN_ID if USER_INTERRUPTED else None, BRANCH, COMMIT_SHA)
+        # Load job_id and headnode_url from state file for headnode contact
+        job_id = None
+        headnode_url = None
+        cluster_token = None
+        try:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                    job_id = state.get("job_id")
+                    headnode_url = state.get("headnode_url")
+                    cluster_token = state.get("cluster_token")
+        except Exception:
+            pass
+        cancel_and_cleanup_run(
+            RUN_ID if USER_INTERRUPTED else None, BRANCH, COMMIT_SHA,
+            job_id=job_id if USER_INTERRUPTED else None,
+            headnode_url=headnode_url if USER_INTERRUPTED else None,
+            cluster_token=cluster_token if USER_INTERRUPTED else None,
+        )
 
 def recover_orphaned_run():
     """Detect and clean up a run left behind by a force-killed process."""
@@ -214,7 +300,14 @@ def recover_orphaned_run():
         print(f"\n⚠️  Detected orphaned run from a previous force-killed session.")
         print(f"   Run ID: {orphan_run_id} | Branch: {orphan_branch}")
         print(f"   Cleaning up automatically...")
-        cancel_and_cleanup_run(orphan_run_id, orphan_branch, orphan_sha)
+        orphan_job_id = state.get("job_id")
+        orphan_headnode_url = state.get("headnode_url")
+        orphan_cluster_token = state.get("cluster_token")
+        cancel_and_cleanup_run(
+            orphan_run_id, orphan_branch, orphan_sha,
+            job_id=orphan_job_id, headnode_url=orphan_headnode_url,
+            cluster_token=orphan_cluster_token,
+        )
         print("✅ Orphaned run cleaned up.\n")
     except Exception as e:
         print(f"⚠️  Could not recover orphaned run state: {e}", file=sys.stderr)
@@ -643,7 +736,25 @@ def shadow_run():
     RUN_ID = run_id
 
     # Persist run state so orphan recovery works if we are force-killed
-    save_run_state(run_id, BRANCH, commit_sha)
+    headnode_url = discover_headnode_url()
+    job_id = find_job_id_from_headnode(headnode_url, REPO_FULL_NAME, BRANCH) if headnode_url else None
+    cluster_token = os.environ.get("CLUSTER_TOKEN")
+    # Read CLUSTER_TOKEN from .env if not in environment
+    if not cluster_token:
+        env_file = os.path.join(os.getcwd(), ".env")
+        if os.path.exists(env_file):
+            try:
+                with open(env_file, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("CLUSTER_TOKEN="):
+                            cluster_token = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+            except Exception:
+                pass
+    if cluster_token:
+        os.environ["CLUSTER_TOKEN"] = cluster_token
+    save_run_state(run_id, BRANCH, commit_sha, job_id=job_id, headnode_url=headnode_url)
 
     print(f"📺 Streaming logs for run {run_id} (Ctrl+C to cancel)...")
     
@@ -781,8 +892,45 @@ def main():
                 print("Usage: cluster-run cancel <run_id>", file=sys.stderr)
                 sys.exit(1)
 
+        # 0. Stop job on headnode FIRST (kills Docker, releases resources)
+        headnode_url = discover_headnode_url()
+        repo = get_repo_full_name()
+        if headnode_url:
+            job_id = None
+            # Try to read job_id from state file
+            try:
+                if os.path.exists(STATE_FILE):
+                    with open(STATE_FILE, "r", encoding="utf-8") as f:
+                        state = json.load(f)
+                        job_id = state.get("job_id")
+            except Exception:
+                pass
+            # Fallback: query headnode by branch
+            if not job_id:
+                job_id = find_job_id_from_headnode(headnode_url, repo, branch)
+            if job_id:
+                print(f"🔌 Stopping job {job_id[:12]}... on cluster headnode...")
+                cluster_token = os.environ.get("CLUSTER_TOKEN")
+                if not cluster_token:
+                    try:
+                        if os.path.exists(".env"):
+                            with open(".env", "r", encoding="utf-8", errors="replace") as f:
+                                for line in f:
+                                    if line.strip().startswith("CLUSTER_TOKEN="):
+                                        cluster_token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                    except Exception:
+                        pass
+                _headnode_stop_job(job_id, headnode_url, cluster_token)
+            else:
+                print("⚠️  Could not find job_id to stop on headnode. Proceeding with GHA cancel only.")
+        else:
+            print("⚠️  Headnode URL not found. Proceeding with GHA cancel only.")
+
+        # 1. Cancel the GHA run
         print(f"🛑 Cancelling run {run_id}...")
         subprocess.run(["gh", "run", "cancel", run_id])
+
+        # 2. Delete the draft branch
         print(f"🧹 Deleting remote branch origin/{branch}...")
         res = subprocess.run(["git", "push", "origin", "--delete", branch, "--quiet"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode == 0:
@@ -792,6 +940,9 @@ def main():
                 print("ℹ️  Remote branch was already deleted or did not exist.")
             else:
                 print(f"⚠️  Could not delete remote branch: {res.stderr.strip()}")
+
+        # 3. Clear state file
+        clear_run_state()
 
     else:
         # Submit shadow run

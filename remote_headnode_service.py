@@ -178,13 +178,61 @@ def submit_job():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     username = data.get('username')
+    gh_run_id = data.get('gh_run_id')
+    commit_hash = data.get('commit_hash')
+    max_runtime_hours = data.get('max_runtime_hours', 24)
+    exposed_port = data.get('exposed_port')
+    custom_web_app = data.get('custom_web_app', False)
+
+    # AUTO-CANCELLATION: Cancel active jobs on the same branch before inserting
+    # - Draft branches (cluster-draft/*): Cancel ALL active jobs (pending/assigned/running)
+    # - Non-draft branches: Only cancel PENDING jobs on the same branch
+    jobs_to_cancel = []
+    is_draft = branch.startswith("cluster-draft/") if branch else False
+    if branch and repo:
+        try:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT job_id, branch, username, status FROM jobs
+                    WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
+                ''', (repo,))
+                active_jobs = cursor.fetchall()
+                for aj in active_jobs:
+                    aj_branch = aj['branch'] or ''
+                    aj_user = aj['username'] or ''
+                    aj_status = aj['status']
+                    aj_id = aj['job_id']
+
+                    if is_draft:
+                        if aj_branch == branch:
+                            jobs_to_cancel.append(aj_id)
+                        elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
+                            jobs_to_cancel.append(aj_id)
+                    else:
+                        if aj_branch == branch and aj_status == 'pending':
+                            jobs_to_cancel.append(aj_id)
+        except Exception as e:
+            app.logger.error(f"Error identifying active jobs to cancel: {e}")
+
+    for j_id in jobs_to_cancel:
+        try:
+            cancel_job_cleanly(j_id, exit_code=-15, reason=f"auto-cancel: replaced by new submission {job_id}")
+        except Exception as e:
+            app.logger.error(f"Failed to auto-cancel job {j_id}: {e}")
+
+    # Inject cancelled job IDs into env_vars for log notification
+    if jobs_to_cancel:
+        if not env_vars:
+            env_vars = {}
+        env_vars["CLUSTER_CANCELLED_RUNS"] = ",".join(jobs_to_cancel)
 
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, ram_required_gb, required_hashes, gh_token, env_vars, username, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ''', (job_id, repo, branch, ram_required_gb, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username))
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ''', (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username))
         conn.commit()
 
     return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes)})
@@ -647,11 +695,12 @@ def api_run_files(job_id):
 
 # --- Portal & OAuth Routes ---
 
-@app.route('/api/jobs/<job_id>/stop', methods=['POST'])
-def api_stop_job(job_id):
-    if 'user' not in session and not check_token():
-        return jsonify({"error": "Unauthorized"}), 401
-
+def cancel_job_cleanly(job_id, exit_code=-1, reason=None):
+    """Cleanly cancel a job: stop worker containers, cancel GHA workflow, update DB.
+    
+    Always updates the DB status, even if worker or GHA cancellation fails.
+    This is the single source of truth for job cancellation.
+    """
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -663,20 +712,21 @@ def api_stop_job(job_id):
         job = cursor.fetchone()
 
     if not job:
-        return jsonify({"error": "Job not found"}), 404
+        return False
 
-    # 1. Cancel on Worker (Safety check: prevent zombie containers)
-    if job['status'] in ['running', 'assigned'] and job['service_url']:
+    status = job['status']
+    if status not in ['pending', 'assigned', 'running']:
+        return False
+
+    # 1. Worker cancellation (best effort — never block DB update)
+    if status in ['assigned', 'running'] and job['service_url']:
         try:
             resp = requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
-            # 200: Success, 404: Job not on worker (safe to proceed)
-            if resp.status_code not in [200, 404]:
-                return jsonify({"error": f"Worker failed to cancel job (HTTP {resp.status_code}): {resp.text}"}), 502
+            app.logger.info(f"Worker cancel for {job_id}: HTTP {resp.status_code}")
         except Exception as e:
-            app.logger.error(f"Failed to send cancel to worker: {e}")
-            return jsonify({"error": f"Could not reach worker to verify job cancellation: {str(e)}"}), 504
+            app.logger.error(f"Failed to send cancel to worker for job {job_id}: {e}")
 
-    # 2. Cancel on GitHub Actions (if run_id exists) - Best effort
+    # 2. GHA cancellation (best effort)
     if job['gh_run_id']:
         try:
             repo = job['repo']
@@ -690,19 +740,33 @@ def api_stop_job(job_id):
                 gh_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel"
                 requests.post(gh_url, headers=headers, timeout=5)
         except Exception as e:
-            app.logger.error(f"Failed to cancel GH Action: {e}")
+            app.logger.error(f"Failed to cancel GH Action for job {job_id}: {e}")
 
-    # 3. Update Status in DB (Only reached if worker confirmed or unreachable with error returned above)
+    # 3. ALWAYS update DB — this must never be skipped
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE jobs
-            SET status = 'failed', exit_code = -1, finished_at = CURRENT_TIMESTAMP
-            WHERE job_id = ?
-        ''', (job_id,))
+            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP
+            WHERE job_id = ? AND status IN ('pending', 'assigned', 'running')
+        ''', (exit_code, job_id))
         conn.commit()
 
-    return jsonify({"status": "ok", "message": "Job stopped and verified"})
+    if reason:
+        app.logger.info(f"Job {job_id} cancelled: {reason}")
+
+    return True
+
+@app.route('/api/jobs/<job_id>/stop', methods=['POST'])
+def api_stop_job(job_id):
+    if 'user' not in session and not check_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    success = cancel_job_cleanly(job_id, exit_code=-1)
+    if success:
+        return jsonify({"status": "ok", "message": "Job stopped and verified"})
+    else:
+        return jsonify({"error": "Job not found or not active"}), 404
 
 @app.route('/api/runs/active', methods=['GET'])
 def api_active_runs():

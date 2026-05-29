@@ -174,7 +174,21 @@ def schedule_jobs():
                     job_id = job['job_id']
                     ram_required = job['ram_required_gb']
                     repo = job['repo']
+                    job_branch = job.get('branch', '')
                     required_hashes = json.loads(job.get('required_hashes') or '[]')
+
+                    # Branch-level exclusivity: never assign two jobs on the same repo+branch.
+                    # If another job is already running/assigned, this one waits in the queue.
+                    with get_db_conn() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            SELECT COUNT(*) FROM jobs
+                            WHERE repo = ? AND branch = ? AND status IN ('running', 'assigned')
+                            AND job_id != ?
+                        ''', (repo, job_branch, job_id))
+                        if cursor.fetchone()[0] > 0:
+                            logger.info(f"Branch exclusivity: skipping job {job_id} ({repo}@{job_branch}) — another job is already running/assigned on this branch")
+                            continue
 
                     # Hard Constraint: Filter workers by RAM
                     # Since workers are single-threaded and exclusively run one job at a time,
