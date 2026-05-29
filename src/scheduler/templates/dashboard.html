@@ -1026,6 +1026,74 @@
                     container.appendChild(divider);
                 }
 
+                // Queue section: show pending jobs with wait reasons
+                try {
+                    const queueResp = await fetch('/api/queue');
+                    if (queueResp.ok) {
+                        const queueJobs = await queueResp.json();
+                        if (Array.isArray(queueJobs) && queueJobs.length > 0) {
+                            const queueHeader = document.createElement('div');
+                            queueHeader.className = 'col-12 full-width mb-3 mt-2';
+                            queueHeader.innerHTML = `<h4 class="text-warning"><i class="bi bi-hourglass-split"></i> File d'attente <span class="badge bg-warning text-dark rounded-pill ms-2">${queueJobs.length}</span></h4>`;
+                            // Insert before the Projects divider
+                            const projectsDivider = container.querySelector('.col-12.full-width.mt-4.mb-3');
+                            if (projectsDivider) {
+                                container.insertBefore(queueHeader, projectsDivider);
+                            } else {
+                                container.appendChild(queueHeader);
+                            }
+
+                            queueJobs.forEach(job => {
+                                const col = document.createElement('div');
+                                col.className = 'col-12 full-width mb-2';
+
+                                const reasons = job.wait_reasons || ['scheduling'];
+                                const reasonLabels = {
+                                    'branch_exclusivity': '<i class="bi bi-lock-fill text-primary me-1"></i>Un run est déjà actif sur cette branche',
+                                    'no_free_workers': '<i class="bi bi-hdd-network text-danger me-1"></i>Toutes les machines sont occupées',
+                                    'insufficient_ram': '<i class="bi bi-memory text-danger me-1"></i>Aucune machine libre avec assez de RAM',
+                                    'scheduling': '<i class="bi bi-clock text-secondary me-1"></i>En cours de planification...'
+                                };
+                                const reasonsHtml = reasons.map(r => `<span class="badge bg-light text-dark border me-1 py-1 px-2" style="font-size: 0.78rem;">${reasonLabels[r] || r}</span>`).join('');
+
+                                const queueDate = new Date(job.created_at).toLocaleString('fr-FR', {
+                                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                                });
+                                const elapsed = Math.floor((Date.now() - new Date(job.created_at).getTime()) / 1000);
+                                const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+                                const repoShort = job.repo ? job.repo.split('/').pop() : '?';
+
+                                col.innerHTML = `
+                                    <div class="card shadow-sm border-warning" style="background-color: #fffdf5; border-left: 4px solid var(--warning);">
+                                        <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <div class="d-flex align-items-center gap-2 mb-1">
+                                                    <span class="spinner-grow spinner-grow-sm text-warning" style="width: 0.6rem; height: 0.6rem;" role="status"></span>
+                                                    <strong class="text-dark">${escapeHtml(repoShort)}</strong>
+                                                    <span class="text-muted small">@${escapeHtml(job.branch || '?')}</span>
+                                                    <span class="text-muted small">par <strong>${escapeHtml(job.username || '?')}</strong></span>
+                                                    <span class="badge bg-secondary rounded-pill">${job.ram_required_gb || 0} GB</span>
+                                                </div>
+                                                <div>${reasonsHtml}</div>
+                                            </div>
+                                            <div class="text-muted small text-end" style="min-width: 80px;">
+                                                <i class="bi bi-clock me-1"></i>${elapsedStr}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                                if (projectsDivider) {
+                                    container.insertBefore(col, projectsDivider);
+                                } else {
+                                    container.appendChild(col);
+                                }
+                            });
+                        }
+                    }
+                } catch (queueErr) {
+                    console.error("Error loading queue:", queueErr);
+                }
+
                 if (projects.length === 0) {
                     container.innerHTML += '<div class="col-12"><div class="alert alert-info">No projects found.</div></div>';
                     return;

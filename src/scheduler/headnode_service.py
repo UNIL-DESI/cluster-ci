@@ -265,52 +265,52 @@ def submit_job():
     commit_hash = data.get('commit_hash')
 
     # 1. AUTO-CANCELLATION: Automatically cancel active jobs according to branch category
-    # - Draft branches (cluster-draft/*): Cancel ALL active jobs (pending/assigned/running)
-    #   for the same user/branch — aggressive fast-iteration mode.
+    # - Draft branches (cluster-draft/*): Cancel ALL active draft jobs (pending/assigned/running)
+    #   for the same USERNAME across ALL repos — one cluster-run per user at a time.
     # - Non-draft branches (main, feature/*, etc.): Only cancel PENDING jobs on the same
-    #   branch. Running/assigned jobs are preserved so they can finish gracefully.
-    #   This enforces "only one pending per branch" — new submissions replace the queued one.
+    #   repo+branch. Running/assigned jobs are preserved so they can finish gracefully.
+    #   This enforces "only one pending per repo+branch" — new submissions replace the queued one.
     jobs_to_cancel = []
     cancel_reasons = {}  # job_id -> reason string for tracing
     is_draft = branch.startswith("cluster-draft/") if branch else False
     app.logger.info(f"📋 [AUTO-CANCEL] New submission: repo={repo}, branch={branch}, user={username}, is_draft={is_draft}")
-    if branch and repo:
+    if branch:
         try:
             with get_db_conn() as conn:
                 cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT job_id, branch, username, status FROM jobs
-                    WHERE repo = ? AND status IN ('pending', 'assigned', 'running')
-                ''', (repo,))
-                active_jobs = cursor.fetchall()
-                app.logger.info(f"📋 [AUTO-CANCEL] Found {len(active_jobs)} active job(s) for repo={repo}")
-                for aj in active_jobs:
-                    aj_branch = aj['branch'] or ''
-                    aj_user = aj['username'] or ''
-                    aj_status = aj['status']
-                    aj_id = aj['job_id']
-                    
-                    if is_draft:
-                        # Draft branches: aggressive cancellation (cancel everything for same user/branch)
-                        if aj_branch == branch:
+                if is_draft:
+                    # Draft branches: aggressive cross-repo cancellation by username.
+                    # A user can only have ONE cluster-run at a time on the entire cluster.
+                    if username:
+                        cursor.execute('''
+                            SELECT job_id, repo, branch, username, status FROM jobs
+                            WHERE username = ? AND branch LIKE 'cluster-draft/%'
+                            AND status IN ('pending', 'assigned', 'running')
+                        ''', (username,))
+                        active_jobs = cursor.fetchall()
+                        app.logger.info(f"📋 [AUTO-CANCEL] Draft mode: found {len(active_jobs)} active draft job(s) for user={username} (cross-repo)")
+                        for aj in active_jobs:
+                            aj_id = aj['job_id']
+                            aj_repo = aj['repo'] or '?'
+                            aj_status = aj['status']
                             jobs_to_cancel.append(aj_id)
-                            cancel_reasons[aj_id] = f"draft:same_branch ({aj_branch}), status={aj_status}"
-                        elif username and aj_user == username and aj_branch.startswith("cluster-draft/"):
-                            jobs_to_cancel.append(aj_id)
-                            cancel_reasons[aj_id] = f"draft:same_user ({aj_user}), aj_branch={aj_branch}, status={aj_status}"
-                        elif aj_branch == f"cluster-draft/{username}":
-                            jobs_to_cancel.append(aj_id)
-                            cancel_reasons[aj_id] = f"draft:user_branch_match ({aj_branch}), status={aj_status}"
-                        else:
-                            app.logger.debug(f"📋 [AUTO-CANCEL] SKIP {aj_id}: draft mode but no rule matched (aj_branch={aj_branch}, aj_user={aj_user}, status={aj_status})")
+                            cancel_reasons[aj_id] = f"draft:same_user_cross_repo (user={username}, repo={aj_repo}, status={aj_status})"
                     else:
-                        # Non-draft branches: only cancel PENDING jobs on the exact same branch.
-                        # Running/assigned jobs are left untouched to finish their execution.
-                        if aj_branch == branch and aj_status == 'pending':
-                            jobs_to_cancel.append(aj_id)
-                            cancel_reasons[aj_id] = f"branch:replace_pending (same branch={aj_branch})"
-                        else:
-                            app.logger.info(f"📋 [AUTO-CANCEL] PRESERVED {aj_id}: branch mode, aj_branch={aj_branch}, status={aj_status} (only pending on same branch are replaced)")
+                        app.logger.warning("📋 [AUTO-CANCEL] Draft branch submitted without username — cannot perform cross-repo cancellation")
+                else:
+                    # Non-draft branches: only cancel PENDING jobs on the exact same repo+branch.
+                    # Running/assigned jobs are left untouched to finish their execution.
+                    cursor.execute('''
+                        SELECT job_id, branch, username, status FROM jobs
+                        WHERE repo = ? AND branch = ? AND status = 'pending'
+                    ''', (repo, branch))
+                    active_jobs = cursor.fetchall()
+                    app.logger.info(f"📋 [AUTO-CANCEL] Branch mode: found {len(active_jobs)} pending job(s) for {repo}@{branch}")
+                    for aj in active_jobs:
+                        aj_id = aj['job_id']
+                        aj_status = aj['status']
+                        jobs_to_cancel.append(aj_id)
+                        cancel_reasons[aj_id] = f"branch:replace_pending (repo={repo}, branch={branch})"
         except Exception as e:
             app.logger.error(f"Error identifying active jobs to cancel: {e}")
 
@@ -923,6 +923,74 @@ def api_active_runs():
         return jsonify(runs)
     except Exception as e:
         app.logger.error(f"Error fetching active runs: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/api/queue', methods=['GET'])
+def api_queue():
+    """Returns pending jobs with computed wait reasons for the dashboard."""
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            # Fetch pending jobs
+            cursor.execute('''
+                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at
+                FROM jobs
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+            ''')
+            pending_jobs = [dict(row) for row in cursor.fetchall()]
+
+            # Fetch running/assigned jobs for reason computation
+            cursor.execute('''
+                SELECT job_id, repo, branch, username, ram_required_gb, status, worker_id
+                FROM jobs
+                WHERE status IN ('running', 'assigned')
+            ''')
+            active_jobs = [dict(row) for row in cursor.fetchall()]
+
+            # Fetch online workers
+            cursor.execute('''
+                SELECT worker_id, hostname, total_ram_gb, status
+                FROM workers
+                WHERE status = 'online'
+            ''')
+            workers = [dict(row) for row in cursor.fetchall()]
+
+        # Compute wait reason for each pending job
+        for job in pending_jobs:
+            reasons = []
+            job_repo = job['repo']
+            job_branch = job['branch'] or ''
+
+            # Check branch exclusivity (another job running/assigned on same repo+branch)
+            branch_blocked = any(
+                aj['repo'] == job_repo and aj['branch'] == job_branch
+                for aj in active_jobs
+            )
+            if branch_blocked:
+                reasons.append("branch_exclusivity")
+
+            # Check resource availability (no worker with enough RAM)
+            ram_required = job.get('ram_required_gb', 0)
+            # Workers currently free (not running any active job)
+            busy_worker_ids = {aj['worker_id'] for aj in active_jobs if aj.get('worker_id')}
+            free_workers = [w for w in workers if w['worker_id'] not in busy_worker_ids]
+            compatible_free = [w for w in free_workers if (w['total_ram_gb'] - 2.0) >= ram_required]
+
+            if not compatible_free:
+                if not free_workers:
+                    reasons.append("no_free_workers")
+                else:
+                    reasons.append("insufficient_ram")
+
+            job['wait_reasons'] = reasons if reasons else ["scheduling"]
+
+        return jsonify(pending_jobs)
+    except Exception as e:
+        app.logger.error(f"Error fetching queue: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/')
