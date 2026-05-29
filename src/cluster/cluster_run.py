@@ -10,6 +10,8 @@ import os
 import re
 import time
 import json
+import atexit
+import signal
 import tempfile
 import argparse
 import subprocess
@@ -22,6 +24,8 @@ BRANCH = None
 COMMIT_SHA = None
 USER_INTERRUPTED = False
 REPO_FULL_NAME = "UNIL-DESI/cluster-ci"
+STATE_FILE = ".cluster-ci-run.json"
+_CLEANUP_DONE = False
 
 def print_line(line, force=False):
     if not line:
@@ -109,30 +113,113 @@ def get_repo_full_name():
         pass
     return REPO_FULL_NAME
 
-def cleanup():
-    """Sync partial results, cancel active workflow run, and remove draft branch."""
-    global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
-    if BRANCH:
-        # Always try to sync results before destroying the branch.
-        # Even on Ctrl+C, earlier completed stages have valuable outputs.
-        print("📥 Syncing any partial results before cleanup...")
-        fetch_cluster_results(BRANCH, COMMIT_SHA)
+def save_run_state(run_id, branch, commit_sha):
+    """Persist active run info to a state file for orphan detection."""
+    try:
+        state = {"run_id": run_id, "branch": branch, "commit_sha": commit_sha, "pid": os.getpid()}
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
 
-        if RUN_ID and USER_INTERRUPTED:
-            # Check status of the GHA run
+def clear_run_state():
+    """Remove the state file after successful cleanup."""
+    try:
+        if os.path.exists(STATE_FILE):
+            os.remove(STATE_FILE)
+    except Exception:
+        pass
+
+def cancel_and_cleanup_run(run_id, branch, commit_sha=None):
+    """Cancel a GHA run, sync partial results, and delete the draft branch.
+    
+    This is the single source of truth for run teardown, used by:
+    - Normal cleanup after shadow_run()
+    - Orphan recovery at startup
+    - Signal handlers (Ctrl+C, SIGTERM)
+    """
+    # 1. Sync partial results before destroying anything
+    try:
+        print("📥 Syncing any partial results before cleanup...")
+        fetch_cluster_results(branch, commit_sha)
+    except Exception:
+        pass
+
+    # 2. Cancel the GHA run if still active
+    if run_id:
+        try:
+            res = subprocess.run(
+                ["gh", "run", "view", str(run_id), "--json", "status"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if res.returncode == 0:
+                status = json.loads(res.stdout).get("status")
+                if status not in ("completed", "success", "failure", "cancelled"):
+                    print(f"🛑 Cancelling GitHub Actions run {run_id}...")
+                    subprocess.run(
+                        ["gh", "run", "cancel", str(run_id)],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+        except Exception:
+            pass
+
+    # 3. Delete the draft branch
+    if branch:
+        print(f"🧹 Deleting remote branch origin/{branch}...")
+        subprocess.run(
+            ["git", "push", "origin", "--delete", branch, "--quiet"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    # 4. Remove state file
+    clear_run_state()
+
+def cleanup():
+    """Cleanup handler: sync results, cancel run, delete branch."""
+    global _CLEANUP_DONE
+    if _CLEANUP_DONE:
+        return
+    _CLEANUP_DONE = True
+    if BRANCH:
+        cancel_and_cleanup_run(RUN_ID if USER_INTERRUPTED else None, BRANCH, COMMIT_SHA)
+
+def recover_orphaned_run():
+    """Detect and clean up a run left behind by a force-killed process."""
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        orphan_run_id = state.get("run_id")
+        orphan_branch = state.get("branch")
+        orphan_sha = state.get("commit_sha")
+        orphan_pid = state.get("pid")
+
+        # Check if the process that wrote this state is still alive
+        if orphan_pid:
             try:
-                res = subprocess.run(["gh", "run", "view", str(RUN_ID), "--json", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                if res.returncode == 0:
-                    status_info = json.loads(res.stdout)
-                    status = status_info.get("status")
-                    if status not in ("completed", "success", "failure", "cancelled"):
-                        print(f"\n🛑 Cancelling GitHub Actions run {RUN_ID}...")
-                        subprocess.run(["gh", "run", "cancel", str(RUN_ID)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-        
-        print(f"🧹 Deleting remote branch origin/{BRANCH}...")
-        subprocess.run(["git", "push", "origin", "--delete", BRANCH, "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                os.kill(orphan_pid, 0)  # signal 0 = check existence
+                # Process is still alive — this is not an orphan
+                return
+            except (OSError, ProcessLookupError):
+                pass  # Process is dead — this IS an orphan
+
+        print(f"\n⚠️  Detected orphaned run from a previous force-killed session.")
+        print(f"   Run ID: {orphan_run_id} | Branch: {orphan_branch}")
+        print(f"   Cleaning up automatically...")
+        cancel_and_cleanup_run(orphan_run_id, orphan_branch, orphan_sha)
+        print("✅ Orphaned run cleaned up.\n")
+    except Exception as e:
+        print(f"⚠️  Could not recover orphaned run state: {e}", file=sys.stderr)
+        clear_run_state()
+
+def _signal_handler(signum, frame):
+    """Handle SIGTERM/SIGINT to ensure cleanup runs on termination."""
+    global USER_INTERRUPTED
+    USER_INTERRUPTED = True
+    print(f"\n🛑 Received signal {signum}, cleaning up...")
+    cleanup()
+    sys.exit(128 + signum)
 
 def check_curl():
     """Verify if curl is installed."""
@@ -547,6 +634,10 @@ def shadow_run():
         sys.exit(1)
 
     RUN_ID = run_id
+
+    # Persist run state so orphan recovery works if we are force-killed
+    save_run_state(run_id, BRANCH, commit_sha)
+
     print(f"📺 Streaming logs for run {run_id} (Ctrl+C to cancel)...")
     
     try:
@@ -579,6 +670,7 @@ def shadow_run():
     # plots, and dvc.lock updates that must be preserved locally.
     print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
     sync_success = fetch_cluster_results(BRANCH, COMMIT_SHA)
+    clear_run_state()
 
     if conclusion != "success":
         if sync_success:
@@ -593,6 +685,13 @@ def main():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    if hasattr(signal, "SIGBREAK"):  # Windows Ctrl+Break
+        signal.signal(signal.SIGBREAK, _signal_handler)
+    atexit.register(cleanup)
+
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
     parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync"],
                         help="Action to perform (default: submit a new shadow run)")
@@ -602,6 +701,9 @@ def main():
     args = parser.parse_args()
 
     check_dependencies()
+
+    # Recover any orphaned run from a previously force-killed session
+    recover_orphaned_run()
 
     if args.command == "list":
         subprocess.run(["gh", "run", "list", "--workflow", "Cluster-CI Execution"])
