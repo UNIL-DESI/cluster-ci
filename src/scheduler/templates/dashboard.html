@@ -2424,8 +2424,15 @@
                     alert('Stop signal sent successfully.');
                     window.location.reload();
                 } else {
-                    const data = await resp.json();
-                    alert('Error: ' + (data.error || 'Failed to stop job'));
+                    const contentType = resp.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const data = await resp.json();
+                        alert('Error: ' + (data.error || 'Failed to stop job'));
+                    } else {
+                        // Server returned HTML (likely a login redirect due to expired session)
+                        alert('Error: Session expired or server error. Please refresh the page and try again.');
+                        window.location.reload();
+                    }
                 }
             } catch (err) {
                 alert('Error: ' + err.message);
