@@ -1569,22 +1569,61 @@ def _classify_artifact_type(file_path, path_info, pattern_info,
     return None
 
 
+@app.route('/api/projects/<path:repo>/branches', methods=['GET'])
+def api_project_branches(repo):
+    """List all distinct branches that have completed runs for this project."""
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    branches = []
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT DISTINCT branch, MAX(created_at) as last_run
+                FROM jobs 
+                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                      AND branch IS NOT NULL
+                GROUP BY branch
+                ORDER BY last_run DESC
+            ''', (repo,))
+            branches = [{"name": row["branch"], "last_run": row["last_run"]} for row in cursor.fetchall()]
+    except Exception:
+        pass
+
+    return jsonify(branches)
+
+
 @app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
 def api_latest_artifacts(repo):
     if 'user' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
+    # Optional branch filter from query param (comma-separated)
+    branch_filter = request.args.get('branches', '').strip()
+    selected_branches = [b.strip() for b in branch_filter.split(',') if b.strip()] if branch_filter else None
+
     last_run = None
     try:
         with get_db_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT commit_hash, branch, job_id, created_at 
-                FROM jobs 
-                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                      AND (branch IS NULL OR branch NOT LIKE 'cluster-draft/%')
-                ORDER BY created_at DESC LIMIT 1
-            ''', (repo,))
+            if selected_branches:
+                placeholders = ','.join('?' for _ in selected_branches)
+                cursor.execute(f'''
+                    SELECT commit_hash, branch, job_id, created_at 
+                    FROM jobs 
+                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                          AND branch IN ({placeholders})
+                    ORDER BY created_at DESC LIMIT 1
+                ''', (repo, *selected_branches))
+            else:
+                # All branches including cluster-draft/*
+                cursor.execute('''
+                    SELECT commit_hash, branch, job_id, created_at 
+                    FROM jobs 
+                    WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
+                    ORDER BY created_at DESC LIMIT 1
+                ''', (repo,))
             last_run = cursor.fetchone()
     except Exception:
         pass  # DB may be empty or table may not exist — fall through to fallback
@@ -1594,15 +1633,16 @@ def api_latest_artifacts(repo):
         commit_hash = None
         local_repo_path = find_local_repo(repo)
         if local_repo_path:
-            # Fetch latest to ensure we have the most recent state
             subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
             res_rev = subprocess.run(["git", "rev-parse", "origin/main"], cwd=local_repo_path, capture_output=True, text=True, timeout=5)
             if res_rev.returncode == 0:
                 commit_hash = res_rev.stdout.strip()
         if not commit_hash:
             return jsonify([])
+        run_branch = 'main'
     else:
         commit_hash = last_run['commit_hash']
+        run_branch = last_run['branch'] or 'main'
 
     run_created_at = last_run['created_at'] if last_run else None
 
@@ -1616,9 +1656,9 @@ def api_latest_artifacts(repo):
         # 0. Ensure we have the latest state from remote
         subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
 
-        # Use origin/main HEAD for dvc.yaml and dvc.lock to get the latest pipeline state,
-        # regardless of which commit the last completed job ran on.
-        ref = "origin/main"
+        # Use the commit_hash from the most recent completed run (any branch)
+        # to read dvc.yaml / dvc.lock — this ensures we see the latest results.
+        ref = commit_hash
 
         # 1. Fetch dvc.yaml content (for type classification)
         dvc_yaml_data = {}
@@ -1647,22 +1687,8 @@ def api_latest_artifacts(repo):
         artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
 
         # 4. Get per-file last-modified dates via a single git log call
-        # This gives us the actual commit date for each file, not just the job date.
         file_dates = {}
         try:
-            artifact_paths = [a["path"] for a in artifacts]
-            # Single git log call: get last commit date for each file in results/
-            res_dates = subprocess.run(
-                ["git", "log", ref, "--format=%aI", "--name-only", "--diff-filter=ACMR", "-1", "--"] + artifact_paths,
-                cwd=local_repo_path, capture_output=True, text=True, timeout=15
-            )
-            if res_dates.returncode == 0 and res_dates.stdout.strip():
-                # Parse: alternating lines of date then filenames
-                # But --name-only with -1 only shows the LAST commit globally.
-                # We need per-file dates. Use a different approach:
-                pass  # Fall through to per-file approach below
-
-            # Better approach: single command that lists all files with their dates
             res_all = subprocess.run(
                 ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
                 cwd=local_repo_path, capture_output=True, text=True, timeout=15
@@ -1676,12 +1702,11 @@ def api_latest_artifacts(repo):
                     if line.startswith("COMMIT_DATE:"):
                         current_date = line[len("COMMIT_DATE:"):]
                     elif current_date and line not in file_dates:
-                        # First occurrence = most recent commit for this file
                         file_dates[line] = current_date
         except Exception as e:
             app.logger.warning(f"Failed to get per-file dates: {e}")
 
-        # 5. Return all artifacts declared in dvc.lock
+        # 5. Return all artifacts declared in dvc.lock with branch info
         files = []
         for artifact in artifacts:
             artifact_date = file_dates.get(artifact["path"], run_created_at)
@@ -1692,10 +1717,11 @@ def api_latest_artifacts(repo):
                 "isout": True,
                 "created_at": artifact_date,
                 "stage": artifact["stage"],
-                "artifact_type": artifact["artifact_type"]
+                "artifact_type": artifact["artifact_type"],
+                "branch": run_branch
             })
 
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref})", flush=True)
+        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (ref={ref}, branch={run_branch})", flush=True)
         return jsonify(files)
 
     except Exception as e:
@@ -1715,7 +1741,7 @@ def api_artifact_history(repo):
     if not local_repo_path:
         return jsonify({"error": "Repository not cloned on headnode"}), 404
 
-    # Fetch completed runs
+    # Fetch completed runs (all branches — cross-branch history)
     runs = []
     try:
         with get_db_conn() as conn:
@@ -1724,7 +1750,6 @@ def api_artifact_history(repo):
                 SELECT job_id, branch, commit_hash, created_at, status 
                 FROM jobs 
                 WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                      AND (branch IS NULL OR branch NOT LIKE 'cluster-draft/%')
                 ORDER BY created_at DESC
             ''', (repo,))
             runs = [dict(row) for row in cursor.fetchall()]

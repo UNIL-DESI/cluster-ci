@@ -717,8 +717,9 @@
                 });
                 const commitTitle = v.firstRun.commit_title || v.firstRun.job_id.substring(0, 8);
                 const sizeStr = v.size ? formatBytes(v.size) : 'Taille inconnue';
+                const branchStr = v.firstRun.branch ? ` [${v.firstRun.branch}]` : '';
                 const isSelected = idx === modalCurrentVersionIndex ? 'selected' : '';
-                selectOptionsHtml += `<option value="${idx}" ${isSelected}>Version ${modalUniqueVersions.length - idx} (du ${dateStr}) - ${escapeHtml(commitTitle)} [${sizeStr}]</option>`;
+                selectOptionsHtml += `<option value="${idx}" ${isSelected}>Version ${modalUniqueVersions.length - idx} (du ${dateStr})${branchStr} - ${escapeHtml(commitTitle)} [${sizeStr}]</option>`;
             });
 
             navContainer.innerHTML = `
@@ -1150,6 +1151,16 @@
                                         </h5>
                                         <div class="d-flex align-items-center gap-2">
                                             <div class="dropdown">
+                                                <button class="btn btn-sm btn-outline-primary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-branch-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
+                                                    <i class="bi bi-diagram-2"></i> Toutes les branches
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-end shadow-sm" id="branch-dropdown-menu" aria-labelledby="artifact-branch-btn" style="max-height: 300px; overflow-y: auto;">
+                                                    <li><a class="dropdown-item active" href="#" onclick="selectBranch(null); return false;"><i class="bi bi-globe me-2"></i>Toutes les branches</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li class="text-center py-2"><small class="text-muted">Chargement...</small></li>
+                                                </ul>
+                                            </div>
+                                            <div class="dropdown">
                                                 <button class="btn btn-sm btn-outline-secondary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-sort-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
                                                     <i class="bi bi-sort-down"></i> Trier
                                                 </button>
@@ -1172,6 +1183,7 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div id="branch-filter-chips" class="d-flex flex-wrap gap-2 mb-2" style="display: none;"></div>
                                     <div id="stage-filter-chips" class="d-flex flex-wrap gap-2 mb-3" style="display: none;"></div>
                                     <div id="artifacts-tree-container" class="py-2">
                                         <div class="text-center py-5">
@@ -1341,8 +1353,16 @@
                 </div>
             `;
 
+            // Load available branches for the selector (non-blocking)
+            loadBranches(repo);
+
             try {
-                const resp = await fetch(`/api/projects/${repo}/artifacts/latest`);
+                // Build URL with optional branch filter
+                let url = `/api/projects/${repo}/artifacts/latest`;
+                if (window._selectedBranch) {
+                    url += `?branches=${encodeURIComponent(window._selectedBranch)}`;
+                }
+                const resp = await fetch(url);
                 if (!resp.ok) {
                     throw new Error('Impossible de charger les fichiers DVC les plus récents.');
                 }
@@ -1352,7 +1372,7 @@
                     container.innerHTML = `
                         <div class="text-center py-5">
                             <i class="bi bi-info-circle text-muted fs-2 mb-2 d-block"></i>
-                            <div class="text-slate-500">Aucun artefact (DVC) n'a été trouvé pour le dernier run complété de ce projet.</div>
+                            <div class="text-slate-500">Aucun artefact (DVC) n'a été trouvé pour ${window._selectedBranch ? 'la branche <strong>' + escapeHtml(window._selectedBranch) + '</strong>' : 'le dernier run complété de ce projet'}.</div>
                         </div>
                     `;
                     const chipsContainer = document.getElementById('stage-filter-chips');
@@ -1378,8 +1398,10 @@
                     chipsContainer.style.display = 'none';
                 }
 
+                // Determine the commit hash to use for artifact downloads
                 let latestCommitHash = 'main';
                 if (window.allRuns && window.allRuns.length > 0) {
+                    // Find the most recent completed run (any branch)
                     const completedRun = window.allRuns.find(r => r.status === 'completed' && r.commit_hash);
                     if (completedRun) {
                         latestCommitHash = completedRun.commit_hash;
@@ -1399,6 +1421,79 @@
                     </div>
                 `;
             }
+        }
+
+        // Branch selector management
+        window._selectedBranch = null;
+        window._availableBranches = [];
+
+        async function loadBranches(repo) {
+            try {
+                const resp = await fetch(`/api/projects/${repo}/branches`);
+                if (!resp.ok) return;
+                const branches = await resp.json();
+                window._availableBranches = branches;
+
+                const menu = document.getElementById('branch-dropdown-menu');
+                if (!menu) return;
+
+                const isAllSelected = !window._selectedBranch;
+                let html = `<li><a class="dropdown-item ${isAllSelected ? 'active' : ''}" href="#" onclick="selectBranch(null); return false;"><i class="bi bi-globe me-2"></i>Toutes les branches</a></li>`;
+                html += '<li><hr class="dropdown-divider"></li>';
+
+                branches.forEach(b => {
+                    const isActive = window._selectedBranch === b.name;
+                    const dateStr = b.last_run ? new Date(b.last_run).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+                    const isMain = b.name === 'main' || b.name === 'master';
+                    const isDraft = b.name.startsWith('cluster-draft/');
+                    const iconClass = isMain ? 'bi-shield-check text-success' : isDraft ? 'bi-lightning text-warning' : 'bi-diagram-2 text-primary';
+                    html += `<li><a class="dropdown-item d-flex align-items-center gap-2 ${isActive ? 'active' : ''}" href="#" onclick="selectBranch('${escapeHtml(b.name).replace(/'/g, "\\\'")}'); return false;"><i class="bi ${iconClass}"></i><div class="d-flex flex-column"><span class="fw-medium">${escapeHtml(b.name)}</span>${dateStr ? '<small class="text-muted">' + dateStr + '</small>' : ''}</div></a></li>`;
+                });
+
+                menu.innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load branches:', e);
+            }
+        }
+
+        function selectBranch(branchName) {
+            window._selectedBranch = branchName;
+            // Update button text
+            const btn = document.getElementById('artifact-branch-btn');
+            if (btn) {
+                if (branchName) {
+                    const isDraft = branchName.startsWith('cluster-draft/');
+                    const isMain = branchName === 'main' || branchName === 'master';
+                    const iconClass = isMain ? 'bi-shield-check' : isDraft ? 'bi-lightning' : 'bi-diagram-2';
+                    btn.innerHTML = `<i class="bi ${iconClass}"></i> ${escapeHtml(branchName)}`;
+                    btn.classList.remove('btn-outline-primary');
+                    btn.classList.add('btn-primary', 'text-white');
+                } else {
+                    btn.innerHTML = '<i class="bi bi-diagram-2"></i> Toutes les branches';
+                    btn.classList.remove('btn-primary', 'text-white');
+                    btn.classList.add('btn-outline-primary');
+                }
+            }
+            // Reload artifacts with new branch filter
+            if (currentState.repo) {
+                loadProjectArtifacts(currentState.repo);
+            }
+        }
+
+        function makeBranchBadge(branch) {
+            if (!branch) return '';
+            const isMain = branch === 'main' || branch === 'master';
+            const isDraft = branch.startsWith('cluster-draft/');
+            let bg, color, icon;
+            if (isMain) {
+                bg = '#dcfce7'; color = '#166534'; icon = 'bi-shield-check';
+            } else if (isDraft) {
+                bg = '#fef3c7'; color = '#92400e'; icon = 'bi-lightning';
+            } else {
+                bg = '#e0e7ff'; color = '#3730a3'; icon = 'bi-diagram-2';
+            }
+            const displayName = isDraft ? branch.replace('cluster-draft/', '⚡') : branch;
+            return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};" title="Branche: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
         }
 
         function renderArtifactView(files, mode) {
@@ -1434,6 +1529,7 @@
                 const dateStr = f.created_at ? new Date(f.created_at).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(f.path)}`;
                 const stageBadge = f.stage ? `<span class="badge rounded-pill ms-2" style="font-size:0.7rem;font-weight:500;padding:2px 8px;background:${f.artifact_type==='metric'?'#dbeafe':'#dcfce7'};color:${f.artifact_type==='metric'?'#1e40af':'#166534'};">${escapeHtml(f.stage)}</span>` : '';
+                const branchBadge = makeBranchBadge(f.branch);
 
                 return `
                     <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded"
@@ -1445,6 +1541,7 @@
                             <i class="bi ${icon} text-primary me-2 fs-5"></i>
                             <span class="file-name text-slate-700 font-medium">${escapeHtml(f.path)}</span>
                             ${stageBadge}
+                            ${branchBadge}
                         </div>
                         <span class="badge bg-slate-100 text-slate-500 rounded-pill font-normal small">${dateStr}</span>
                     </div>
@@ -1485,7 +1582,8 @@
                             isout: file.isout,
                             createdAt: file.created_at,
                             stage: file.stage || '',
-                            artifactType: file.artifact_type || ''
+                            artifactType: file.artifact_type || '',
+                            branch: file.branch || ''
                         };
                     } else {
                         if (!current.children[part]) {
@@ -1518,6 +1616,7 @@
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;
 
                 const stageBadge = node.stage ? `<span class="badge rounded-pill ms-2" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: ${node.artifactType === 'metric' ? '#dbeafe' : node.artifactType === 'plot' ? '#dcfce7' : '#f1f5f9'}; color: ${node.artifactType === 'metric' ? '#1e40af' : node.artifactType === 'plot' ? '#166534' : '#475569'};">${escapeHtml(node.stage)}</span>` : '';
+                const branchBadge = makeBranchBadge(node.branch);
 
                 return `
                     <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded" 
@@ -1529,6 +1628,7 @@
                             <i class="bi ${icon} text-primary me-2 fs-5"></i>
                             <span class="file-name text-slate-700 font-medium text-truncate">${escapeHtml(node.name)}</span>
                             ${stageBadge}
+                            ${branchBadge}
                         </div>
                         <span class="badge bg-slate-100 text-slate-500 rounded-pill font-normal small">${sizeStr}</span>
                     </div>
