@@ -194,7 +194,7 @@ def _headnode_stop_job(job_id, headnode_url, cluster_token):
         print(f"   Could not reach headnode: {e}")
 
 def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnode_url=None, cluster_token=None):
-    """Cancel a GHA run, sync partial results, and delete the draft branch.
+    """Cancel a GHA run, sync partial results. Branch is preserved for artifact access.
     
     This is the single source of truth for run teardown, used by:
     - Normal cleanup after shadow_run()
@@ -206,7 +206,7 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnod
         print("🔌 Stopping job on cluster headnode...")
         _headnode_stop_job(job_id, headnode_url, cluster_token)
 
-    # 1. Sync partial results before destroying anything
+    # 1. Sync partial results before anything else
     try:
         print("📥 Syncing any partial results before cleanup...")
         fetch_cluster_results(branch, commit_sha)
@@ -231,22 +231,11 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnod
         except Exception:
             pass
 
-    # 3. Delete the draft branch
-    if branch:
-        print(f"🧹 Deleting remote branch origin/{branch}...")
-        res = subprocess.run(
-            ["git", "push", "origin", "--delete", branch, "--quiet"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace"
-        )
-        if res.returncode == 0:
-            print("✅ Remote branch deleted successfully.")
-        else:
-            if "not found" in res.stderr.lower() or "does not exist" in res.stderr.lower() or "failed to push some refs" in res.stderr.lower():
-                print("ℹ️  Remote branch was already deleted or did not exist.")
-            else:
-                print(f"⚠️  Could not delete remote branch: {res.stderr.strip()}")
+    # NOTE: Draft branch is intentionally NOT deleted.
+    # It persists so the cross-branch artifact viewer can access its results.
+    # The next cluster-run will overwrite it via --force push.
 
-    # 4. Remove state file
+    # 3. Remove state file
     clear_run_state()
 
 def cleanup():
@@ -926,20 +915,14 @@ def main():
         else:
             print("⚠️  Headnode URL not found. Proceeding with GHA cancel only.")
 
-        # 1. Cancel the GHA run
+        # 2. Cancel the GHA run
         print(f"🛑 Cancelling run {run_id}...")
         subprocess.run(["gh", "run", "cancel", run_id])
 
-        # 2. Delete the draft branch
-        print(f"🧹 Deleting remote branch origin/{branch}...")
-        res = subprocess.run(["git", "push", "origin", "--delete", branch, "--quiet"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode == 0:
-            print("✅ Remote branch deleted successfully.")
-        else:
-            if "not found" in res.stderr.lower() or "does not exist" in res.stderr.lower() or "failed to push some refs" in res.stderr.lower():
-                print("ℹ️  Remote branch was already deleted or did not exist.")
-            else:
-                print(f"⚠️  Could not delete remote branch: {res.stderr.strip()}")
+        # NOTE: Draft branch is intentionally preserved.
+        # Its results remain accessible via the cross-branch artifact viewer.
+        # The next cluster-run will overwrite it via --force push.
+        print(f"ℹ️  Branch origin/{branch} preserved (results accessible via dashboard).")
 
         # 3. Clear state file
         clear_run_state()
