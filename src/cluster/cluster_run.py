@@ -110,9 +110,14 @@ def get_repo_full_name():
     return REPO_FULL_NAME
 
 def cleanup():
-    """Remove draft branch and cancel active workflow run if user interrupted."""
-    global RUN_ID, BRANCH, USER_INTERRUPTED
+    """Sync partial results, cancel active workflow run, and remove draft branch."""
+    global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
     if BRANCH:
+        # Always try to sync results before destroying the branch.
+        # Even on Ctrl+C, earlier completed stages have valuable outputs.
+        print("📥 Syncing any partial results before cleanup...")
+        fetch_cluster_results(BRANCH, COMMIT_SHA)
+
         if RUN_ID and USER_INTERRUPTED:
             # Check status of the GHA run
             try:
@@ -549,7 +554,8 @@ def shadow_run():
     except KeyboardInterrupt:
         USER_INTERRUPTED = True
         print("\n🛑 Execution interrupted by user.")
-        # cleanup is called via sys.exit trigger
+        # cleanup() (called via finally in main) will sync results,
+        # cancel the GHA run, and delete the branch.
         sys.exit(130)
 
     # Check final status
