@@ -1043,6 +1043,7 @@
                                 container.appendChild(queueHeader);
                             }
 
+                            const currentUser = '{{ user.login }}';
                             queueJobs.forEach(job => {
                                 const col = document.createElement('div');
                                 col.className = 'col-12 full-width mb-2';
@@ -1056,12 +1057,15 @@
                                 };
                                 const reasonsHtml = reasons.map(r => `<span class="badge bg-light text-dark border me-1 py-1 px-2" style="font-size: 0.78rem;">${reasonLabels[r] || r}</span>`).join('');
 
-                                const queueDate = new Date(job.created_at).toLocaleString('fr-FR', {
+                                const queueDateFull = new Date(job.created_at + 'Z').toLocaleString('fr-FR', {
+                                    day: '2-digit', month: '2-digit', year: 'numeric',
                                     hour: '2-digit', minute: '2-digit', second: '2-digit'
                                 });
-                                const elapsed = Math.floor((Date.now() - new Date(job.created_at).getTime()) / 1000);
+                                const elapsed = Math.floor((Date.now() - new Date(job.created_at + 'Z').getTime()) / 1000);
                                 const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
                                 const repoShort = job.repo ? job.repo.split('/').pop() : '?';
+                                const isOwnJob = job.username && job.username === currentUser;
+                                const cancelBtn = isOwnJob ? `<button class="btn btn-outline-danger btn-sm ms-2" onclick="event.stopPropagation(); stopJob('${job.job_id}')" title="Annuler ce job"><i class="bi bi-x-circle"></i> Annuler</button>` : '';
 
                                 col.innerHTML = `
                                     <div class="card shadow-sm border-warning" style="background-color: #fffdf5; border-left: 4px solid var(--warning);">
@@ -1076,8 +1080,12 @@
                                                 </div>
                                                 <div>${reasonsHtml}</div>
                                             </div>
-                                            <div class="text-muted small text-end" style="min-width: 80px;">
-                                                <i class="bi bi-clock me-1"></i>${elapsedStr}
+                                            <div class="d-flex align-items-center">
+                                                <div class="text-muted small text-end" style="min-width: 80px;" title="Soumis le ${queueDateFull}">
+                                                    <div><i class="bi bi-clock me-1"></i>${elapsedStr}</div>
+                                                    <div class="text-muted" style="font-size: 0.7rem;">${queueDateFull}</div>
+                                                </div>
+                                                ${cancelBtn}
                                             </div>
                                         </div>
                                     </div>
