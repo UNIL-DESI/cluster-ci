@@ -205,7 +205,7 @@ cluster-ci/
 - [x] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105)
 - [x] [Orchestrateur : Fallback silencieux de HEADNODE_URL et absence de feedback réseau](https://github.com/UNIL-DESI/cluster-ci/issues/109)
 - [x] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go (Fausse alerte)](https://github.com/UNIL-DESI/cluster-ci/issues/107)
-- [ ] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106)
+- [🔄] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106)
 - [ ] [Bugs Interface Web : Tri aléatoire des dates et heures dans l'Historique DVC](https://github.com/UNIL-DESI/cluster-ci/issues/101)
 - [x] Fix Zombie Jobs : Guard branch-level dans le scheduler, cancellation headnode-aware dans `cluster-run`, auto-cancel dans la version déployée, et correction du crash HTTP 500 sur `/api/jobs/{id}/stop`
 - [x] Fix Scheduling cluster-run : Annulation cross-repo par utilisateur pour les branches draft (un seul cluster-run par user, tous repos confondus), politique max 1 pending par repo+branche pour les branches normales, et affichage de la file d'attente avec raisons sur le dashboard web
