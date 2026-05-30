@@ -37,13 +37,13 @@ stages:
       size: 189
     - path: artifacts/plot.png
       hash: md5
-      md5: e0d7ed0f1d593d58797a700ac328a403
-      size: 37068
+      md5: 504a70d48a7fa4e999724509ce1ee789
+      size: 36614
     - path: artifacts/random_plot.png
       hash: md5
-      md5: 56368457ff465b488278383895807ac3
-      size: 39515
+      md5: 3320bb89909233e06da09f3ac315a8e1
+      size: 39192
     - path: artifacts/random_table.csv
       hash: md5
-      md5: b671f6fc5fd899a0748cdb36bec311a8
-      size: 188
+      md5: b91ce06234fb4391aa223d11664a25e0
+      size: 191
