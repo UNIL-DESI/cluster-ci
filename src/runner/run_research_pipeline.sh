@@ -292,6 +292,7 @@ fi
 echo "$VIEWER_PORT" > .cluster-ci-viewer-port
 
 docker run -d \
+    --init \
     --name "${MAIN_CONTAINER_NAME}" \
     $COMMON_LABELS \
     $DOCKER_PORT_MAPPING \
