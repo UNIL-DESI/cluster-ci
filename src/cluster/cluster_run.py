@@ -29,6 +29,59 @@ REPO_FULL_NAME = "UNIL-DESI/cluster-ci"
 STATE_FILE = ".cluster-ci-run.json"
 _CLEANUP_DONE = False
 
+# Log redirection settings
+LOG_LIMIT = 1000
+_LOG_LINE_COUNT = 0
+_LOG_TEMP_FILE = None
+_LOG_TEMP_FILEPATH = None
+_LOG_OVER_LIMIT = False
+
+
+def init_log_redirection():
+    """Create a unique temporary log file for the current run.
+
+    The file is placed in the OS temp directory (auto-cleaned on reboot)
+    with a unique name per invocation (prefix: cluster-ci-run-).
+    """
+    global _LOG_TEMP_FILE, _LOG_TEMP_FILEPATH, _LOG_LINE_COUNT, _LOG_OVER_LIMIT
+    _LOG_LINE_COUNT = 0
+    _LOG_OVER_LIMIT = False
+    try:
+        _LOG_TEMP_FILE = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix="cluster-ci-run-", suffix=".log",
+            delete=False, dir=tempfile.gettempdir()
+        )
+        _LOG_TEMP_FILEPATH = _LOG_TEMP_FILE.name
+        print(f"\n📄 Log file: {_LOG_TEMP_FILEPATH}")
+    except Exception as e:
+        print(f"⚠️  Could not create log file: {e}", file=sys.stderr)
+        _LOG_TEMP_FILE = None
+        _LOG_TEMP_FILEPATH = None
+
+
+def close_log_redirection():
+    """Close the temporary log file handle."""
+    global _LOG_TEMP_FILE
+    if _LOG_TEMP_FILE:
+        try:
+            _LOG_TEMP_FILE.close()
+        except Exception:
+            pass
+        _LOG_TEMP_FILE = None
+
+
+def print_log_summary():
+    """Print a final summary pointing to the log file."""
+    if _LOG_TEMP_FILEPATH:
+        print(f"\n{'='*80}")
+        if _LOG_OVER_LIMIT:
+            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines (console was limited to {LOG_LIMIT}).")
+        else:
+            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines.")
+        print(f"📂 Full logs saved to: {_LOG_TEMP_FILEPATH}")
+        print(f"{'='*80}")
+
+
 def discover_headnode_url():
     """Discover the headnode URL from environment or local .env file."""
     # 1. Direct env var
@@ -66,6 +119,7 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     return None
 
 def print_line(line, force=False):
+    global _LOG_LINE_COUNT, _LOG_OVER_LIMIT
     if not line:
         return
     line = line.strip()
@@ -93,7 +147,29 @@ def print_line(line, force=False):
     if re.match(r"^Checking out .+:\s+\d+%", line):
         return
 
-    print(line, flush=True)
+    # Write to log file if redirection is active
+    if _LOG_TEMP_FILE:
+        try:
+            _LOG_TEMP_FILE.write(line + "\n")
+            _LOG_TEMP_FILE.flush()
+        except Exception:
+            pass
+        _LOG_LINE_COUNT += 1
+
+    # Display to console
+    if not _LOG_TEMP_FILE:
+        # No redirection active — original behavior, no limit
+        print(line, flush=True)
+    elif _LOG_LINE_COUNT <= LOG_LIMIT:
+        print(line, flush=True)
+    elif not _LOG_OVER_LIMIT:
+        _LOG_OVER_LIMIT = True
+        print(f"\n{'='*80}", flush=True)
+        print(f"⚠️  CONSOLE OUTPUT LIMIT REACHED ({LOG_LIMIT} lines displayed).", flush=True)
+        print(f"📂 Full logs are being streamed to: {_LOG_TEMP_FILEPATH}", flush=True)
+        print(f"💡 Open this file in read-only mode to follow the complete output.", flush=True)
+        print(f"   The file is continuously updated as new log lines arrive.", flush=True)
+        print(f"{'='*80}\n", flush=True)
 
 def check_dependencies():
     """Verify that gh and git are installed and accessible."""
@@ -401,6 +477,7 @@ def display_clean_queue_status(run_id):
 
 def stream_logs(run_id, commit_sha):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
+    init_log_redirection()
     has_curl = check_curl()
     last_gha_poll_time = 0
     
@@ -418,7 +495,7 @@ def stream_logs(run_id, commit_sha):
                 content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
                 content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
                 if content.strip():
-                    print(f"\033[90m[context]\033[0m {content}")
+                    print_line(f"[context] {content}")
     except Exception:
         pass
 
@@ -468,16 +545,22 @@ def stream_logs(run_id, commit_sha):
                                     except: pass
                                 if conclusion == "success":
                                     print("\n✅ Cluster-CI run completed successfully!")
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 0
                                 elif conclusion == "cancelled":
                                     print("\n⚠️ [ERREUR] L'exécution a été annulée.")
                                     print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
                                     print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 1
                                 else:
                                     print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
                                     print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
                                     print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 1
                     except Exception:
                         pass
@@ -492,6 +575,8 @@ def stream_logs(run_id, commit_sha):
         if 'proc' in locals() and proc:
             try: proc.terminate()
             except: pass
+        close_log_redirection()
+        print_log_summary()
         raise
 
 def check_gitattributes_safety():
@@ -851,7 +936,22 @@ def main():
             pass
 
         # Fallback to historical logs if completed
-        subprocess.run(["gh", "run", "view", str(run_id), "--log"])
+        init_log_redirection()
+        try:
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    parts = line.split("\t")
+                    content = parts[2] if len(parts) >= 3 else line
+                    content = content.replace("\ufeff", "")
+                    content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
+                    content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
+                    print_line(content)
+            else:
+                print(f"❌ Failed to fetch logs (exit code {res.returncode})", file=sys.stderr)
+        finally:
+            close_log_redirection()
+            print_log_summary()
 
     elif args.command == "sync":
         check_gh_auth()
