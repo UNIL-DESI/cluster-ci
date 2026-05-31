@@ -40,16 +40,45 @@ _LOG_OVER_LIMIT = False
 def init_log_redirection():
     """Create a unique temporary log file for the current run.
 
-    The file is placed in the OS temp directory (auto-cleaned on reboot)
-    with a unique name per invocation (prefix: cluster-ci-run-).
+    The file is placed in the local .cluster-ci-logs/ directory,
+    which is automatically added to .gitignore if not already present.
+    Only the 5 most recent log files are kept (older ones are rotated out).
     """
     global _LOG_TEMP_FILE, _LOG_TEMP_FILEPATH, _LOG_LINE_COUNT, _LOG_OVER_LIMIT
     _LOG_LINE_COUNT = 0
     _LOG_OVER_LIMIT = False
+    
+    # 1. Ensure local log directory exists
+    log_dir = os.path.join(os.getcwd(), ".cluster-ci-logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️  Could not create log directory {log_dir}: {e}", file=sys.stderr)
+        _LOG_TEMP_FILE = None
+        _LOG_TEMP_FILEPATH = None
+        return
+
+    # 2. Automatically update .gitignore if necessary
+    gitignore_path = os.path.join(os.getcwd(), ".gitignore")
+    try:
+        has_entry = False
+        if os.path.exists(gitignore_path):
+            with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                # Check for various formats: with/without leading slash, with/without trailing slash
+                if re.search(r"^\.?cluster-ci-logs/?$", content, re.MULTILINE):
+                    has_entry = True
+        if not has_entry:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                f.write("\n# Cluster-CI run logs\n.cluster-ci-logs/\n")
+    except Exception as e:
+        print(f"⚠️  Could not update .gitignore: {e}", file=sys.stderr)
+
+    # 3. Create unique log file
     try:
         _LOG_TEMP_FILE = tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", prefix="cluster-ci-run-", suffix=".log",
-            delete=False, dir=tempfile.gettempdir()
+            delete=False, dir=log_dir
         )
         _LOG_TEMP_FILEPATH = _LOG_TEMP_FILE.name
         print(f"\n📄 Log file: {_LOG_TEMP_FILEPATH}")
@@ -57,6 +86,26 @@ def init_log_redirection():
         print(f"⚠️  Could not create log file: {e}", file=sys.stderr)
         _LOG_TEMP_FILE = None
         _LOG_TEMP_FILEPATH = None
+        return
+
+    # 4. Rotate logs: keep only the 5 most recent log files
+    try:
+        log_files = [
+            os.path.join(log_dir, f) for f in os.listdir(log_dir)
+            if f.startswith("cluster-ci-run-") and f.endswith(".log")
+        ]
+        # Sort by modification time (oldest first)
+        log_files.sort(key=os.path.getmtime)
+        # Delete oldest files if total count exceeds 5
+        if len(log_files) > 5:
+            files_to_delete = log_files[:-5]
+            for f_path in files_to_delete:
+                try:
+                    os.remove(f_path)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"⚠️  Could not rotate log files: {e}", file=sys.stderr)
 
 
 def close_log_redirection():
