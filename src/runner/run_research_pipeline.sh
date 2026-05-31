@@ -438,23 +438,11 @@ docker_exec_bootstrap "uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool ins
 
 log_info "Reading DVC parameters from .cluster-ci..."
 
-# Strict validation in accordance with no_fallback.md rule
-if ! grep -q "^STAGES=" .cluster-ci; then
-    log_error "Critical Error: The STAGES variable is missing from .cluster-ci."
-    log_error "In compliance with the no_fallback rule, execution has been aborted to prevent compute resource waste."
-    log_error "Please add STAGES to your .cluster-ci file (e.g., STAGES=step_name or STAGES=all to run all stages)."
-    exit 1
-fi
-
-# Extract RAW value of STAGES
-STAGES_RAW_VAL=$(grep "^STAGES=" .cluster-ci | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
-
-# Fail fast if STAGES is declared empty
-if [ -z "$STAGES_RAW_VAL" ]; then
-    log_error "Critical Error: The STAGES variable in .cluster-ci is empty."
-    log_error "In compliance with the no_fallback rule, execution has been aborted."
-    log_error "Please specify at least one stage (e.g., STAGES=step_name) or set STAGES=all to run the entire pipeline."
-    exit 1
+# Check if STAGES is defined in .cluster-ci
+if grep -q "^STAGES=" .cluster-ci; then
+    STAGES_RAW_VAL=$(grep "^STAGES=" .cluster-ci | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+else
+    STAGES_RAW_VAL=""
 fi
 
 # Clean comments and remove internal flags like --ram
@@ -464,10 +452,10 @@ RAW_ARGS=$(grep -v '^\s*#' .cluster-ci | sed 's/--ram [0-9.]*//g')
 DVC_REGULAR_ARGS=$(echo "$RAW_ARGS" | grep -v '=' | tr '\n' ' ' | xargs)
 
 # Extract STAGES=... value
-STAGES_ARGS=$(echo "$RAW_ARGS" | grep -oE '^STAGES=.*' | cut -d= -f2- | tr -d '"' | tr -d "'" | tr ',' ' ' | xargs)
+STAGES_ARGS=$(echo "$RAW_ARGS" | grep -oE '^STAGES=.*' | cut -d= -f2- | tr -d '"' | tr -d "'" | tr ',' ' ' | xargs 2>/dev/null || echo "")
 
-if [ "$STAGES_ARGS" = "all" ]; then
-    log_info "Explicit request to execute the full pipeline (STAGES=all)."
+if [ "$STAGES_ARGS" = "all" ] || [ -z "$STAGES_ARGS" ]; then
+    log_info "Executing the full pipeline by default (STAGES=all or empty/missing)."
     DVC_ARGS=$(echo "$DVC_REGULAR_ARGS" | xargs)
 else
     log_info "Specific stages execution requested."

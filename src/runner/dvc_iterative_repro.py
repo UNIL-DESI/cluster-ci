@@ -190,6 +190,14 @@ def main():
         print(f"==================================================")
         print(f"✅ Stage {stage} completed successfully.")
         print(f"==================================================")
+        
+        # Auto-sync metrics and plots to Git immediately after each successful stage to prevent progress loss
+        print(f"🔄 Syncing metrics and plots for completed stage '{stage}'...")
+        dvc_git_helper_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dvc_git_helper.py")
+        sync_cmd = ["uv", "run", "--with", "ruamel.yaml", "python3", dvc_git_helper_path, "sync"]
+        sync_ret = subprocess.run(sync_cmd)
+        if sync_ret.returncode != 0:
+            print(f"⚠️ Warning: Auto-syncing metrics after stage '{stage}' failed with code {sync_ret.returncode}")
             
     clear_status()
     print(f"\n✅ Iterative reproduction completed successfully.")
