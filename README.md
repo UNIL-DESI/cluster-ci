@@ -51,7 +51,7 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 | `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |
 | `cluster-run sync` | Rapatrie manuellement les résultats (métriques, plots, dvc.lock) depuis le cluster |
 
-**Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions.
+**Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions. Les logs complets sont redirigés dans un dossier local `.cluster-ci-logs/` (automatiquement exclu via `.gitignore`), avec un affichage console limité à 1000 lignes et une rotation automatique conservant uniquement les 5 fichiers les plus récents pour éviter tout encombrement.
 
 ### Cluster Deployment (Headnode & Workers)
 
