@@ -535,6 +535,9 @@ docker_exec "uv run --with tomlkit python3 /cluster-ci/src/runner/validate_pypro
 log_info "DVC-Git-Helper: Injecting cache: false for metrics and plots..."
 docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py inject"
 
+log_info "DVC: Restoring all cached outputs to workspace..."
+docker_exec "dvc checkout --force" || log_warn "DVC checkout failed or incomplete. Proceeding..."
+
 echo "===STAGE:setup:END==="
 echo "===STAGE:dvc_repro:BEGIN==="
 
