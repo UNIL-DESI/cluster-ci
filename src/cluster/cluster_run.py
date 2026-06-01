@@ -20,6 +20,7 @@ import queue
 import urllib.request
 import urllib.error
 
+
 # Global variables for cleanup
 RUN_ID = None
 BRANCH = None
@@ -28,6 +29,11 @@ USER_INTERRUPTED = False
 REPO_FULL_NAME = "UNIL-DESI/cluster-ci"
 STATE_FILE = ".cluster-ci-run.json"
 _CLEANUP_DONE = False
+
+# Global variables and regex for tqdm and stream log optimizations
+_LAST_WAS_TQDM = False
+TQDM_REGEX = re.compile(r"\d+%%\s*\|[█░■□▊▋▌▍▎▏\s\-]*\|?\s*\d+/\d+\s*\[\d+:\d+")
+
 
 # Log redirection settings
 LOG_LIMIT = 1000
@@ -168,7 +174,7 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     return None
 
 def print_line(line, force=False):
-    global _LOG_LINE_COUNT, _LOG_OVER_LIMIT
+    global _LOG_LINE_COUNT, _LOG_OVER_LIMIT, _LAST_WAS_TQDM
     if not line:
         return
     line = line.strip()
@@ -195,6 +201,33 @@ def print_line(line, force=False):
         return
     if re.match(r"^Checking out .+:\s+\d+%", line):
         return
+
+    # TQDM progress spam filtering and optimization
+    is_tqdm = bool(TQDM_REGEX.search(line))
+    if is_tqdm:
+        # Interactive carriage return display to keep console clean
+        if not _LOG_TEMP_FILE:
+            print(f"\r{line}", end="", flush=True)
+        elif _LOG_LINE_COUNT <= LOG_LIMIT:
+            print(f"\r{line}", end="", flush=True)
+        
+        # Avoid flooding log file with intermediate frames — only write final completion (100%)
+        if "100%" in line and _LOG_TEMP_FILE:
+            try:
+                _LOG_TEMP_FILE.write(line + "\n")
+                _LOG_TEMP_FILE.flush()
+                _LOG_LINE_COUNT += 1
+            except Exception:
+                pass
+        
+        _LAST_WAS_TQDM = True
+        return
+    else:
+        if _LAST_WAS_TQDM:
+            # Append a physical newline before displaying standard log after a progress bar
+            if not _LOG_TEMP_FILE or _LOG_LINE_COUNT <= LOG_LIMIT:
+                print()
+            _LAST_WAS_TQDM = False
 
     # Write to log file if redirection is active
     if _LOG_TEMP_FILE:
@@ -555,13 +588,22 @@ def stream_logs(run_id, commit_sha):
 
         if has_curl and commit_sha:
             proc = subprocess.Popen(
-                ["curl", "-s", "-N", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                 stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
             )
             
             def log_reader_thread():
-                for line in proc.stdout:
-                    q.put(line)
+                buffer = []
+                while True:
+                    char = proc.stdout.read(1)
+                    if not char:
+                        if buffer:
+                            q.put("".join(buffer))
+                        break
+                    buffer.append(char)
+                    if char in ('\n', '\r'):
+                        q.put("".join(buffer))
+                        buffer = []
                     
             reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
             reader_thread.start()
@@ -581,6 +623,43 @@ def stream_logs(run_id, commit_sha):
                 if time.time() - last_gha_poll_time > 5:
                     status = "queued"
                     conclusion = None
+                    
+                    # Periodic headnode scheduler healthcheck to detect raw container crashes/exterminations
+                    headnode_url = discover_headnode_url()
+                    job_id = None
+                    try:
+                        if os.path.exists(STATE_FILE):
+                            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                                state = json.load(f)
+                                job_id = state.get("job_id")
+                    except Exception:
+                        pass
+                        
+                    if headnode_url and job_id:
+                        try:
+                            # Contact scheduler runs endpoint
+                            url = f"{headnode_url}/api/projects/{REPO_FULL_NAME}/runs"
+                            req = urllib.request.Request(url)
+                            with urllib.request.urlopen(req, timeout=5) as resp:
+                                runs = json.loads(resp.read().decode())
+                                job_active = False
+                                for run in runs:
+                                    if run.get("job_id") == job_id:
+                                        if run.get("status") in ("running", "assigned", "pending"):
+                                            job_active = True
+                                            break
+                                if not job_active:
+                                    print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
+                                    print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
+                                    if proc:
+                                        try: proc.terminate()
+                                        except: pass
+                                    close_log_redirection()
+                                    print_log_summary()
+                                    return 1
+                        except Exception:
+                            pass
+                            
                     try:
                         res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                         if res.returncode == 0:
