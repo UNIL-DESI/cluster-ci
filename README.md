@@ -98,7 +98,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
 # Principaux résultats
 
-- **Status**: Operational & secured against zombie processes (Last updated: 1 June 2026). Includes a hot-deployment GitOps protocol for zero-downtime cluster-wide updates, hardware-level VRAM purging, and a clean codebase free from legacy debugging/testing artifacts.
+- **Status**: Operational & secured against zombie processes (Last updated: 1 June 2026). Includes hardware-level VRAM purging and a clean codebase free from legacy debugging/testing artifacts.
 
 # Documentation Index
 
@@ -118,7 +118,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 cluster-ci/
 ├── docs/           # Documentation, Index, and Task Specifications
 ├── install.sh      # Client-side installation script
-├── scripts/        # Operational scripts (auto-update, deployment)
+├── scripts/        # Operational scripts (deployment)
 └── src/            # Runner and Orchestrator scripts
     ├── cluster/    # Local runner setup and management (systemd)
     ├── runner/     # GitOps Orchestrator (run_research_pipeline.sh)
@@ -140,7 +140,6 @@ cluster-ci/
 | `src/scheduler/submit_job.py` | Client-side script (CLI) to manually submit a job, track queue status with interactive dashboard & resource diagnostics |
 | `src/scheduler/headnode_service.py` | Headnode HTTP API exposing scheduler routes (including public `/scheduler_status`) |
 | `src/scheduler/runner_manager.py` | Manages the lifecycle of ephemeral GitHub Actions runners (slot1, slot2) |
-| `scripts/self_update_deferred.sh` | GitOps auto-update script (Pull & Defer pattern): pulls code, signals workers, schedules deferred headnode restart |
 | `update_cluster.sh` | Updates the Headnode and Workers via SSH, uses an `.env` file to store credentials |
 | `scripts/get_worker_details.py` | Audit et collecte des caractéristiques matérielles et logicielles des workers distants via SSH |
 
@@ -188,9 +187,6 @@ cluster-ci/
 - [x] Suppression de l'option obsolète `SHARED_MEMORY` (rendue inutile par `--ipc=host` qui alloue automatiquement 50% de la RAM hôte à `/dev/shm`) et ajout de la détection OOM en direct dans `submit_job.py` pour GitHub Actions.
 - [x] Fix Bug: Ghost Workers — Le scheduler marque automatiquement les workers offline après 120s sans heartbeat, empêchant le dashboard de mentir sur l'état réel du cluster.
 - [x] Hardening: Ajout de `timeout=10` explicite sur toutes les requêtes HTTP du worker agent pour prévenir les deadlocks TCP silencieux (firewall universitaire).
-- [x] GitOps Auto-Update (Pull & Defer): Déploiement automatique du cluster sur merge vers `main` via workflow GitHub Actions + webhook `/webhook/update_self` sur les workers + restart différé des services headnode.
-- [x] Fix Bug: Streaming des logs en direct — Résolution de la détection du `job_id` via le shadow commit hash transmis de bout en bout par GHA au scheduler dans la table `jobs` SQLite.
-- [x] Fix Bug: Auto-Update — Fiabilisation du script `self_update_deferred.sh` pour cibler également le dossier de production global `/home/henri/cluster-ci`, les dépendances via `uv sync` et sa base de données lors des déploiements (ainsi que la normalisation universelle des fins de lignes en format LF).
 - [x] Support Windows Universel & PATH Automatique (PowerShell/CMD) : Détection et enregistrement automatique de `~/.local/bin` dans le PATH Windows User via PowerShell, wrappers natifs, résolution définitive du bug de figeage du terminal et fin de tâche instantanée dès la complétion du run.
 - [x] Transparence de la file d'attente (Interactive Queue Dashboard) : Position dans la file d'attente, logs interactifs en direct des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante dans `submit_job.py`.
 - [x] Homogénéisation complète inter-workers : Liaison inter-worker SSH RSA robuste sans mot de passe et synchronisation automatisée du cache des modèles Ollama (Gemma-4-31B de 20 Go) via rsync.
