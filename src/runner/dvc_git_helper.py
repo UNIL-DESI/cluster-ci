@@ -206,9 +206,12 @@ def sync_metrics():
 
         size_mb = os.path.getsize(path) / (1024 * 1024)
         if size_mb < 5:
-            subprocess.run(['git', 'add', '-f', path], check=True)
-            log_info(f"Staged {path} ({size_mb:.2f} MB)")
-            added_any = True
+            # Check if file has modifications or is untracked
+            res_status = subprocess.run(['git', 'status', '--porcelain', path], capture_output=True, text=True)
+            if res_status.stdout.strip():
+                subprocess.run(['git', 'add', '-f', path], check=True)
+                log_info(f"Staged {path} ({size_mb:.2f} MB)")
+                added_any = True
         else:
             log_warn(f"WARNING: Le fichier {path} (déclaré comme metric/plot) dépasse 5 Mo. Il ne sera synchronisé ni sur Git, ni sur le réseau P2P. Si vous souhaitez conserver ce fichier, déplacez-le sous la clé outs: dans votre dvc.yaml.")
 
@@ -248,27 +251,27 @@ def sync_metrics():
         subprocess.run(['git', 'config', 'user.name', 'cluster-ci-bot'], check=True)
         subprocess.run(['git', 'config', 'user.email', 'bot@cluster-ci.io'], check=True)
         subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
-    else:
-        log_info("No new metrics changes to commit.")
 
-    # Always push all accumulated local commits robustly
-    log_info("Pushing all accumulated local commits to origin...")
-    try:
-        subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
-        log_success("All changes (including intermediate and final stages) pushed successfully.")
-    except subprocess.CalledProcessError as e:
-        log_warn(f"Initial push failed, attempting reconciliation (rebase): {e.stderr.strip()}")
+        # Push all accumulated local commits robustly
+        log_info("Pushing all accumulated local commits to origin...")
         try:
-            # Attempt to pull with rebase to handle remote changes
-            subprocess.run(['git', 'pull', '--rebase', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
-            log_info("Rebase successful, retrying push...")
             subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
-            log_success("All changes pushed successfully after reconciliation.")
-        except subprocess.CalledProcessError as rebase_err:
-            log_warn(f"Reconciliation failed: {rebase_err.stderr.strip()}")
-            # Abort rebase if it's still in progress to leave the repo in a clean state
-            subprocess.run(['git', 'rebase', '--abort'], check=False, capture_output=True)
-            log_warn("Push abandoned. The pipeline will continue, but local commits were not synchronized.")
+            log_success("All changes pushed successfully.")
+        except subprocess.CalledProcessError as e:
+            log_warn(f"Initial push failed, attempting reconciliation (rebase): {e.stderr.strip()}")
+            try:
+                # Attempt to pull with rebase to handle remote changes
+                subprocess.run(['git', 'pull', '--rebase', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
+                log_info("Rebase successful, retrying push...")
+                subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
+                log_success("All changes pushed successfully after reconciliation.")
+            except subprocess.CalledProcessError as rebase_err:
+                log_warn(f"Reconciliation failed: {rebase_err.stderr.strip()}")
+                # Abort rebase if it's still in progress to leave the repo in a clean state
+                subprocess.run(['git', 'rebase', '--abort'], check=False, capture_output=True)
+                log_warn("Push abandoned. The pipeline will continue, but local commits were not synchronized.")
+    else:
+        log_info("No new metrics changes to commit. Skipping push.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
