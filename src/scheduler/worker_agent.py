@@ -218,7 +218,7 @@ current_job_id = None
 current_process = None
 job_lock = threading.Lock()
 startup_heartbeat_event = threading.Event()
-pending_update_restart = False  # Set when update_self defers a restart during an active job
+
 
 def get_ram_info():
     mem = psutil.virtual_memory()
@@ -566,21 +566,15 @@ def execute_job(job):
         kill_dvc_viewer_processes()
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
-        should_restart = False
         with job_lock:
             current_job_id = None
             current_process = None
-            if pending_update_restart:
-                should_restart = True
         if secrets_file and os.path.exists(secrets_file):
             try:
                 os.remove(secrets_file)
                 logger.info(f"Cleaned up secrets file: {secrets_file}")
             except Exception as e:
                 logger.error(f"Failed to cleanup secrets file: {e}")
-        if should_restart:
-            logger.info("Job finished — executing deferred update restart that was postponed during job execution.")
-            _trigger_deferred_restart()
 
 def drain_pending_syncs():
     logger.info("Starting drain of pending synchronizations...")
@@ -1136,78 +1130,7 @@ def worker_dvc_get():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": str(e)}), 500
 
-def _trigger_deferred_restart():
-    """Schedule a systemd restart of cluster-worker in 5 seconds.
-    
-    Separated from update_self so it can be called either immediately
-    (no job running) or deferred (after a job finishes).
-    """
-    global pending_update_restart
-    with job_lock:
-        pending_update_restart = False
-    logger.info("Scheduling deferred restart of cluster-worker in 5 seconds...")
-    subprocess.Popen(
-        ["bash", "-c", "sleep 5 && sudo systemctl restart cluster-worker"],
-        cwd="/tmp", start_new_session=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
 
-@app.route('/webhook/update_self', methods=['POST'])
-def update_self():
-    """GitOps auto-update endpoint.
-    
-    Pulls latest code from main, syncs dependencies, and schedules a deferred
-    restart of the cluster-worker systemd service. The restart is deferred by 5s
-    so this endpoint can return 202 before the process is killed.
-    
-    SAFETY: If a job is currently running, the code update (git pull + uv sync)
-    still proceeds, but the restart is postponed until the job finishes. This
-    prevents crash-loops from killing the worker mid-execution.
-    """
-    global pending_update_restart
-    logger.info("Received update_self webhook — starting GitOps update")
-
-    def _do_update():
-        global pending_update_restart
-        try:
-            # 1. Pull latest code robustly using fetch + hard reset to bypass any local changes or merge conflicts
-            subprocess.run(["git", "fetch", "origin", "main"], cwd=BASE_DIR, capture_output=True, timeout=60)
-            res = subprocess.run(
-                ["git", "reset", "--hard", "origin/main"],
-                cwd=BASE_DIR, capture_output=True, text=True, timeout=60
-            )
-            logger.info(f"git reset --hard: {res.stdout.strip()}")
-            if res.returncode != 0:
-                logger.error(f"git reset failed: {res.stderr}")
-                return
-
-            # 2. Sync dependencies (non-blocking if uv is available)
-            uv_cmd = shutil.which("uv") or os.path.expanduser("~/.local/bin/uv")
-            if os.path.exists(uv_cmd):
-                res = subprocess.run(
-                    [uv_cmd, "sync"], cwd=BASE_DIR,
-                    capture_output=True, text=True, timeout=120
-                )
-                logger.info(f"uv sync: {res.stdout.strip()}")
-
-            # 3. Check if a job is running — if so, defer the restart
-            with job_lock:
-                job_active = current_job_id is not None
-                if job_active:
-                    pending_update_restart = True
-
-            if job_active:
-                logger.warning(
-                    f"Job {current_job_id} is currently running — deferring restart until job completes. "
-                    f"Code has been updated to latest commit; restart will trigger automatically after job finishes."
-                )
-            else:
-                _trigger_deferred_restart()
-        except Exception as e:
-            logger.error(f"Update failed: {e}")
-
-    threading.Thread(target=_do_update, daemon=True).start()
-    return jsonify({"status": "accepted", "message": "Update in progress, restart scheduled"}), 202
 
 @app.route('/webhook/drain_request', methods=['POST'])
 def drain_request():
