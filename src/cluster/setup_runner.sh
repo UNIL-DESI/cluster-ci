@@ -139,7 +139,6 @@ EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/runner_manager.py
 Restart=always
 RestartSec=5
-KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -163,7 +162,6 @@ EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/headnode_service.py
 Restart=always
 RestartSec=5
-KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -183,7 +181,6 @@ EnvironmentFile=$BASE_DIR/.env
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/scheduler_loop.py
 Restart=always
 RestartSec=5
-KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -214,7 +211,6 @@ ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
 ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always
 RestartSec=10
-KillMode=process
 TimeoutStopSec=30
 
 [Install]
