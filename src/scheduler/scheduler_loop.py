@@ -173,6 +173,7 @@ def schedule_jobs():
                 for job in pending_jobs:
                     job_id = job['job_id']
                     ram_required = job['ram_required_gb']
+                    vram_required = job.get('vram_required_gb') or 0
                     repo = job['repo']
                     job_branch = job.get('branch', '')
                     required_hashes = json.loads(job.get('required_hashes') or '[]')
@@ -196,22 +197,36 @@ def schedule_jobs():
                     # We don't use 'available_ram_gb' because it is artificially lowered by ZFS ARC and reclaimable caches.
                     candidates = [w for w in workers if (w['total_ram_gb'] - 2.0) >= ram_required]
 
+                    # Hard Constraint: Filter by VRAM (if required)
+                    if vram_required > 0:
+                        candidates = [w for w in candidates if (w.get('total_vram_gb') or 0) >= vram_required]
+
                     if not candidates:
-                        # Check if it's fundamentally impossible by querying all online workers' total_ram_gb
+                        # Check if it's fundamentally impossible by querying all online workers
                         with get_db_conn() as conn:
                             cursor = conn.cursor()
                             cursor.execute('SELECT MAX(total_ram_gb) FROM workers WHERE status = "online"')
                             max_total = cursor.fetchone()[0] or 0.0
+                            cursor.execute('SELECT MAX(total_vram_gb) FROM workers WHERE status = "online"')
+                            max_vram = cursor.fetchone()[0] or 0.0
 
                         if ram_required > (max_total - 2.0):
-                            logger.error(f"Job {job_id} requires {ram_required} GB but max cluster capacity (minus 2GB OS overhead) is {max_total - 2.0:.1f} GB. Failing job.")
+                            logger.error(f"Job {job_id} requires {ram_required} GB RAM but max cluster capacity is {max_total - 2.0:.1f} GB. Failing job.")
                             with get_db_conn() as conn:
                                 cursor = conn.cursor()
                                 cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
                                 conn.commit()
                             continue
 
-                        logger.info(f"Could not find worker for job {job_id} requiring {ram_required} GB (waiting for a large enough worker to come online)")
+                        if vram_required > 0 and vram_required > max_vram:
+                            logger.error(f"Job {job_id} requires {vram_required} GB VRAM but max cluster VRAM is {max_vram:.1f} GB. Failing job.")
+                            with get_db_conn() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
+                                conn.commit()
+                            continue
+
+                        logger.info(f"Could not find worker for job {job_id} requiring {ram_required} GB RAM / {vram_required} GB VRAM")
                         continue
 
                     # Soft Constraint: Data Locality (P2P Discovery)

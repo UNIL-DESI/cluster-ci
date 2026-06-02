@@ -111,23 +111,27 @@ def register_worker():
     total_ram_gb = data.get('total_ram_gb')
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')
+    total_vram_gb = data.get('total_vram_gb')
+    gpu_name = data.get('gpu_name')
 
     with get_db_conn() as conn:
         cursor = conn.cursor()
         # available_ram_gb is now a derived state, but we keep the column for backward compatibility
         # (it will be ignored by the dynamic calculation).
         cursor.execute('''
-            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, last_seen, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, last_seen, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
             ON CONFLICT(worker_id) DO UPDATE SET
                 hostname = ?,
                 service_url = ?,
                 total_ram_gb = ?,
                 total_storage_gb = ?,
                 available_storage_gb = ?,
+                total_vram_gb = ?,
+                gpu_name = ?,
                 last_seen = CURRENT_TIMESTAMP,
                 status = 'online'
-        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb))
+        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name))
         
         # If a worker re-registers (is_startup=True), it means it restarted and lost any running jobs.
         # We only fail 'running' jobs. Jobs that were merely 'assigned' are safely reverted to 'pending'
@@ -230,6 +234,7 @@ def submit_job():
     ram_required_gb = data.get('ram_required_gb', 0)
     max_runtime_hours = data.get('max_runtime_hours')
     exposed_port = data.get('exposed_port')
+    vram_required_gb = data.get('vram_required_gb', 0)
     custom_web_app = data.get('custom_web_app', False)
     gh_run_id = data.get('gh_run_id')
     gh_token = data.get('gh_token')
@@ -337,9 +342,9 @@ def submit_job():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ''', (job_id, repo, branch, commit_hash, ram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username))
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username))
         conn.commit()
 
     return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes)})
@@ -357,7 +362,7 @@ def list_workers():
                     FROM jobs
                     WHERE worker_id = workers.worker_id AND status IN ('running', 'assigned')
                 )) as available_ram_gb,
-                total_storage_gb, available_storage_gb, last_seen, status
+                total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, last_seen, status
             FROM workers
         ''')
         workers = [dict(row) for row in cursor.fetchall()]
@@ -375,7 +380,7 @@ def scheduler_status():
         
         # 1. Fetch all workers and dynamically attach any active job currently running or assigned
         cursor.execute('''
-            SELECT worker_id, hostname, service_url, total_ram_gb, status, last_seen
+            SELECT worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_name, status, last_seen
             FROM workers
         ''')
         workers_list = [dict(row) for row in cursor.fetchall()]

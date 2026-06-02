@@ -191,6 +191,34 @@ EOF
     sudo systemctl restart cluster-scheduler cluster-scheduler-loop cluster-runner-manager
     echo "🚀 Scheduler and Runner Manager services started."
 
+    # Also install the Worker Agent on the headnode so it can execute jobs too
+    echo "⚙️ Also installing Worker Agent on headnode (dual role)..."
+    cat <<EOF | sudo tee /etc/systemd/system/cluster-worker.service
+[Unit]
+Description=Cluster-CI Worker Agent
+After=network.target cluster-scheduler.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$BASE_DIR
+EnvironmentFile=$BASE_DIR/.env
+ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
+ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable cluster-worker
+    sudo systemctl restart cluster-worker
+    echo "🚀 Worker Agent also started on headnode (dual mode)."
+
 else
     echo "⚙️ Configuring Worker Agent..."
     uv pip install -e $BASE_DIR

@@ -23,6 +23,8 @@ def init_db():
             available_ram_gb REAL,
             total_storage_gb REAL,
             available_storage_gb REAL,
+            total_vram_gb REAL,
+            gpu_name TEXT,
             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'online'
         )
@@ -41,6 +43,16 @@ def init_db():
         pass
     try:
         cursor.execute('ALTER TABLE workers ADD COLUMN available_storage_gb REAL')
+    except sqlite3.OperationalError:
+        pass
+
+    # Add GPU/VRAM columns if they don't exist (migration)
+    try:
+        cursor.execute('ALTER TABLE workers ADD COLUMN total_vram_gb REAL')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute('ALTER TABLE workers ADD COLUMN gpu_name TEXT')
     except sqlite3.OperationalError:
         pass
 
@@ -133,6 +145,12 @@ def init_db():
     # custom_web_app migration
     try:
         cursor.execute('ALTER TABLE jobs ADD COLUMN custom_web_app INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
+    # vram_required_gb migration
+    try:
+        cursor.execute('ALTER TABLE jobs ADD COLUMN vram_required_gb REAL')
     except sqlite3.OperationalError:
         pass
 

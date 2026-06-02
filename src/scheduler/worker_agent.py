@@ -238,11 +238,36 @@ def get_storage_info():
         logger.error(f"Error getting storage info: {e}")
         return 0.0, 0.0
 
+def get_gpu_info():
+    """Detects GPU name and total VRAM via nvidia-smi. Returns (gpu_name, total_vram_gb)."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=gpu_name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
+            total_vram_mb = 0
+            gpu_names = []
+            for line in lines:
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 2:
+                    gpu_names.append(parts[0])
+                    total_vram_mb += float(parts[1])
+            gpu_name = gpu_names[0] if gpu_names else "Unknown"
+            if len(gpu_names) > 1:
+                gpu_name = f"{len(gpu_names)}x {gpu_name}"
+            return gpu_name, total_vram_mb / 1024.0
+    except Exception as e:
+        logger.warning(f"GPU detection failed: {e}")
+    return "N/A", 0.0
+
 def heartbeat_loop():
     is_startup = True
     while True:
         total_ram_gb, available_ram_gb = get_ram_info()
         total_storage_gb, available_storage_gb = get_storage_info()
+        gpu_name, total_vram_gb = get_gpu_info()
         try:
             resp = requests.post(f"{HEADNODE_URL}/register_worker", json={
                 "worker_id": WORKER_ID,
@@ -252,6 +277,8 @@ def heartbeat_loop():
                 "available_ram_gb": available_ram_gb,
                 "total_storage_gb": total_storage_gb,
                 "available_storage_gb": available_storage_gb,
+                "total_vram_gb": total_vram_gb,
+                "gpu_name": gpu_name,
                 "is_startup": is_startup
             }, headers=get_headers(), timeout=10)
             resp.raise_for_status()

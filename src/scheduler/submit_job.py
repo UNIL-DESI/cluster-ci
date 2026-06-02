@@ -155,13 +155,19 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     if port_match:
         exposed_port = int(port_match.group(1))
 
+    # Parse REQUIRED_VRAM
+    vram_req = 0
+    vram_match = re.search(r'REQUIRED_VRAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    if vram_match:
+        vram_req = float(vram_match.group(1))
+
     # Parse CUSTOM_WEB_APP
     custom_web_app = False
     custom_app_match = re.search(r'CUSTOM_WEB_APP\s*=\s*(true|1)', content, re.IGNORECASE)
     if custom_app_match:
         custom_web_app = True
 
-    print(f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})")
+    print(f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})")
 
     token = os.environ.get("CLUSTER_TOKEN")
     headers = {}
@@ -175,6 +181,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "branch": branch,
             "commit_hash": commit_hash,
             "ram_required_gb": ram_req,
+            "vram_required_gb": vram_req,
             "max_runtime_hours": max_runtime,
             "exposed_port": exposed_port,
             "custom_web_app": custom_web_app,
@@ -378,6 +385,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                 for w in online_workers:
                                     active_job = w.get("active_job")
                                     is_compatible = (w["total_ram_gb"] - 2.0) >= ram_required
+                                    worker_vram = w.get('total_vram_gb', 0)
                                     comp_str = "Compatible" if is_compatible else "RAM insuffisante"
                                     
                                     if active_job:
@@ -415,9 +423,9 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                             except Exception:
                                                 pass
                                                 
-                                        diag_lines.append(f"      ● {w['hostname']} : OCCUPÉE par {active_job['username']} [{active_job['repo'].split('/')[-1]}] ({duration_str}, reste {remaining_str})")
+                                        diag_lines.append(f"      ● {w['hostname']} : OCCUPÉE par {active_job['username']} [{active_job['repo'].split('/')[-1]}] ({duration_str}, reste {remaining_str}) [{w['total_ram_gb']:.0f}GB RAM, {worker_vram:.0f}GB VRAM]")
                                     else:
-                                        diag_lines.append(f"      ○ {w['hostname']} : LIBRE ({w['total_ram_gb']:.0f}GB RAM)")
+                                        diag_lines.append(f"      ○ {w['hostname']} : LIBRE ({w['total_ram_gb']:.0f}GB RAM, {w.get('total_vram_gb', 0):.0f}GB VRAM)")
                                         
                             # Waiting queue list
                             if len(queue) > 1:
