@@ -1135,7 +1135,9 @@
                     const isOnline = w.status === 'online';
                     const isBusy = isOnline && w.active_job;
                     const dotClass = !isOnline ? 'offline' : (isBusy ? 'busy' : 'online');
-                    let tooltipContent = `${w.hostname || w.worker_id} — ${w.total_ram_gb || '?'} GB RAM`;
+                    const vramStr = w.total_vram_gb ? ` / ${Math.round(w.total_vram_gb)} GB VRAM` : '';
+                    const gpuStr = w.gpu_name ? `<br>${w.gpu_name}` : '';
+                    let tooltipContent = `${w.hostname || w.worker_id} — ${w.total_ram_gb || '?'} GB RAM${vramStr}${gpuStr}`;
                     if (isBusy) {
                         const job = w.active_job;
                         const elapsed = job.started_at ? formatElapsed(new Date(job.started_at + 'Z')) : '';
@@ -2321,6 +2323,7 @@
                             <div class="card shadow-sm h-100 border-0" style="background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);">
                                 <div class="card-body">
                                     <h5 class="card-title text-dark"><i class="bi bi-pc-display-horizontal"></i> ${escapeHtml(w.hostname || w.worker_id.substring(0,8))}</h5>
+                                    ${w.gpu_name ? `<div class="small text-muted mb-1"><i class="bi bi-gpu-card me-1"></i>${escapeHtml(w.gpu_name)}${w.total_vram_gb ? ` — ${Math.round(w.total_vram_gb)} GB VRAM` : ''}</div>` : ''}
                                     <hr class="my-2">
                                     <div class="mb-2">
                                         <div class="d-flex justify-content-between mb-1 small">
