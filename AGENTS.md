@@ -3,7 +3,10 @@
 <!-- CLUSTER-CI:START -->
 ## ⚠️ Instructions Spécifiques pour la CI (Cluster-CI)
 
-Ce dépôt est orchestré par le système hybride **Cluster-CI** sur un cluster ARM64 NVIDIA (GPU Blackwell GB10, 128GB RAM, Ubuntu 24.04).
+Ce dépôt est orchestré par le système hybride **Cluster-CI** sur un cluster hétérogène :
+- **Workers ARM64** : GPU Blackwell GB10, 128GB RAM partagée, Ubuntu 24.04
+- **Headnode (AMD x86_64)** : 2× RTX 3090 (48GB VRAM), 125GB RAM, Ubuntu 20.04
+
 En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes suivantes pour ne pas casser l'infrastructure distante et mener tes expériences avec succès :
 
 1. **Version Python** : Le conteneur d'exécution utilise **Python 3.12**. Si tu utilises `pyproject.toml`, la directive `requires-python` doit include `3.12` (ex: `>=3.10`). Tu peux utiliser les dernières versions de toutes les bibliothèques.
@@ -31,10 +34,12 @@ En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes sui
         STAGES=my_experiment
         MAX_RUNTIME_HOURS=24
         REQUIRED_RAM=16GB
+        REQUIRED_VRAM=24GB
         ```
-     3. **Paramètres Obligatoires** : Tu DOIS définir `MAX_RUNTIME_HOURS` (max 24) dans `.cluster-ci`. Tu peux aussi définir `REQUIRED_RAM` (ex: `16GB`).
-     4. **Interfaces Graphiques** : Pour déployer une interface interactive (Gradio, Streamlit, TensorBoard), ajoute `EXPOSED_PORT=<port>` dans `.cluster-ci`. Le système routera automatiquement le trafic vers ton application.
-     5. **Secrets** : Tous les secrets définis dans "GitHub Repository Secrets" sont automatiquement transmis au cluster.
+     3. **Paramètres Obligatoires** : Tu DOIS définir `MAX_RUNTIME_HOURS` (max 24) dans `.cluster-ci`. Tu peux aussi définir `REQUIRED_RAM` (ex: `16GB`) et `REQUIRED_VRAM` (ex: `24GB`) pour filtrer les workers compatibles.
+     4. **VRAM** : Si ton expérience nécessite une quantité minimale de VRAM GPU, utilise `REQUIRED_VRAM=24GB`. Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
+     5. **Interfaces Graphiques** : Pour déployer une interface interactive (Gradio, Streamlit, TensorBoard), ajoute `EXPOSED_PORT=<port>` dans `.cluster-ci`. Le système routera automatiquement le trafic vers ton application.
+     6. **Secrets** : Tous les secrets définis dans "GitHub Repository Secrets" sont automatiquement transmis au cluster.
 4. **Tests et Itération Rapide (CLI `cluster-run`)** :
    - En tant qu'agent, pour tester ton code ou lancer une expérience sur le cluster, **n'attends pas le déclenchement passif de GitHub**.
    - Utilise la commande locale `cluster-run` dans ton terminal.

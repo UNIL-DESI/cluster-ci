@@ -7,16 +7,16 @@ Asynchronous continuous integration system for research pipelines, designed as a
 
 ## Cluster Hardware Specifications
 
-| Property | Value |
-|----------|-------|
-| **GPU** | NVIDIA GB10 (Blackwell architecture) |
-| **CPU** | ARM64 — Cortex-X925 + Cortex-A725 (ARMv9) |
-| **RAM** | 128 GB unified memory |
-| **OS** | Ubuntu 24.04.4 LTS (Noble Numbat) |
-| **Docker Image** | `nvcr.io/nvidia/pytorch:26.04-py3` |
-| **Python** | 3.12 |
-| **PyTorch** | 2.12 (CUDA 13.2) |
-| **Storage** | ~3.2 TB |
+| Property | Workers (ARM64) | Headnode (AMD x86_64) |
+|----------|----------|-------|
+| **GPU** | NVIDIA GB10 (Blackwell) | 2× NVIDIA RTX 3090 (48 GB VRAM) |
+| **CPU** | ARM64 — Cortex-X925 + Cortex-A725 | AMD Ryzen 9 3900X (24 threads) |
+| **RAM** | 128 GB unified memory | 125 GB (séparée) |
+| **OS** | Ubuntu 24.04.4 LTS | Ubuntu 20.04 |
+| **Docker Image** | `nvcr.io/nvidia/pytorch:26.04-py3` | `nvcr.io/nvidia/l4t-pytorch:r35.2.1-pth2.0-py3` |
+| **Python** | 3.12 | 3.12 |
+| **PyTorch** | 2.12 (CUDA 13.2) | 2.0 (CUDA 12.2) |
+| **Storage** | ~3.2 TB | ~938 GB |
 
 # Installation
 
@@ -91,7 +91,8 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 5. **Authentication**: The runner silently injects credentials (Google Drive) by sourcing the global cluster `.env` and `.env.secrets` files.
 6. **CI Feedback**: Joules receives native failure and success notifications via GitHub PR integration.
 7. **Configuration `.cluster-ci`**: Les jobs nécessitant d'être schedulés peuvent déclarer les paramètres suivants à la racine :
-    - `REQUIRED_RAM=16GB` : Contrainte de placement (défaut : 2GB).
+    - `REQUIRED_RAM=16GB` : Contrainte de placement RAM (défaut : 2GB).
+    - `REQUIRED_VRAM=24GB` : Contrainte de placement VRAM GPU (défaut : 0, pas de contrainte). Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
     - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
     - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
    Une fois alloué, le conteneur a accès à 100% de la RAM hôte pour éviter les limites artificielles.
@@ -206,3 +207,4 @@ cluster-ci/
 - [x] Fix Zombie Jobs : Guard branch-level dans le scheduler, cancellation headnode-aware dans `cluster-run`, auto-cancel dans la version déployée, et correction du crash HTTP 500 sur `/api/jobs/{id}/stop`
 - [x] Fix Scheduling cluster-run : Annulation cross-repo par utilisateur pour les branches draft (un seul cluster-run par user, tous repos confondus), politique max 1 pending par repo+branche pour les branches normales, et affichage de la file d'attente avec raisons sur le dashboard web
 - [x] Fix Dashboard : Scan multi-branches temps réel des artefacts (watchdog commits intermédiaires), correction timezone UTC +2h sur les temps écoulés, et ajout de la date de lancement sur les Active Cluster Runs
+- [x] VRAM Tracking & Headnode-as-Worker : Détection automatique GPU/VRAM via `nvidia-smi`, contrainte `REQUIRED_VRAM` dans `.cluster-ci`, headnode enregistré comme worker dual-mode (scheduler + executor), affichage GPU/VRAM dans le dashboard et les diagnostics de file d'attente
