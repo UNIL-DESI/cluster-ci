@@ -24,6 +24,7 @@ def init_db():
             total_storage_gb REAL,
             available_storage_gb REAL,
             total_vram_gb REAL,
+            gpu_count INTEGER,
             gpu_name TEXT,
             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'online'
@@ -53,6 +54,10 @@ def init_db():
         pass
     try:
         cursor.execute('ALTER TABLE workers ADD COLUMN gpu_name TEXT')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute('ALTER TABLE workers ADD COLUMN gpu_count INTEGER')
     except sqlite3.OperationalError:
         pass
 

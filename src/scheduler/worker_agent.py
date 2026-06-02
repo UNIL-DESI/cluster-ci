@@ -239,7 +239,11 @@ def get_storage_info():
         return 0.0, 0.0
 
 def get_gpu_info():
-    """Detects GPU name and total VRAM via nvidia-smi. Returns (gpu_name, total_vram_gb)."""
+    """Detects GPU name, per-GPU VRAM, and GPU count via nvidia-smi.
+    Returns (gpu_name, vram_per_gpu_gb, gpu_count).
+    VRAM is reported per-GPU (max of any single GPU), NOT the sum of all GPUs,
+    because a single job can only use one GPU's VRAM at a time for scheduling purposes.
+    """
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=gpu_name,memory.total", "--format=csv,noheader,nounits"],
@@ -247,27 +251,28 @@ def get_gpu_info():
         )
         if result.returncode == 0 and result.stdout.strip():
             lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
-            total_vram_mb = 0
             gpu_names = []
+            max_vram_mb = 0
             for line in lines:
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 2:
                     gpu_names.append(parts[0])
-                    total_vram_mb += float(parts[1])
+                    max_vram_mb = max(max_vram_mb, float(parts[1]))
             gpu_name = gpu_names[0] if gpu_names else "Unknown"
-            if len(gpu_names) > 1:
-                gpu_name = f"{len(gpu_names)}x {gpu_name}"
-            return gpu_name, total_vram_mb / 1024.0
+            gpu_count = len(gpu_names)
+            if gpu_count > 1:
+                gpu_name = f"{gpu_count}x {gpu_name}"
+            return gpu_name, max_vram_mb / 1024.0, gpu_count
     except Exception as e:
         logger.warning(f"GPU detection failed: {e}")
-    return "N/A", 0.0
+    return "N/A", 0.0, 0
 
 def heartbeat_loop():
     is_startup = True
     while True:
         total_ram_gb, available_ram_gb = get_ram_info()
         total_storage_gb, available_storage_gb = get_storage_info()
-        gpu_name, total_vram_gb = get_gpu_info()
+        gpu_name, total_vram_gb, gpu_count = get_gpu_info()
         try:
             resp = requests.post(f"{HEADNODE_URL}/register_worker", json={
                 "worker_id": WORKER_ID,
@@ -278,6 +283,7 @@ def heartbeat_loop():
                 "total_storage_gb": total_storage_gb,
                 "available_storage_gb": available_storage_gb,
                 "total_vram_gb": total_vram_gb,
+                "gpu_count": gpu_count,
                 "gpu_name": gpu_name,
                 "is_startup": is_startup
             }, headers=get_headers(), timeout=10)

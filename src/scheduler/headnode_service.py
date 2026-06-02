@@ -112,6 +112,7 @@ def register_worker():
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')
     total_vram_gb = data.get('total_vram_gb')
+    gpu_count = data.get('gpu_count')
     gpu_name = data.get('gpu_name')
 
     with get_db_conn() as conn:
@@ -119,8 +120,8 @@ def register_worker():
         # available_ram_gb is now a derived state, but we keep the column for backward compatibility
         # (it will be ignored by the dynamic calculation).
         cursor.execute('''
-            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, last_seen, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, last_seen, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
             ON CONFLICT(worker_id) DO UPDATE SET
                 hostname = ?,
                 service_url = ?,
@@ -128,10 +129,11 @@ def register_worker():
                 total_storage_gb = ?,
                 available_storage_gb = ?,
                 total_vram_gb = ?,
+                gpu_count = ?,
                 gpu_name = ?,
                 last_seen = CURRENT_TIMESTAMP,
                 status = 'online'
-        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_name))
+        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name))
         
         # If a worker re-registers (is_startup=True), it means it restarted and lost any running jobs.
         # We only fail 'running' jobs. Jobs that were merely 'assigned' are safely reverted to 'pending'
@@ -362,7 +364,7 @@ def list_workers():
                     FROM jobs
                     WHERE worker_id = workers.worker_id AND status IN ('running', 'assigned')
                 )) as available_ram_gb,
-                total_storage_gb, available_storage_gb, total_vram_gb, gpu_name, last_seen, status
+                total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, last_seen, status
             FROM workers
         ''')
         workers = [dict(row) for row in cursor.fetchall()]
@@ -380,7 +382,7 @@ def scheduler_status():
         
         # 1. Fetch all workers and dynamically attach any active job currently running or assigned
         cursor.execute('''
-            SELECT worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_name, status, last_seen
+            SELECT worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_count, gpu_name, status, last_seen
             FROM workers
         ''')
         workers_list = [dict(row) for row in cursor.fetchall()]
