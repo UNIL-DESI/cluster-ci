@@ -35,8 +35,107 @@ _LAST_WAS_TQDM = False
 TQDM_REGEX = re.compile(r"\d+%%\s*\|[█░■□▊▋▌▍▎▏\s\-]*\|?\s*\d+/\d+\s*\[\d+:\d+")
 
 
+# Log redirection settings
+LOG_LIMIT = 1000
+_LOG_LINE_COUNT = 0
+_LOG_TEMP_FILE = None
+_LOG_TEMP_FILEPATH = None
+_LOG_OVER_LIMIT = False
 
 
+def init_log_redirection():
+    """Create a unique temporary log file for the current run.
+
+    The file is placed in the local .cluster-ci-logs/ directory,
+    which is automatically added to .gitignore if not already present.
+    Only the 5 most recent log files are kept (older ones are rotated out).
+    """
+    global _LOG_TEMP_FILE, _LOG_TEMP_FILEPATH, _LOG_LINE_COUNT, _LOG_OVER_LIMIT
+    _LOG_LINE_COUNT = 0
+    _LOG_OVER_LIMIT = False
+    
+    # 1. Ensure local log directory exists
+    log_dir = os.path.join(os.getcwd(), ".cluster-ci-logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception as e:
+        print(f"⚠️  Could not create log directory {log_dir}: {e}", file=sys.stderr)
+        _LOG_TEMP_FILE = None
+        _LOG_TEMP_FILEPATH = None
+        return
+
+    # 2. Automatically update .gitignore if necessary
+    gitignore_path = os.path.join(os.getcwd(), ".gitignore")
+    try:
+        has_entry = False
+        if os.path.exists(gitignore_path):
+            with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                # Check for various formats: with/without leading slash, with/without trailing slash
+                if re.search(r"^\.?cluster-ci-logs/?$", content, re.MULTILINE):
+                    has_entry = True
+        if not has_entry:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                f.write("\n# Cluster-CI run logs\n.cluster-ci-logs/\n")
+    except Exception as e:
+        print(f"⚠️  Could not update .gitignore: {e}", file=sys.stderr)
+
+    # 3. Create unique log file
+    try:
+        _LOG_TEMP_FILE = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix="cluster-ci-run-", suffix=".log",
+            delete=False, dir=log_dir
+        )
+        _LOG_TEMP_FILEPATH = _LOG_TEMP_FILE.name
+        print(f"\n📄 Logs are duplicated to: {_LOG_TEMP_FILEPATH}")
+        print(f"   (Console output will be limited to {LOG_LIMIT} lines; the file captures everything)")
+    except Exception as e:
+        print(f"⚠️  Could not create log file: {e}", file=sys.stderr)
+        _LOG_TEMP_FILE = None
+        _LOG_TEMP_FILEPATH = None
+        return
+
+    # 4. Rotate logs: keep only the 5 most recent log files
+    try:
+        log_files = [
+            os.path.join(log_dir, f) for f in os.listdir(log_dir)
+            if f.startswith("cluster-ci-run-") and f.endswith(".log")
+        ]
+        # Sort by modification time (oldest first)
+        log_files.sort(key=os.path.getmtime)
+        # Delete oldest files if total count exceeds 5
+        if len(log_files) > 5:
+            files_to_delete = log_files[:-5]
+            for f_path in files_to_delete:
+                try:
+                    os.remove(f_path)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"⚠️  Could not rotate log files: {e}", file=sys.stderr)
+
+
+def close_log_redirection():
+    """Close the temporary log file handle."""
+    global _LOG_TEMP_FILE
+    if _LOG_TEMP_FILE:
+        try:
+            _LOG_TEMP_FILE.close()
+        except Exception:
+            pass
+        _LOG_TEMP_FILE = None
+
+
+def print_log_summary():
+    """Print a final summary pointing to the log file."""
+    if _LOG_TEMP_FILEPATH:
+        print(f"\n{'='*80}")
+        if _LOG_OVER_LIMIT:
+            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines (console was limited to {LOG_LIMIT}).")
+        else:
+            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines.")
+        print(f"📂 Full logs saved to: {_LOG_TEMP_FILEPATH}")
+        print(f"{'='*80}")
 
 
 def discover_headnode_url():
@@ -76,7 +175,7 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     return None
 
 def print_line(line, force=False):
-    global _LAST_WAS_TQDM
+    global _LOG_LINE_COUNT, _LOG_OVER_LIMIT, _LAST_WAS_TQDM
     if not line:
         return
     line = line.strip()
@@ -107,15 +206,54 @@ def print_line(line, force=False):
     # TQDM progress spam filtering and optimization
     is_tqdm = bool(TQDM_REGEX.search(line))
     if is_tqdm:
-        print(f"\r{line}", end="", flush=True)
+        # Interactive carriage return display to keep console clean
+        if not _LOG_OVER_LIMIT:
+            print(f"\r{line}", end="", flush=True)
+        
+        # Avoid flooding log file with intermediate frames — only write final completion (100%)
+        if "100%" in line and _LOG_TEMP_FILE:
+            try:
+                _LOG_TEMP_FILE.write(line + "\n")
+                _LOG_TEMP_FILE.flush()
+                _LOG_LINE_COUNT += 1
+            except Exception:
+                pass
+        
         _LAST_WAS_TQDM = True
         return
     else:
         if _LAST_WAS_TQDM:
-            print()
+            # Append a physical newline before displaying standard log after a progress bar
+            if not _LOG_OVER_LIMIT:
+                print()
             _LAST_WAS_TQDM = False
 
-    print(line, flush=True)
+    # Always write to log file if redirection is active
+    if _LOG_TEMP_FILE:
+        try:
+            _LOG_TEMP_FILE.write(line + "\n")
+            _LOG_TEMP_FILE.flush()
+        except Exception:
+            pass
+        _LOG_LINE_COUNT += 1
+
+    # Display to console (always, until limit is reached)
+    if not _LOG_TEMP_FILE:
+        # No redirection active — original behavior, no limit
+        print(line, flush=True)
+    elif not _LOG_OVER_LIMIT:
+        print(line, flush=True)
+        # Check if we just crossed the limit
+        if _LOG_LINE_COUNT >= LOG_LIMIT:
+            _LOG_OVER_LIMIT = True
+            print(f"\n{'='*80}", flush=True)
+            print(f"⚠️  CONSOLE OUTPUT LIMIT REACHED ({LOG_LIMIT} lines displayed).", flush=True)
+            print(f"📂 Full logs continue to stream to: {_LOG_TEMP_FILEPATH}", flush=True)
+            if sys.platform == 'win32':
+                print(f"💡 To follow live: Get-Content -Wait '{_LOG_TEMP_FILEPATH}'", flush=True)
+            else:
+                print(f"💡 To follow live: tail -f '{_LOG_TEMP_FILEPATH}'", flush=True)
+            print(f"{'='*80}\n", flush=True)
 
 def check_dependencies():
     """Verify that gh and git are installed and accessible."""
@@ -423,6 +561,7 @@ def display_clean_queue_status(run_id):
 
 def stream_logs(run_id, commit_sha):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
+    init_log_redirection()
     has_curl = check_curl()
     last_gha_poll_time = 0
     
@@ -517,7 +656,8 @@ def stream_logs(run_id, commit_sha):
                                     if proc:
                                         try: proc.terminate()
                                         except: pass
-
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 1
                         except Exception:
                             pass
@@ -535,19 +675,22 @@ def stream_logs(run_id, commit_sha):
                                     except: pass
                                 if conclusion == "success":
                                     print("\n✅ Cluster-CI run completed successfully!")
-
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 0
                                 elif conclusion == "cancelled":
                                     print("\n⚠️ [ERREUR] L'exécution a été annulée.")
                                     print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
                                     print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
-
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 1
                                 else:
                                     print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
                                     print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
                                     print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
-
+                                    close_log_redirection()
+                                    print_log_summary()
                                     return 1
                     except Exception:
                         pass
@@ -562,7 +705,8 @@ def stream_logs(run_id, commit_sha):
         if 'proc' in locals() and proc:
             try: proc.terminate()
             except: pass
-
+        close_log_redirection()
+        print_log_summary()
         raise
 
 def check_gitattributes_safety():
@@ -922,17 +1066,22 @@ def main():
             pass
 
         # Fallback to historical logs if completed
-        res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                parts = line.split("\t")
-                content = parts[2] if len(parts) >= 3 else line
-                content = content.replace("\ufeff", "")
-                content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
-                content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
-                print_line(content)
-        else:
-            print(f"❌ Failed to fetch logs (exit code {res.returncode})", file=sys.stderr)
+        init_log_redirection()
+        try:
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    parts = line.split("\t")
+                    content = parts[2] if len(parts) >= 3 else line
+                    content = content.replace("\ufeff", "")
+                    content = re.sub(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z ", "", content)
+                    content = content.replace("##[group]", "▶️  ").replace("##[endgroup]", "")
+                    print_line(content)
+            else:
+                print(f"❌ Failed to fetch logs (exit code {res.returncode})", file=sys.stderr)
+        finally:
+            close_log_redirection()
+            print_log_summary()
 
     elif args.command == "sync":
         check_gh_auth()
