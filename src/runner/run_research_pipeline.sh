@@ -347,7 +347,17 @@ docker run -d \
 # This MUST run as root because system site-packages is read-only for normal users.
 # pip --prefix /home/user/.local installs to /home/user/.local/local/lib/python3.X/dist-packages/
 # The .pth is ephemeral (lost on container rebuild) so we recreate it every time.
-docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c 'chown -R '"$(id -u):$(id -g)"' /home/user && chown -R '"$(id -u):$(id -g)"' /workspace && SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth" || true'
+# We use a temp script to avoid all escaping issues with docker exec.
+cat > /tmp/_cluster_ci_init.sh << 'INIT_SCRIPT'
+#!/bin/bash
+chown -R "$1" /home/user && chown -R "$1" /workspace
+SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+if [ -n "$SITE" ]; then
+    find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
+fi
+INIT_SCRIPT
+docker cp /tmp/_cluster_ci_init.sh "${MAIN_CONTAINER_NAME}":/tmp/_cluster_ci_init.sh
+docker exec --user root "${MAIN_CONTAINER_NAME}" bash /tmp/_cluster_ci_init.sh "$(id -u):$(id -g)"
 
 # Detect Docker image change: if the cached image marker differs from the
 # current image, purge stale tool binaries to force a clean reinstall.
