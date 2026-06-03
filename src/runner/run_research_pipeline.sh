@@ -579,7 +579,7 @@ log_info "DVC-Git-Helper: Injecting cache: false for metrics and plots..."
 docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py inject"
 
 log_info "DVC: Restoring all cached outputs to workspace..."
-if ! docker_exec "dvc checkout --force"; then
+if ! docker_exec "dvc checkout --force 2>/dev/null"; then
     log_info "💡 Note: Certains gros fichiers ou modèles ne sont pas encore présents dans le cache local/P2P."
     log_info "   Ceci est normal (mode Best-Effort). Ils seront régénérés automatiquement par le pipeline."
     log_warn "DVC checkout failed or incomplete. Proceeding..."
