@@ -363,16 +363,46 @@ SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
 if [ -n "$SITE" ]; then
     find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
 fi
-# Neutralize libtorch_nvshmem.so on single-GPU systems.
-# The NGC vLLM container ships this for multi-GPU NVSHMEM communication.
-# On DGX Spark (single GPU, unified memory), the NVSHMEM symbols are
-# incompatible, causing torch import to crash. Safe to disable on single-GPU.
+# Fix NVSHMEM symbol errors on single-GPU systems.
+# The NGC vLLM container's libtorch_nvshmem.so depends on libnvshmem.so
+# (multi-GPU communication), which is missing/incompatible on DGX Spark.
+# torch._C requires libtorch_nvshmem.so (can't remove it), so instead we
+# create a stub libnvshmem.so that provides the missing versioned symbol.
 GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
-if [ "${GPU_COUNT:-0}" -le 1 ]; then
-    for nvshmem_so in $(find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null); do
-        echo "🔧 [Cluster-CI] Neutralizing $nvshmem_so (single-GPU system, NVSHMEM not needed)"
-        mv "$nvshmem_so" "${nvshmem_so}.disabled" 2>/dev/null || true
-    done
+if [ "${GPU_COUNT:-0}" -le 1 ] && find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null | grep -q .; then
+    echo "🔧 [Cluster-CI] Creating NVSHMEM stub for single-GPU system..."
+    cat > /tmp/_nvshmem_stub.c << 'STUBEOF'
+void nvshmem_selected_device_transport() {}
+STUBEOF
+    cat > /tmp/_nvshmem_stub.ver << 'STUBEOF'
+NVSHMEM { global: *; };
+STUBEOF
+    if gcc -shared -o /usr/local/lib/libnvshmem_stub.so /tmp/_nvshmem_stub.c \
+         -Wl,--version-script=/tmp/_nvshmem_stub.ver 2>/dev/null; then
+        ln -sf /usr/local/lib/libnvshmem_stub.so /usr/local/lib/libnvshmem.so
+        ldconfig 2>/dev/null || true
+        echo "  ✓ NVSHMEM stub installed successfully"
+    else
+        echo "  ⚠ gcc not available, trying empty stub..."
+        # Fallback: create a minimal valid ELF stub using Python
+        python3 -c "
+import struct, os
+# Minimal ELF64 shared library (aarch64)
+elf = bytearray(b'\x7fELF')  # magic
+elf += struct.pack('<BBBB', 2, 1, 1, 0)  # 64-bit, little-endian, ELF v1, ELFOSABI_NONE
+elf += b'\x00' * 8  # padding
+elf += struct.pack('<HHI', 3, 0xB7, 1)  # ET_DYN, EM_AARCH64, EV_CURRENT
+elf += struct.pack('<Q', 0)  # e_entry
+elf += struct.pack('<Q', 64)  # e_phoff
+elf += struct.pack('<Q', 0)  # e_shoff
+elf += struct.pack('<I', 0)  # e_flags
+elf += struct.pack('<HHH', 64, 56, 0)  # e_ehsize, e_phentsize, e_phnum
+elf += struct.pack('<HHH', 0, 0, 0)  # e_shentsize, e_shnum, e_shstrndx
+with open('/usr/local/lib/libnvshmem.so', 'wb') as f:
+    f.write(elf)
+os.chmod('/usr/local/lib/libnvshmem.so', 0o755)
+" 2>/dev/null && ldconfig 2>/dev/null && echo "  ✓ Minimal ELF stub created" || echo "  ⚠ Could not create stub"
+    fi
 fi
 INIT_SCRIPT
 docker cp /tmp/_cluster_ci_init.sh "${MAIN_CONTAINER_NAME}":/tmp/_cluster_ci_init.sh
