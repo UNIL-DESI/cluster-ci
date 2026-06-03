@@ -364,15 +364,13 @@ if [ -n "$SITE" ]; then
     find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
 fi
 # Fix NVSHMEM symbol errors on single-GPU systems.
-# The NGC vLLM container's libtorch_nvshmem.so depends on libnvshmem.so
-# (multi-GPU communication). On DGX Spark (single GPU), the NVSHMEM
-# symbols are missing/incompatible. We create a stub libnvshmem.so with
-# the versioned symbol and place it in torch's lib dir (RPATH resolution).
+# libtorch_nvshmem.so expects nvshmem symbols to already be in the process
+# (not via NEEDED deps). We compile a stub and register it in /etc/ld.so.preload
+# so the dynamic linker preloads it for EVERY process (like system-wide LD_PRELOAD).
 GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
 TORCH_NVSHMEM=$(find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null | head -1)
 if [ "${GPU_COUNT:-0}" -le 1 ] && [ -n "$TORCH_NVSHMEM" ]; then
-    TORCH_LIB_DIR=$(dirname "$TORCH_NVSHMEM")
-    echo "🔧 [Cluster-CI] Creating NVSHMEM stub for single-GPU system in $TORCH_LIB_DIR..."
+    echo "🔧 [Cluster-CI] Creating NVSHMEM stub for single-GPU system..."
     cat > /tmp/_nvshmem_stub.c << 'STUBEOF'
 void nvshmem_selected_device_transport() {}
 void nvshmem_init() {}
@@ -386,12 +384,13 @@ STUBEOF
     cat > /tmp/_nvshmem_stub.ver << 'STUBEOF'
 NVSHMEM { global: *; };
 STUBEOF
-    if gcc -shared -o "$TORCH_LIB_DIR/libnvshmem.so" /tmp/_nvshmem_stub.c \
+    STUB_PATH="/usr/local/lib/libnvshmem_stub.so"
+    if gcc -shared -o "$STUB_PATH" /tmp/_nvshmem_stub.c \
          -Wl,--version-script=/tmp/_nvshmem_stub.ver 2>/dev/null; then
-        # Also install in system lib path for good measure
-        cp "$TORCH_LIB_DIR/libnvshmem.so" /usr/local/lib/libnvshmem.so 2>/dev/null || true
+        # Register in /etc/ld.so.preload for system-wide preloading
+        echo "$STUB_PATH" >> /etc/ld.so.preload
         ldconfig 2>/dev/null || true
-        echo "  ✓ NVSHMEM stub installed in $TORCH_LIB_DIR"
+        echo "  ✓ NVSHMEM stub compiled and registered in /etc/ld.so.preload"
     else
         echo "  ⚠ gcc failed, stub not created"
     fi
