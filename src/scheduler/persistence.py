@@ -159,6 +159,18 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # available_vram_gb migration (dynamic free VRAM reported by worker heartbeats)
+    try:
+        cursor.execute('ALTER TABLE workers ADD COLUMN available_vram_gb REAL DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
+    # allowed_workers migration (JSON list of hostnames to restrict job execution)
+    try:
+        cursor.execute('ALTER TABLE jobs ADD COLUMN allowed_workers TEXT')
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
