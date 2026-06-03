@@ -277,6 +277,7 @@ PROJECT_DOCKER_IMAGE=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | c
 if [ -n "$PROJECT_DOCKER_IMAGE" ]; then
     log_info "Project-level Docker image override: $PROJECT_DOCKER_IMAGE (was: $DOCKER_IMAGE)"
     DOCKER_IMAGE="$PROJECT_DOCKER_IMAGE"
+    DOCKER_PLATFORM=""
 fi
 PLATFORM_FLAG=""
 if [ -n "$DOCKER_PLATFORM" ]; then
