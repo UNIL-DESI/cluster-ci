@@ -381,6 +381,7 @@ docker run -d \
     --ipc=host \
     --user "$(id -u):$(id -g)" \
     -e HOME=/home/user \
+    -e UV_CACHE_DIR=/home/user/.cache/uv \
     $ENV_FILE_FLAG \
     -e HEADNODE_URL="$HEADNODE_URL" \
     -e CLUSTER_CI_MODE=executor \
