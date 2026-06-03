@@ -670,6 +670,17 @@ def stream_logs(run_id, commit_sha):
                             conclusion = info.get("conclusion")
                             url = info.get("url", "URL non disponible")
                             if status == "completed" or conclusion:
+                                # Drain remaining logs from the ppng.io pipe before quitting.
+                                # The GHA run just finished, but some log lines may still be in transit.
+                                drain_deadline = time.time() + 5  # drain for up to 5 seconds
+                                while time.time() < drain_deadline:
+                                    try:
+                                        line = q.get(timeout=0.2)
+                                        line_stripped = line.rstrip('\r\n')
+                                        if line_stripped and "has been established already" not in line_stripped:
+                                            print_line(line_stripped, force=True)
+                                    except queue.Empty:
+                                        break  # No more data in pipe
                                 if proc:
                                     try: proc.terminate()
                                     except: pass
