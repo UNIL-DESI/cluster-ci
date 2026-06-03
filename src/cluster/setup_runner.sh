@@ -51,11 +51,23 @@ if [ -e /var/run/docker.sock ]; then
     sudo chmod 666 /var/run/docker.sock || true
 fi
 
-# Pre-pull the base image to avoid timeouts
-if [ -n "$DOCKER_BASE_IMAGE" ]; then
-    echo "🐳 Pre-loading Docker image: $DOCKER_BASE_IMAGE..."
-    # Use sudo here in case the user was just added to the group but hasn't restarted their session
-    sudo docker pull "$DOCKER_BASE_IMAGE" || echo "⚠️ Failed to pull image $DOCKER_BASE_IMAGE, it will be downloaded during the first job."
+# Pre-pull the base image with explicit platform to avoid arch mismatch
+HOST_ARCH=$(uname -m)
+if [ "$HOST_ARCH" = "x86_64" ] || [ "$HOST_ARCH" = "amd64" ]; then
+    PULL_PLATFORM="linux/amd64"
+    PULL_IMAGE=${DOCKER_IMAGE_AMD64:-${DOCKER_BASE_IMAGE:-""}}
+elif [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
+    PULL_PLATFORM="linux/arm64"
+    PULL_IMAGE=${DOCKER_IMAGE_ARM64:-${DOCKER_BASE_IMAGE:-""}}
+else
+    PULL_PLATFORM=""
+    PULL_IMAGE=${DOCKER_BASE_IMAGE:-""}
+fi
+if [ -n "$PULL_IMAGE" ]; then
+    echo "🐳 Pre-loading Docker image: $PULL_IMAGE (platform: ${PULL_PLATFORM:-auto})..."
+    PLATFORM_ARG=""
+    [ -n "$PULL_PLATFORM" ] && PLATFORM_ARG="--platform $PULL_PLATFORM"
+    sudo docker pull $PLATFORM_ARG "$PULL_IMAGE" || echo "⚠️ Failed to pull image $PULL_IMAGE, it will be downloaded during the first job."
 fi
 
 # 1. uv Check / Installation

@@ -252,8 +252,24 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 
 
-# Configuration Docker
-DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
+# Configuration Docker — Architecture-aware image selection
+HOST_ARCH=$(uname -m)
+if [ "$HOST_ARCH" = "x86_64" ] || [ "$HOST_ARCH" = "amd64" ]; then
+    DOCKER_PLATFORM="linux/amd64"
+    DOCKER_IMAGE=${DOCKER_IMAGE_AMD64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}}
+elif [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
+    DOCKER_PLATFORM="linux/arm64"
+    DOCKER_IMAGE=${DOCKER_IMAGE_ARM64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}}
+else
+    log_warn "Unknown architecture: $HOST_ARCH. Falling back to default image."
+    DOCKER_PLATFORM=""
+    DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
+fi
+PLATFORM_FLAG=""
+if [ -n "$DOCKER_PLATFORM" ]; then
+    PLATFORM_FLAG="--platform $DOCKER_PLATFORM"
+fi
+log_info "Host architecture: $HOST_ARCH → Docker platform: ${DOCKER_PLATFORM:-auto}"
 ENV_FILE_FLAG=""
 if [ -f "$BASE_DIR/.env.secrets" ]; then
     ENV_FILE_FLAG="--env-file $BASE_DIR/.env.secrets"
@@ -293,6 +309,7 @@ echo "$VIEWER_PORT" > .cluster-ci-viewer-port
 
 docker run -d \
     --init \
+    $PLATFORM_FLAG \
     --name "${MAIN_CONTAINER_NAME}" \
     $COMMON_LABELS \
     $DOCKER_PORT_MAPPING \
@@ -513,6 +530,7 @@ else
     # IMPORTANT: On utilise --pid=container:${MAIN_CONTAINER_NAME} pour voir les processus du job principal
     docker rm -f "$VIEWER_CONTAINER_NAME" 2>/dev/null || true
     docker run --rm \
+        $PLATFORM_FLAG \
         --name "$VIEWER_CONTAINER_NAME" \
         $COMMON_LABELS \
         --pid=container:${MAIN_CONTAINER_NAME} \

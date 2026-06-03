@@ -119,11 +119,20 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
     update_env_var "GITHUB_CLIENT_ID" "$GITHUB_CLIENT_ID"
     update_env_var "GITHUB_CLIENT_SECRET" "$GITHUB_CLIENT_SECRET"
 
-    # Default Docker image: auto-detect based on architecture.
-    # Modern NVIDIA ARM servers (Grace/Blackwell GB10) use the standard NGC PyTorch image.
-    # Legacy Jetson (L4T/JetPack 5) uses the old l4t image only if /etc/nv_tegra_release exists.
+    # Docker images: one per architecture for the heterogeneous cluster.
+    # AMD64 (x86_64): Used on the headnode and any x86_64 workers.
+    # ARM64 (aarch64): Used on NVIDIA ARM workers (Grace/Blackwell GB10).
+    if [ -z "$DOCKER_IMAGE_AMD64" ]; then
+        DOCKER_IMAGE_AMD64="nvcr.io/nvidia/pytorch:26.04-py3"
+    fi
+    if [ -z "$DOCKER_IMAGE_ARM64" ]; then
+        DOCKER_IMAGE_ARM64="nvcr.io/nvidia/pytorch:26.04-py3"
+    fi
+    update_env_var "DOCKER_IMAGE_AMD64" "$DOCKER_IMAGE_AMD64"
+    update_env_var "DOCKER_IMAGE_ARM64" "$DOCKER_IMAGE_ARM64"
+    # Legacy fallback (kept for backward compatibility with existing workers)
     if [ -z "$DOCKER_BASE_IMAGE" ]; then
-        DOCKER_BASE_IMAGE="nvcr.io/nvidia/pytorch:26.04-py3"
+        DOCKER_BASE_IMAGE="$DOCKER_IMAGE_AMD64"
     fi
     update_env_var "DOCKER_BASE_IMAGE" "$DOCKER_BASE_IMAGE"
 
