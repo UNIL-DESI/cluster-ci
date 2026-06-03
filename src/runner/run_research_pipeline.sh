@@ -365,43 +365,35 @@ if [ -n "$SITE" ]; then
 fi
 # Fix NVSHMEM symbol errors on single-GPU systems.
 # The NGC vLLM container's libtorch_nvshmem.so depends on libnvshmem.so
-# (multi-GPU communication), which is missing/incompatible on DGX Spark.
-# torch._C requires libtorch_nvshmem.so (can't remove it), so instead we
-# create a stub libnvshmem.so that provides the missing versioned symbol.
+# (multi-GPU communication). On DGX Spark (single GPU), the NVSHMEM
+# symbols are missing/incompatible. We create a stub libnvshmem.so with
+# the versioned symbol and place it in torch's lib dir (RPATH resolution).
 GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
-if [ "${GPU_COUNT:-0}" -le 1 ] && find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null | grep -q .; then
-    echo "🔧 [Cluster-CI] Creating NVSHMEM stub for single-GPU system..."
+TORCH_NVSHMEM=$(find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null | head -1)
+if [ "${GPU_COUNT:-0}" -le 1 ] && [ -n "$TORCH_NVSHMEM" ]; then
+    TORCH_LIB_DIR=$(dirname "$TORCH_NVSHMEM")
+    echo "🔧 [Cluster-CI] Creating NVSHMEM stub for single-GPU system in $TORCH_LIB_DIR..."
     cat > /tmp/_nvshmem_stub.c << 'STUBEOF'
 void nvshmem_selected_device_transport() {}
+void nvshmem_init() {}
+void nvshmem_finalize() {}
+void nvshmem_my_pe() {}
+void nvshmem_n_pes() {}
+void nvshmem_malloc() {}
+void nvshmem_free() {}
+void nvshmem_barrier_all() {}
 STUBEOF
     cat > /tmp/_nvshmem_stub.ver << 'STUBEOF'
 NVSHMEM { global: *; };
 STUBEOF
-    if gcc -shared -o /usr/local/lib/libnvshmem_stub.so /tmp/_nvshmem_stub.c \
+    if gcc -shared -o "$TORCH_LIB_DIR/libnvshmem.so" /tmp/_nvshmem_stub.c \
          -Wl,--version-script=/tmp/_nvshmem_stub.ver 2>/dev/null; then
-        ln -sf /usr/local/lib/libnvshmem_stub.so /usr/local/lib/libnvshmem.so
+        # Also install in system lib path for good measure
+        cp "$TORCH_LIB_DIR/libnvshmem.so" /usr/local/lib/libnvshmem.so 2>/dev/null || true
         ldconfig 2>/dev/null || true
-        echo "  ✓ NVSHMEM stub installed successfully"
+        echo "  ✓ NVSHMEM stub installed in $TORCH_LIB_DIR"
     else
-        echo "  ⚠ gcc not available, trying empty stub..."
-        # Fallback: create a minimal valid ELF stub using Python
-        python3 -c "
-import struct, os
-# Minimal ELF64 shared library (aarch64)
-elf = bytearray(b'\x7fELF')  # magic
-elf += struct.pack('<BBBB', 2, 1, 1, 0)  # 64-bit, little-endian, ELF v1, ELFOSABI_NONE
-elf += b'\x00' * 8  # padding
-elf += struct.pack('<HHI', 3, 0xB7, 1)  # ET_DYN, EM_AARCH64, EV_CURRENT
-elf += struct.pack('<Q', 0)  # e_entry
-elf += struct.pack('<Q', 64)  # e_phoff
-elf += struct.pack('<Q', 0)  # e_shoff
-elf += struct.pack('<I', 0)  # e_flags
-elf += struct.pack('<HHH', 64, 56, 0)  # e_ehsize, e_phentsize, e_phnum
-elf += struct.pack('<HHH', 0, 0, 0)  # e_shentsize, e_shnum, e_shstrndx
-with open('/usr/local/lib/libnvshmem.so', 'wb') as f:
-    f.write(elf)
-os.chmod('/usr/local/lib/libnvshmem.so', 0o755)
-" 2>/dev/null && ldconfig 2>/dev/null && echo "  ✓ Minimal ELF stub created" || echo "  ⚠ Could not create stub"
+        echo "  ⚠ gcc failed, stub not created"
     fi
 fi
 INIT_SCRIPT
