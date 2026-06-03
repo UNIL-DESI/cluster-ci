@@ -74,10 +74,11 @@ if m:
 fi
 set -e
 
-# Install project using pip to bypass lockfile conflicts with NGC PyTorch.
-# Use --break-system-packages since we're in a container.
-pip install --break-system-packages --prefix /home/user/.local -e .
-pip install --break-system-packages --prefix /home/user/.local dvc-http
+# Install project using pip. --ignore-installed prevents pip from trying to
+# uninstall read-only system packages (tokenizers, websockets, etc.).
+# The purge step below removes any dangerous shadows (torch, nvidia) afterward.
+pip install --break-system-packages --ignore-installed --prefix /home/user/.local -e .
+pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
