@@ -264,9 +264,10 @@ def get_gpu_info():
     available_vram_gb is the minimum free VRAM across all GPUs (worst case for scheduling).
 
     Unified Memory Detection (DGX Spark / Grace-Blackwell):
-    On systems with unified CPU-GPU memory (NVLink-C2C), nvidia-smi reports 0 VRAM
-    because there is no dedicated GPU memory. In this case, we report the system RAM
-    as available VRAM since both CPU and GPU share the same physical memory pool.
+    On systems with unified CPU-GPU memory (NVLink-C2C), nvidia-smi detects the GPU
+    but reports memory.total and memory.free as [N/A] because there is no dedicated
+    GPU memory. In this case, we report the system RAM as available VRAM since both
+    CPU and GPU share the same physical memory pool.
     """
     try:
         result = subprocess.run(
@@ -278,33 +279,46 @@ def get_gpu_info():
             gpu_names = []
             max_vram_mb = 0
             free_vram_values_mb = []
+            has_na_memory = False
             for line in lines:
                 parts = [p.strip() for p in line.split(',')]
-                if len(parts) >= 3:
-                    gpu_names.append(parts[0])
-                    max_vram_mb = max(max_vram_mb, float(parts[1]))
-                    free_vram_values_mb.append(float(parts[2]))
-                elif len(parts) >= 2:
-                    gpu_names.append(parts[0])
-                    max_vram_mb = max(max_vram_mb, float(parts[1]))
+                gpu_name_part = parts[0] if parts else "Unknown"
+                gpu_names.append(gpu_name_part)
+
+                # Detect [N/A] memory values (unified memory architecture)
+                mem_total = parts[1].strip() if len(parts) >= 2 else "[N/A]"
+                mem_free = parts[2].strip() if len(parts) >= 3 else "[N/A]"
+
+                if "[N/A]" in mem_total or "[N/A]" in mem_free:
+                    has_na_memory = True
+                    continue
+
+                try:
+                    max_vram_mb = max(max_vram_mb, float(mem_total))
+                    free_vram_values_mb.append(float(mem_free))
+                except (ValueError, TypeError):
+                    has_na_memory = True
+
             gpu_name = gpu_names[0] if gpu_names else "Unknown"
             gpu_count = len(gpu_names)
             if gpu_count > 1:
                 gpu_name = f"{gpu_count}x {gpu_name}"
 
-            total_vram_gb = max_vram_mb / 1024.0
-
             # Unified Memory Detection:
-            # On DGX Spark and Grace-Blackwell systems, nvidia-smi reports 0 MB VRAM
-            # because CPU and GPU share the same physical memory via NVLink-C2C.
+            # On DGX Spark (GB10) and Grace-Blackwell systems, nvidia-smi detects the GPU
+            # but reports memory.total=[N/A] and memory.free=[N/A] because CPU and GPU
+            # share the same physical memory via NVLink-C2C.
             # In this case, the system RAM IS the GPU memory.
-            if total_vram_gb < 1.0 and gpu_count > 0:
+            if has_na_memory and gpu_count > 0 and max_vram_mb == 0:
                 total_ram_gb, available_ram_gb = get_ram_info()
                 logger.info(
-                    f"Unified memory detected: nvidia-smi reports {total_vram_gb:.1f} GB VRAM "
-                    f"but {gpu_count} GPU(s) detected. Reporting system RAM ({total_ram_gb:.1f} GB) as VRAM."
+                    f"Unified memory detected: nvidia-smi reports [N/A] for GPU memory "
+                    f"on {gpu_name} ({gpu_count} GPU(s)). Reporting system RAM "
+                    f"({total_ram_gb:.1f} GB) as VRAM."
                 )
                 return gpu_name, total_ram_gb, gpu_count, available_ram_gb
+
+            total_vram_gb = max_vram_mb / 1024.0
 
             # Use minimum free VRAM across all GPUs (worst case for scheduling)
             available_vram_gb = min(free_vram_values_mb) / 1024.0 if free_vram_values_mb else 0.0
