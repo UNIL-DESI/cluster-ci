@@ -129,7 +129,25 @@ def purge_orphan_runners_and_containers(job_id=None):
             name = (proc.info.get('name') or "").lower()
             
             is_orphan_runner = False
-            if "cluster-ci-run" in cmdline_str or "gc_orchestrator" in cmdline_str:
+            if "cluster-ci-run" in cmdline_str:
+                # Avoid killing GHA runner delegation process.
+                # The delegation process (running on the headnode to submit and wait) does NOT have CLUSTER_CI_MODE=executor.
+                # Only the executor processes running the actual job docker container have CLUSTER_CI_MODE=executor.
+                try:
+                    environ = proc.environ()
+                    if environ.get("CLUSTER_CI_MODE") == "executor":
+                        is_orphan_runner = True
+                    else:
+                        logger.info(f"Skipping non-executor cluster-ci process (PID: {pid}, cmd: {cmdline})")
+                except Exception as e:
+                    # In case of environment read failure, check arguments length to be safe.
+                    # GHA delegation runner: /usr/local/bin/cluster-ci-run <repo> <branch> <token> (len >= 4)
+                    # Worker executor: /usr/local/bin/cluster-ci-run <repo> <branch> (len == 3)
+                    if len(cmdline) == 3:
+                        is_orphan_runner = True
+                    else:
+                        logger.warning(f"Could not read environment for process {pid} ({e}). Skipping to avoid killing GHA runner.")
+            elif "gc_orchestrator" in cmdline_str:
                 is_orphan_runner = True
             if "dvc-viewer" in cmdline_str or name == "dvc-viewer":
                 is_orphan_runner = True
