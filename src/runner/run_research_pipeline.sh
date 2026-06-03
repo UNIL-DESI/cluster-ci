@@ -397,6 +397,8 @@ docker run -d \
 cat > /tmp/_cluster_ci_init.sh << 'INIT_SCRIPT'
 #!/bin/bash
 chown -R "$1" /home/user && chown -R "$1" /workspace
+[ -d /opt/Automodel ] && chmod -R a+rX /opt/Automodel 2>/dev/null || true
+[ -d /opt/venv ] && chmod -R a+rX /opt/venv 2>/dev/null || true
 SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
 if [ -n "$SITE" ]; then
     find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
