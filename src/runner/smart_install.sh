@@ -74,11 +74,23 @@ if m:
 fi
 set -e
 
-# Install project using pip. --ignore-installed prevents pip from trying to
-# uninstall read-only system packages (tokenizers, websockets, etc.).
-# The purge step below removes any dangerous shadows (torch, nvidia) afterward.
-pip install --break-system-packages --ignore-installed --prefix /home/user/.local -e .
-pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
+# Install project deps. Strategy: freeze system packages as constraints to prevent
+# pip from re-downloading torch (426MB), nvidia-cudnn (444MB), etc.
+# Exclude packages where NGC version conflicts with project requirements.
+CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
+pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
+    | grep -iv "^websockets==" \
+    | grep -iv "^tokenizers==" \
+    | grep -iv "^colorama==" \
+    > "$CONSTRAINTS_FILE"
+echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned (websockets/tokenizers/colorama excluded)"
+pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
+    echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
+    pip install --break-system-packages --ignore-installed --prefix /home/user/.local -e . 2>&1
+}
+pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
+    pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http 2>&1
+}
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
