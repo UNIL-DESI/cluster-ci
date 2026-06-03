@@ -194,6 +194,22 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         job_data = resp.json()
         job_id = job_data['job_id']
         print(f"✅ Job submitted successfully! ID: {job_id}")
+
+        # Immediately detach gh_run_id from the job in headnode DB.
+        # Why: The ephemeral GHA runner exits shortly after submitting the job,
+        # which marks the GHA run as "completed/failure". The periodic clean_ghosts
+        # task would then detect this as a ghost job and kill the still-running
+        # worker container. By clearing gh_run_id, we make the job invisible to
+        # clean_ghosts. Real cancellations are still handled by the SIGTERM signal
+        # handler in wait_for_job(), which contacts the worker directly via /cancel/.
+        try:
+            requests.post(f"{headnode_url}/update_job_status", json={
+                "job_id": job_id,
+                "detach_gha": True
+            }, headers=headers, timeout=5)
+        except Exception:
+            pass  # Best-effort; failure here is non-critical
+
         return job_id
     except Exception as e:
         print(f"❌ Failed to submit job: {e}")
