@@ -50,6 +50,10 @@ if m:
     done
 fi
 
+# Ensure pip can discover packages already installed in the --prefix target.
+# Without this, `pip install --prefix ... -e .` cannot resolve deps pre-installed above (e.g. dvc-viewer).
+export PYTHONPATH="/home/user/.local/lib/python3.$(python3 -c 'import sys; print(f"{sys.version_info.minor}")')/site-packages:${PYTHONPATH:-}"
+
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
 pip install --break-system-packages --prefix /home/user/.local dvc-http
