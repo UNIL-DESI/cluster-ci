@@ -167,7 +167,16 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     if custom_app_match:
         custom_web_app = True
 
-    print(f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})")
+    # Parse ALLOWED_WORKERS (comma-separated hostnames to restrict execution)
+    allowed_workers = None
+    aw_match = re.search(r'ALLOWED_WORKERS\s*=\s*(.+)', content)
+    if aw_match:
+        allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
+
+    submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
+    if allowed_workers:
+        submit_info += f" [Allowed Workers: {', '.join(allowed_workers)}]"
+    print(submit_info)
 
     token = os.environ.get("CLUSTER_TOKEN")
     headers = {}
@@ -185,6 +194,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "max_runtime_hours": max_runtime,
             "exposed_port": exposed_port,
             "custom_web_app": custom_web_app,
+            "allowed_workers": allowed_workers,
             "gh_run_id": os.environ.get("GITHUB_RUN_ID"),
             "gh_token": gh_token,
             "env_vars": env_vars,
