@@ -345,13 +345,16 @@ docker run -d \
 # Ensure the volume and workspace are owned by the current user (must be run as root)
 # Also create a .pth file in system site-packages so Python discovers pip --prefix packages.
 # This MUST run as root because system site-packages is read-only for normal users.
+# pip --prefix /home/user/.local installs to /home/user/.local/local/lib/python3.X/dist-packages/
 # The .pth is ephemeral (lost on container rebuild) so we recreate it every time.
 docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c "
     chown -R $(id -u):$(id -g) /home/user && chown -R $(id -u):$(id -g) /workspace
     SITE=\$(python3 -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null)
-    PREFIX=\$(ls -d /home/user/.local/lib/python3.*/site-packages 2>/dev/null | head -1)
-    if [ -n \"\$PREFIX\" ] && [ -n \"\$SITE\" ]; then
-        echo \"\$PREFIX\" > \"\$SITE/cluster-ci-prefix.pth\"
+    if [ -n \"\$SITE\" ]; then
+        # Find ALL pip prefix install directories under /home/user
+        find /home/user -path '*/lib/python3.*/site-packages' -o -path '*/lib/python3.*/dist-packages' 2>/dev/null | while read PREFIX_DIR; do
+            echo \"\$PREFIX_DIR\"
+        done > \"\$SITE/cluster-ci-prefix.pth\"
     fi
 "
 

@@ -20,7 +20,8 @@ CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
     # Quick sanity check: verify that pip-installed packages are actually present.
-    if ls /home/user/.local/lib/python3.*/site-packages/*.dist-info 1>/dev/null 2>&1; then
+    # pip --prefix creates dirs in both site-packages and dist-packages locations
+    if find /home/user -path '*/lib/python3.*/dist-packages/*.dist-info' -o -path '*/lib/python3.*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
         exit 0
     else
