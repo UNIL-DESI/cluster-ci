@@ -19,8 +19,15 @@ DEPS_HASH=$(compute_deps_hash)
 CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
-    echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
-    exit 0
+    # Quick sanity check: verify that key packages are actually importable
+    # This catches edge cases where the install was cached but the container was killed
+    if python3 -c "import dvc" 2>/dev/null; then
+        echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
+        exit 0
+    else
+        echo "⚠️  [Cluster-CI] Cache hit but packages not importable. Reinstalling..."
+        rm -f "$HASH_FILE"
+    fi
 fi
 
 echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${DEPS_HASH:0:8}…). Installing..."
