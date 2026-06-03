@@ -10,7 +10,7 @@ if [ -f ".env" ]; then
     set +a
 fi
 
-DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
+DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}
 
 echo "🔍 Extracting constraints from image: $DOCKER_IMAGE..."
 

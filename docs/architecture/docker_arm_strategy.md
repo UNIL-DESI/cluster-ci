@@ -9,8 +9,8 @@ The runner automatically detects the host architecture via `uname -m` and select
 
 | Architecture | Environment Variable | Default Image |
 |---|---|---|
-| `x86_64` (AMD64) | `DOCKER_IMAGE_AMD64` | `nvcr.io/nvidia/pytorch:26.04-py3` |
-| `aarch64` (ARM64) | `DOCKER_IMAGE_ARM64` | `nvcr.io/nvidia/pytorch:26.04-py3` |
+| `x86_64` (AMD64) | `DOCKER_IMAGE_AMD64` | `nvcr.io/nvidia/pytorch:26.05-py3` |
+| `aarch64` (ARM64) | `DOCKER_IMAGE_ARM64` | `nvcr.io/nvidia/pytorch:26.05-py3` |
 | Other / Legacy | `DOCKER_BASE_IMAGE` | Fallback (backward-compatible) |
 
 **Key implementation details:**
@@ -22,7 +22,7 @@ The runner automatically detects the host architecture via `uname -m` and select
 
 ### A. The "Golden Image" (Heavy Core)
 Rather than installing hard-to-compile libraries at runtime, we use a base Docker image (the "Golden Image").
-- **Current image**: `nvcr.io/nvidia/pytorch:26.04-py3` (NGC container with Python 3.12, PyTorch 2.12, CUDA 13.2)
+- **Current image**: `nvcr.io/nvidia/pytorch:26.05-py3` (NGC container with Python 3.12, PyTorch 2.12, CUDA 13.2)
 - **Role**: Provides the OS, CUDA/TensorRT drivers, and natively optimized critical libraries (PyTorch).
 - If researchers need additional complex libraries (e.g. `ray`), an administrator can create a custom image inheriting from the NGC base. The `DOCKER_IMAGE_AMD64` / `DOCKER_IMAGE_ARM64` variables in the `.env` will point to the appropriate custom images per architecture.
 

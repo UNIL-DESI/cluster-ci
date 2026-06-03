@@ -126,8 +126,8 @@ echo "🐳 Updating Docker images on headnode..."
 sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" \
     "HEADNODE_ENV=\"\$HOME/cluster-ci/.env\" && \
      if [ -f \"\$HEADNODE_ENV\" ]; then \
-         grep -q '^DOCKER_IMAGE_AMD64=' \"\$HEADNODE_ENV\" && sed -i 's|^DOCKER_IMAGE_AMD64=.*|DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$HEADNODE_ENV\" || echo 'DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$HEADNODE_ENV\"; \
-         grep -q '^DOCKER_IMAGE_ARM64=' \"\$HEADNODE_ENV\" && sed -i 's|^DOCKER_IMAGE_ARM64=.*|DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$HEADNODE_ENV\" || echo 'DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$HEADNODE_ENV\"; \
+         grep -q '^DOCKER_IMAGE_AMD64=' \"\$HEADNODE_ENV\" && sed -i 's|^DOCKER_IMAGE_AMD64=.*|DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.05-py3|' \"\$HEADNODE_ENV\" || echo 'DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.05-py3' >> \"\$HEADNODE_ENV\"; \
+         grep -q '^DOCKER_IMAGE_ARM64=' \"\$HEADNODE_ENV\" && sed -i 's|^DOCKER_IMAGE_ARM64=.*|DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.05-py3|' \"\$HEADNODE_ENV\" || echo 'DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.05-py3' >> \"\$HEADNODE_ENV\"; \
          echo '✅ Docker images updated on headnode (AMD64 + ARM64)'; \
      fi"
 
@@ -170,9 +170,9 @@ for ((i=1; i<=WORKER_COUNT; i++)); do
         if ! sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" \
             "WORKER_ENV=\"\$HOME/cluster-ci/.env\" && \
              if [ -f \"\$WORKER_ENV\" ]; then \
-                 sed -i 's|^DOCKER_BASE_IMAGE=.*|DOCKER_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\"; \
-                 grep -q '^DOCKER_IMAGE_AMD64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_AMD64=.*|DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$WORKER_ENV\"; \
-                 grep -q '^DOCKER_IMAGE_ARM64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_ARM64=.*|DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$WORKER_ENV\"; \
+                 sed -i 's|^DOCKER_BASE_IMAGE=.*|DOCKER_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.05-py3|' \"\$WORKER_ENV\"; \
+                 grep -q '^DOCKER_IMAGE_AMD64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_AMD64=.*|DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.05-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.05-py3' >> \"\$WORKER_ENV\"; \
+                 grep -q '^DOCKER_IMAGE_ARM64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_ARM64=.*|DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.05-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.05-py3' >> \"\$WORKER_ENV\"; \
                  echo '✅ Docker images updated in .env (AMD64 + ARM64)'; \
              fi"; then
             echo "⚠️  Worker $i ($ip_val) is unreachable. Skipping."

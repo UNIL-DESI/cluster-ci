@@ -5,7 +5,7 @@ This document describes the root cause of the C++ ABI incompatibility between vL
 ## 1. Root Cause Analysis (Diagnosis)
 
 ### Context & Symptoms
-When attempting to import vLLM in a Python environment running inside the NVIDIA NGC container (`nvcr.io/nvidia/pytorch:26.04-py3`), users encountered import failures or dynamic linking errors, such as:
+When attempting to import vLLM in a Python environment running inside the NVIDIA NGC container (`nvcr.io/nvidia/pytorch:26.05-py3`), users encountered import failures or dynamic linking errors, such as:
 ```
 ImportError: ... undefined symbol: _ZN5torch...
 ```

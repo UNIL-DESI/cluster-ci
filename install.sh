@@ -133,10 +133,10 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
     # AMD64 (x86_64): Used on the headnode and any x86_64 workers.
     # ARM64 (aarch64): Used on NVIDIA ARM workers (Grace/Blackwell GB10).
     if [ -z "$DOCKER_IMAGE_AMD64" ]; then
-        DOCKER_IMAGE_AMD64="nvcr.io/nvidia/pytorch:26.04-py3"
+        DOCKER_IMAGE_AMD64="nvcr.io/nvidia/pytorch:26.05-py3"
     fi
     if [ -z "$DOCKER_IMAGE_ARM64" ]; then
-        DOCKER_IMAGE_ARM64="nvcr.io/nvidia/pytorch:26.04-py3"
+        DOCKER_IMAGE_ARM64="nvcr.io/nvidia/pytorch:26.05-py3"
     fi
     update_env_var "DOCKER_IMAGE_AMD64" "$DOCKER_IMAGE_AMD64"
     update_env_var "DOCKER_IMAGE_ARM64" "$DOCKER_IMAGE_ARM64"

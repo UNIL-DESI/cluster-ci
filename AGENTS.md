@@ -13,7 +13,7 @@ En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes sui
 
 1. **Version Python** : Le conteneur d'exécution utilise **Python 3.12**. Si tu utilises `pyproject.toml`, la directive `requires-python` doit include `3.12` (ex: `>=3.10`). Tu peux utiliser les dernières versions de toutes les bibliothèques.
 2. **Dépendances GPU (PyTorch)** :
-   - Le conteneur NGC (`nvcr.io/nvidia/pytorch:26.04-py3`) embarque déjà **PyTorch 2.12** avec **CUDA 13.2**.
+   - Le conteneur NGC (`nvcr.io/nvidia/pytorch:26.05-py3`) embarque déjà **PyTorch 2.12** avec **CUDA 13.2**.
    - Sur ARM64, le système utilise l'héritage natif `pip` : il ne télécharge que les dépendances manquantes et réutilise le `torch` pré-installé.
    - Ne spécifie **aucune contrainte de version stricte** (`==`) pour `torch`, `torchvision`, etc. Utilise `torch` sans version ou avec `>=2.0`.
 3. **Exécution des Jobs & Pipeline (DVC + `.cluster-ci`)** :

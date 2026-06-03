@@ -261,18 +261,18 @@ log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 HOST_ARCH=$(uname -m)
 if [ "$HOST_ARCH" = "x86_64" ] || [ "$HOST_ARCH" = "amd64" ]; then
     DOCKER_PLATFORM="linux/amd64"
-    DOCKER_IMAGE=${DOCKER_IMAGE_AMD64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}}
+    DOCKER_IMAGE=${DOCKER_IMAGE_AMD64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}}
 elif [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
     DOCKER_PLATFORM="linux/arm64"
-    DOCKER_IMAGE=${DOCKER_IMAGE_ARM64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}}
+    DOCKER_IMAGE=${DOCKER_IMAGE_ARM64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}}
 else
     log_warn "Unknown architecture: $HOST_ARCH. Falling back to default image."
     DOCKER_PLATFORM=""
-    DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
+    DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}
 fi
 
 # Per-project Docker image override: allow .cluster-ci to specify a custom image
-# e.g., DOCKER_IMAGE=nvcr.io/nvidia/vllm:26.04-py3 for pre-compiled vLLM
+# e.g., DOCKER_IMAGE=nvcr.io/nvidia/vllm:26.05-py3 for pre-compiled vLLM
 PROJECT_DOCKER_IMAGE=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | head -n 1)
 if [ -n "$PROJECT_DOCKER_IMAGE" ]; then
     log_info "Project-level Docker image override: $PROJECT_DOCKER_IMAGE (was: $DOCKER_IMAGE)"
