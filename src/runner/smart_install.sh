@@ -92,6 +92,19 @@ pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_
     pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http 2>&1
 }
 
+# --- NVSHMEM Stub Fix for DGX Spark (PyTorch container) ---
+# vLLM searches for libnvshmem.so on multi-GPU/cluster builds. On the single-GPU Spark,
+# it's missing. We symlink the NVIDIA stub directly into the PyTorch lib folder.
+echo "📋 [Cluster-CI] Applying NVSHMEM stub fix..."
+python3 -c "
+import torch, os
+torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+stub_target = os.path.join(torch_lib, 'libnvshmem.so')
+if not os.path.exists(stub_target):
+    os.system(f'ln -sf /usr/local/cuda/lib64/stubs/libnvshmem.so {stub_target}')
+    print(f'Symlinked NVSHMEM stub to {stub_target}')
+"
+
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
     mv pyproject.toml.cluster-ci-bak pyproject.toml
