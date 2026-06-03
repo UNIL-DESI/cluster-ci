@@ -60,7 +60,7 @@ if m:
         # Step 1: Install git deps to system site-packages
         while read pkg_name git_url; do
             echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name from $git_url"
-            pip install --progress-bar off --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
+            pip install -q --progress-bar off --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
         done < "$GIT_DEPS_FILE"
 
         # Step 2: Temporarily strip git deps from pyproject.toml
@@ -74,6 +74,18 @@ if m:
 fi
 set -e
 
+# Helper function to run pip silently and only print output on failure
+run_pip_silently() {
+    local log_file="/tmp/pip_install.log"
+    if ! pip install -q "$@" > "$log_file" 2>&1; then
+        cat "$log_file"
+        rm -f "$log_file"
+        return 1
+    fi
+    rm -f "$log_file"
+    return 0
+}
+
 # Install project deps. Strategy: freeze system packages as constraints to prevent
 # pip from re-downloading torch (426MB), nvidia-cudnn (444MB), etc.
 # Exclude packages where NGC version conflicts with project requirements.
@@ -84,12 +96,14 @@ pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
     | grep -iv "^colorama==" \
     > "$CONSTRAINTS_FILE"
 echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned (websockets/tokenizers/colorama excluded)"
-pip install --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
+
+run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . || {
     echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
-    pip install --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local -e . 2>&1
+    run_pip_silently --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local -e .
 }
-pip install --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
-    pip install --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http 2>&1
+
+run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http || {
+    run_pip_silently --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
 }
 
 # --- NVSHMEM Stub Fix for DGX Spark (PyTorch container) ---
