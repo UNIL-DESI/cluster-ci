@@ -19,13 +19,15 @@ DEPS_HASH=$(compute_deps_hash)
 CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
-    # Quick sanity check: verify that key packages are actually importable
-    # This catches edge cases where the install was cached but the container was killed
-    if python3 -c "import dvc" 2>/dev/null; then
+    # Quick sanity check: verify that pip-installed packages are actually present.
+    # This catches edge cases where the hash was cached but the container was killed,
+    # losing the pip --prefix /home/user/.local packages while the hash file survives.
+    # We check for any .dist-info directory in the pip prefix as a proxy.
+    if ls /home/user/.local/lib/python3.*/site-packages/*.dist-info 1>/dev/null 2>&1; then
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
         exit 0
     else
-        echo "⚠️  [Cluster-CI] Cache hit but packages not importable. Reinstalling..."
+        echo "⚠️  [Cluster-CI] Cache hit but pip packages missing from prefix. Reinstalling..."
         rm -f "$HASH_FILE"
     fi
 fi
