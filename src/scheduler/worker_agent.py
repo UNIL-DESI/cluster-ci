@@ -262,6 +262,11 @@ def get_gpu_info():
     VRAM is reported per-GPU (max of any single GPU), NOT the sum of all GPUs,
     because a single job can only use one GPU's VRAM at a time for scheduling purposes.
     available_vram_gb is the minimum free VRAM across all GPUs (worst case for scheduling).
+
+    Unified Memory Detection (DGX Spark / Grace-Blackwell):
+    On systems with unified CPU-GPU memory (NVLink-C2C), nvidia-smi reports 0 VRAM
+    because there is no dedicated GPU memory. In this case, we report the system RAM
+    as available VRAM since both CPU and GPU share the same physical memory pool.
     """
     try:
         result = subprocess.run(
@@ -286,9 +291,24 @@ def get_gpu_info():
             gpu_count = len(gpu_names)
             if gpu_count > 1:
                 gpu_name = f"{gpu_count}x {gpu_name}"
+
+            total_vram_gb = max_vram_mb / 1024.0
+
+            # Unified Memory Detection:
+            # On DGX Spark and Grace-Blackwell systems, nvidia-smi reports 0 MB VRAM
+            # because CPU and GPU share the same physical memory via NVLink-C2C.
+            # In this case, the system RAM IS the GPU memory.
+            if total_vram_gb < 1.0 and gpu_count > 0:
+                total_ram_gb, available_ram_gb = get_ram_info()
+                logger.info(
+                    f"Unified memory detected: nvidia-smi reports {total_vram_gb:.1f} GB VRAM "
+                    f"but {gpu_count} GPU(s) detected. Reporting system RAM ({total_ram_gb:.1f} GB) as VRAM."
+                )
+                return gpu_name, total_ram_gb, gpu_count, available_ram_gb
+
             # Use minimum free VRAM across all GPUs (worst case for scheduling)
             available_vram_gb = min(free_vram_values_mb) / 1024.0 if free_vram_values_mb else 0.0
-            return gpu_name, max_vram_mb / 1024.0, gpu_count, available_vram_gb
+            return gpu_name, total_vram_gb, gpu_count, available_vram_gb
     except Exception as e:
         logger.warning(f"GPU detection failed: {e}")
     return "N/A", 0.0, 0, 0.0
