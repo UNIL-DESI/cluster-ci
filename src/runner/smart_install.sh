@@ -74,11 +74,23 @@ if m:
 fi
 set -e
 
-# Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
-# --ignore-installed prevents pip from trying to uninstall system-level packages
-# that are read-only in containers like the NGC vLLM image (e.g., websockets in /usr/local/bin/)
-pip install --break-system-packages --ignore-installed --prefix /home/user/.local -e .
-pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
+# Install project using pip, preserving NGC system packages via constraints.
+# Strategy: generate a constraints file from all currently installed system packages.
+# This tells pip to keep existing versions (torch, nvidia-*, vllm, etc.) instead of
+# downloading and potentially shadowing them with incompatible PyPI versions.
+# This avoids both the Permission Denied error (trying to uninstall system packages)
+# and the library shadowing bug (nvshmem, torch ABI mismatches).
+CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
+pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" > "$CONSTRAINTS_FILE"
+echo "📋 [Cluster-CI] Generated system constraints file ($(wc -l < "$CONSTRAINTS_FILE") packages pinned)"
+pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
+    echo "⚠️  [Cluster-CI] Constrained install failed, falling back to unconstrained..."
+    pip install --break-system-packages --prefix /home/user/.local -e . 2>&1
+}
+pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
+    echo "⚠️  [Cluster-CI] Constrained dvc-http install failed, falling back..."
+    pip install --break-system-packages --prefix /home/user/.local dvc-http 2>&1
+}
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
@@ -88,13 +100,21 @@ fi
 # Post-install: purge any PyPI-downloaded NVIDIA/PyTorch/vLLM packages that would
 # shadow the highly-optimized NGC system libraries or source-compiled vLLM in /home/user/vllm
 # See: PyTorch/NVIDIA Library Shadowing Bug (memory ae4a85be)
-for site_packages_dir in "/home/user/.local/lib/python3."*"/site-packages" "/workspace/.venv/lib/python3."*"/site-packages" "./.venv/lib/python3."*"/site-packages"; do
+# NOTE: --prefix installs to dist-packages on Debian, so we must check both patterns.
+for site_packages_dir in \
+    "/home/user/.local/lib/python3."*"/site-packages" \
+    "/home/user/.local/lib/python3."*"/dist-packages" \
+    "/home/user/.local/local/lib/python3."*"/site-packages" \
+    "/home/user/.local/local/lib/python3."*"/dist-packages" \
+    "/workspace/.venv/lib/python3."*"/site-packages" \
+    "./.venv/lib/python3."*"/site-packages"; do
     if [ -d "$site_packages_dir" ] || ls "$site_packages_dir" 1>/dev/null 2>&1; then
         rm -rf "$site_packages_dir"/torch \
                "$site_packages_dir"/torch-* \
                "$site_packages_dir"/torchvision \
                "$site_packages_dir"/torchvision-* \
                "$site_packages_dir"/nvidia* \
+               "$site_packages_dir"/nvshmem* \
                "$site_packages_dir"/triton* \
                "$site_packages_dir"/xformers* \
                "$site_packages_dir"/vllm \
