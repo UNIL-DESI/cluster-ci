@@ -268,6 +268,14 @@ if [ "$HOST_ARCH" = "x86_64" ] || [ "$HOST_ARCH" = "amd64" ]; then
     PROJECT_IMAGE_GLOBAL=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
     PROJECT_DOCKER_IMAGE=${PROJECT_IMAGE_AMD64:-$PROJECT_IMAGE_GLOBAL}
 
+    PROJECT_PLATFORM_AMD64=$(grep -oE 'DOCKER_PLATFORM_AMD64=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_PLATFORM_GLOBAL=$(grep -oE 'DOCKER_PLATFORM=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_DOCKER_PLATFORM=${PROJECT_PLATFORM_AMD64:-$PROJECT_PLATFORM_GLOBAL}
+
+    PROJECT_FLAGS_AMD64=$(grep -oE 'DOCKER_FLAGS_AMD64=[^#\n]+' .cluster-ci 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+    PROJECT_FLAGS_GLOBAL=$(grep -oE 'DOCKER_FLAGS=[^#\n]+' .cluster-ci 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+    PROJECT_DOCKER_FLAGS=${PROJECT_FLAGS_AMD64:-$PROJECT_FLAGS_GLOBAL}
+
 elif [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
     DOCKER_PLATFORM="linux/arm64"
     DOCKER_IMAGE=${DOCKER_IMAGE_ARM64:-${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}}
@@ -277,18 +285,33 @@ elif [ "$HOST_ARCH" = "aarch64" ] || [ "$HOST_ARCH" = "arm64" ]; then
     PROJECT_IMAGE_GLOBAL=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
     PROJECT_DOCKER_IMAGE=${PROJECT_IMAGE_ARM64:-$PROJECT_IMAGE_GLOBAL}
 
+    PROJECT_PLATFORM_ARM64=$(grep -oE 'DOCKER_PLATFORM_ARM64=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_PLATFORM_GLOBAL=$(grep -oE 'DOCKER_PLATFORM=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_DOCKER_PLATFORM=${PROJECT_PLATFORM_ARM64:-$PROJECT_PLATFORM_GLOBAL}
+
+    PROJECT_FLAGS_ARM64=$(grep -oE 'DOCKER_FLAGS_ARM64=[^#\n]+' .cluster-ci 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+    PROJECT_FLAGS_GLOBAL=$(grep -oE 'DOCKER_FLAGS=[^#\n]+' .cluster-ci 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+    PROJECT_DOCKER_FLAGS=${PROJECT_FLAGS_ARM64:-$PROJECT_FLAGS_GLOBAL}
+
 else
     log_warn "Unknown architecture: $HOST_ARCH. Falling back to default image."
     DOCKER_PLATFORM=""
     DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.05-py3"}
     PROJECT_DOCKER_IMAGE=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_DOCKER_PLATFORM=$(grep -oE 'DOCKER_PLATFORM=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -n 1)
+    PROJECT_DOCKER_FLAGS=$(grep -oE 'DOCKER_FLAGS=[^#\n]+' .cluster-ci 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
 fi
 
 if [ -n "$PROJECT_DOCKER_IMAGE" ]; then
     log_info "Project-level Docker image override: $PROJECT_DOCKER_IMAGE (was: $DOCKER_IMAGE)"
     DOCKER_IMAGE="$PROJECT_DOCKER_IMAGE"
-    DOCKER_PLATFORM=""
 fi
+
+if [ -n "$PROJECT_DOCKER_PLATFORM" ]; then
+    log_info "Project-level Docker platform override: $PROJECT_DOCKER_PLATFORM (was: $DOCKER_PLATFORM)"
+    DOCKER_PLATFORM="$PROJECT_DOCKER_PLATFORM"
+fi
+
 PLATFORM_FLAG=""
 if [ -n "$DOCKER_PLATFORM" ]; then
     PLATFORM_FLAG="--platform $DOCKER_PLATFORM"
@@ -343,6 +366,7 @@ docker run -d \
     --name "${MAIN_CONTAINER_NAME}" \
     $COMMON_LABELS \
     $DOCKER_PORT_MAPPING \
+    $PROJECT_DOCKER_FLAGS \
     --entrypoint "tail" \
     --gpus all \
     -v "$(pwd):/workspace" \
