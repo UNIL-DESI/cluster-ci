@@ -343,7 +343,17 @@ docker run -d \
     "$DOCKER_IMAGE" -f /dev/null >/dev/null
 
 # Ensure the volume and workspace are owned by the current user (must be run as root)
-docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c "chown -R $(id -u):$(id -g) /home/user && chown -R $(id -u):$(id -g) /workspace"
+# Also create a .pth file in system site-packages so Python discovers pip --prefix packages.
+# This MUST run as root because system site-packages is read-only for normal users.
+# The .pth is ephemeral (lost on container rebuild) so we recreate it every time.
+docker exec --user root "${MAIN_CONTAINER_NAME}" bash -c "
+    chown -R $(id -u):$(id -g) /home/user && chown -R $(id -u):$(id -g) /workspace
+    SITE=\$(python3 -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null)
+    PREFIX=\$(ls -d /home/user/.local/lib/python3.*/site-packages 2>/dev/null | head -1)
+    if [ -n \"\$PREFIX\" ] && [ -n \"\$SITE\" ]; then
+        echo \"\$PREFIX\" > \"\$SITE/cluster-ci-prefix.pth\"
+    fi
+"
 
 # Detect Docker image change: if the cached image marker differs from the
 # current image, purge stale tool binaries to force a clean reinstall.
@@ -360,7 +370,7 @@ docker exec \
         -e HEADNODE_URL="$HEADNODE_URL" \
         -e CLUSTER_CI_MODE=executor \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
-        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && export PYTHONPATH=/home/user/.local/lib/python3.12/site-packages:\${PYTHONPATH:-.} && $1"
+        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
 }
 
 log_info "Image used: $DOCKER_IMAGE"
