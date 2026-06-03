@@ -75,8 +75,10 @@ fi
 set -e
 
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
-pip install --break-system-packages --prefix /home/user/.local -e .
-pip install --break-system-packages --prefix /home/user/.local dvc-http
+# --ignore-installed prevents pip from trying to uninstall system-level packages
+# that are read-only in containers like the NGC vLLM image (e.g., websockets in /usr/local/bin/)
+pip install --break-system-packages --ignore-installed --prefix /home/user/.local -e .
+pip install --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
