@@ -25,44 +25,53 @@ fi
 
 echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${DEPS_HASH:0:8}…). Installing..."
 
-# Pre-install private git dependencies declared in [tool.uv.sources] that pip cannot resolve from PyPI.
-# Strategy: install to system site-packages AND generate a constraints file so the subsequent
-# `pip install --prefix ... -e .` knows these deps are already satisfied and skips PyPI lookup.
-CONSTRAINTS_FILE="/tmp/cluster-ci-constraints.txt"
-> "$CONSTRAINTS_FILE"
+# Handle private git dependencies declared in [tool.uv.sources] that pip cannot resolve from PyPI.
+# Strategy:
+#   1. Install them to system site-packages from git
+#   2. Temporarily strip them from pyproject.toml so pip install -e . doesn't try to resolve them
+#   3. Restore pyproject.toml after install
+GIT_PKG_NAMES=""
 
 if [ -f "pyproject.toml" ]; then
-    python3 -c "
+    GIT_PKG_NAMES=$(python3 -c "
 import re
 content = open('pyproject.toml').read()
-# Find [tool.uv.sources] section
 m = re.search(r'\[tool\.uv\.sources\](.*?)(\n\[|\Z)', content, re.DOTALL)
 if m:
     section = m.group(1)
-    # Extract git URLs: pkg = { git = \"...\", ... }
     for match in re.finditer(r'(\S+)\s*=\s*\{[^}]*git\s*=\s*\"([^\"]+)\"', section):
         pkg, url = match.group(1), match.group(2)
-        # Extract optional branch
         branch_match = re.search(r'branch\s*=\s*\"([^\"]+)\"', match.group(0))
         ref = f'@{branch_match.group(1)}' if branch_match else ''
-        print(f'{pkg}=git+{url}{ref}')
-" 2>/dev/null | while read spec; do
-        pkg_name=$(echo "$spec" | cut -d= -f1)
-        git_url=$(echo "$spec" | cut -d= -f2-)
-        echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
-        pip install --break-system-packages "$git_url" || true
-        # Record installed version as constraint so pip --prefix skips PyPI resolution
-        installed_ver=$(pip show "$pkg_name" 2>/dev/null | grep '^Version:' | awk '{print $2}')
-        if [ -n "$installed_ver" ]; then
-            echo "$pkg_name==$installed_ver" >> "$CONSTRAINTS_FILE"
-        fi
-    done
+        print(f'{pkg} git+{url}{ref}')
+" 2>/dev/null)
+
+    if [ -n "$GIT_PKG_NAMES" ]; then
+        echo "$GIT_PKG_NAMES" | while read pkg_name git_url; do
+            echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
+            pip install --break-system-packages "$git_url" || true
+        done
+
+        # Temporarily patch pyproject.toml: remove private git deps from [project.dependencies]
+        # so pip install -e . doesn't try to resolve them on PyPI.
+        cp pyproject.toml pyproject.toml.cluster-ci-bak
+        echo "$GIT_PKG_NAMES" | while read pkg_name git_url; do
+            # Remove lines containing the package name from dependencies (handles dashes/underscores)
+            pkg_pattern=$(echo "$pkg_name" | sed 's/[-_]/[-_]/g')
+            sed -i "/\"${pkg_pattern}[^a-zA-Z0-9]/d; /\"${pkg_pattern}\"/d" pyproject.toml
+        done
+        echo "📦 [Cluster-CI] Temporarily stripped private git deps from pyproject.toml for pip compatibility"
+    fi
 fi
 
-# Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch.
-# The constraints file tells pip that private git deps are already satisfied (installed above).
-PIP_CONSTRAINT="$CONSTRAINTS_FILE" pip install --break-system-packages --prefix /home/user/.local -e .
+# Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
+pip install --break-system-packages --prefix /home/user/.local -e .
 pip install --break-system-packages --prefix /home/user/.local dvc-http
+
+# Restore original pyproject.toml
+if [ -f "pyproject.toml.cluster-ci-bak" ]; then
+    mv pyproject.toml.cluster-ci-bak pyproject.toml
+fi
 
 # Post-install: purge any PyPI-downloaded NVIDIA/PyTorch/vLLM packages that would
 # shadow the highly-optimized NGC system libraries or source-compiled vLLM in /home/user/vllm
