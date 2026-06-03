@@ -2,6 +2,7 @@ import time
 import json
 import requests
 import os
+import socket
 import datetime as dt
 from datetime import datetime
 from persistence import get_db_conn, init_db
@@ -178,6 +179,10 @@ def schedule_jobs():
                     job_branch = job.get('branch', '')
                     required_hashes = json.loads(job.get('required_hashes') or '[]')
 
+                    # Parse allowed_workers constraint
+                    allowed_workers_raw = job.get('allowed_workers')
+                    allowed_workers = json.loads(allowed_workers_raw) if allowed_workers_raw else None
+
                     # Branch-level exclusivity: never assign two jobs on the same repo+branch.
                     # If another job is already running/assigned, this one waits in the queue.
                     with get_db_conn() as conn:
@@ -200,6 +205,10 @@ def schedule_jobs():
                     # Hard Constraint: Filter by VRAM (if required)
                     if vram_required > 0:
                         candidates = [w for w in candidates if (w.get('total_vram_gb') or 0) >= vram_required]
+
+                    # Hard Constraint: Filter by ALLOWED_WORKERS (hostname whitelist)
+                    if allowed_workers:
+                        candidates = [w for w in candidates if w.get('hostname', '') in allowed_workers]
 
                     if not candidates:
                         # Check if it's fundamentally impossible by querying all online workers
@@ -231,6 +240,7 @@ def schedule_jobs():
 
                     # Soft Constraint: Data Locality (P2P Discovery)
                     worker_scores = []
+                    headnode_hostname = socket.gethostname()
                     for worker in candidates:
                         score = 0
                         if required_hashes and worker['service_url']:
@@ -243,9 +253,22 @@ def schedule_jobs():
                                     score = len(found_hashes)
                             except Exception as e:
                                 logger.warning(f"Failed to check cache on worker {worker['worker_id']}: {e}")
+
+                        # Headnode malus: deprioritize the headnode so remote workers
+                        # are preferred at equal data locality scores
+                        svc_url = worker.get('service_url', '')
+                        worker_hostname = worker.get('hostname', '')
+                        is_headnode = (
+                            worker_hostname == headnode_hostname
+                            or 'localhost' in svc_url
+                            or '127.0.0.1' in svc_url
+                        )
+                        if is_headnode:
+                            score -= 1
+
                         worker_scores.append((worker, score))
 
-                    # Sort by score descending (Data Locality)
+                    # Sort by score descending (Data Locality, headnode deprioritized)
                     worker_scores.sort(key=lambda x: x[1], reverse=True)
                     assigned_worker, winner_score = worker_scores[0]
 
