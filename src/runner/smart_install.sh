@@ -74,23 +74,10 @@ if m:
 fi
 set -e
 
-# Install project using pip, preserving NGC system packages via constraints.
-# Strategy: generate a constraints file from all currently installed system packages.
-# This tells pip to keep existing versions (torch, nvidia-*, vllm, etc.) instead of
-# downloading and potentially shadowing them with incompatible PyPI versions.
-# This avoids both the Permission Denied error (trying to uninstall system packages)
-# and the library shadowing bug (nvshmem, torch ABI mismatches).
-CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
-pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" > "$CONSTRAINTS_FILE"
-echo "📋 [Cluster-CI] Generated system constraints file ($(wc -l < "$CONSTRAINTS_FILE") packages pinned)"
-pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
-    echo "⚠️  [Cluster-CI] Constrained install failed, falling back to unconstrained..."
-    pip install --break-system-packages --prefix /home/user/.local -e . 2>&1
-}
-pip install --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
-    echo "⚠️  [Cluster-CI] Constrained dvc-http install failed, falling back..."
-    pip install --break-system-packages --prefix /home/user/.local dvc-http 2>&1
-}
+# Install project using pip to bypass lockfile conflicts with NGC PyTorch.
+# Use --break-system-packages since we're in a container.
+pip install --break-system-packages --prefix /home/user/.local -e .
+pip install --break-system-packages --prefix /home/user/.local dvc-http
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
