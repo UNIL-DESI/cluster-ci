@@ -107,8 +107,18 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
             CLUSTER_TOKEN=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
         fi
         if [ -z "$HEADNODE_URL" ]; then
-            # Par défaut sur le headnode, le service tourne sur localhost:5000
-            HEADNODE_URL="http://localhost:5000"
+            # Auto-detect the real IP address for HEADNODE_URL.
+            # Docker containers in bridge mode cannot reach the host via localhost,
+            # so we must use the actual network IP for dual-mode (headnode = scheduler + worker).
+            DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+            if [ -n "$DETECTED_IP" ]; then
+                HEADNODE_URL="http://${DETECTED_IP}:5000"
+                echo "🔗 Auto-detected headnode IP: $DETECTED_IP"
+            else
+                # Fallback: localhost (only works if no Docker containers need to reach the scheduler)
+                HEADNODE_URL="http://localhost:5000"
+                echo "⚠️  Could not detect IP, defaulting to localhost:5000"
+            fi
         fi
     fi
 
