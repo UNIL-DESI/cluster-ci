@@ -127,7 +127,8 @@ class RunnerManager:
                                 with open(latest_log, "r", encoding="utf-8", errors="ignore") as f:
                                     lines = f.readlines()[-15:]
                                     cancel_lines = [l for l in lines if "Job cancellation request" in l and "received" in l]
-                                    if len(cancel_lines) >= 8:
+                                    fatal_auth_lines = [l for l in lines if "Registration" in l and "was not found" in l]
+                                    if len(cancel_lines) >= 8 or len(fatal_auth_lines) >= 1:
                                         cancellation_spam_count += 1
                                     else:
                                         cancellation_spam_count = max(0, cancellation_spam_count - 1)
