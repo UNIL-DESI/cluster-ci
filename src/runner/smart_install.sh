@@ -26,7 +26,10 @@ fi
 echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${DEPS_HASH:0:8}…). Installing..."
 
 # Pre-install private git dependencies declared in [tool.uv.sources] that pip cannot resolve from PyPI.
-# This parses pyproject.toml for git sources and installs them into the local prefix first.
+# This parses pyproject.toml for git sources and installs them into system site-packages first,
+# so the subsequent `pip install -e .` can discover them during dependency resolution.
+# NOTE: We install to system (not --prefix) because pip does not search --prefix targets
+# when resolving dependencies for subsequent installs.
 if [ -f "pyproject.toml" ]; then
     python3 -c "
 import re
@@ -46,13 +49,9 @@ if m:
         pkg_name=$(echo "$spec" | cut -d= -f1)
         git_url=$(echo "$spec" | cut -d= -f2-)
         echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
-        pip install --break-system-packages --prefix /home/user/.local "$git_url" 2>/dev/null || true
+        pip install --break-system-packages "$git_url" || true
     done
 fi
-
-# Ensure pip can discover packages already installed in the --prefix target.
-# Without this, `pip install --prefix ... -e .` cannot resolve deps pre-installed above (e.g. dvc-viewer).
-export PYTHONPATH="/home/user/.local/lib/python3.$(python3 -c 'import sys; print(f"{sys.version_info.minor}")')/site-packages:${PYTHONPATH:-}"
 
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
