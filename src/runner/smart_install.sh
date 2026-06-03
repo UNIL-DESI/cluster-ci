@@ -25,6 +25,31 @@ fi
 
 echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${DEPS_HASH:0:8}…). Installing..."
 
+# Pre-install private git dependencies declared in [tool.uv.sources] that pip cannot resolve from PyPI.
+# This parses pyproject.toml for git sources and installs them into the local prefix first.
+if [ -f "pyproject.toml" ]; then
+    python3 -c "
+import re
+content = open('pyproject.toml').read()
+# Find [tool.uv.sources] section
+m = re.search(r'\[tool\.uv\.sources\](.*?)(\n\[|\Z)', content, re.DOTALL)
+if m:
+    section = m.group(1)
+    # Extract git URLs: pkg = { git = \"...\", ... }
+    for match in re.finditer(r'(\S+)\s*=\s*\{[^}]*git\s*=\s*\"([^\"]+)\"', section):
+        pkg, url = match.group(1), match.group(2)
+        # Extract optional branch
+        branch_match = re.search(r'branch\s*=\s*\"([^\"]+)\"', match.group(0))
+        ref = f'@{branch_match.group(1)}' if branch_match else ''
+        print(f'{pkg}=git+{url}{ref}')
+" 2>/dev/null | while read spec; do
+        pkg_name=$(echo "$spec" | cut -d= -f1)
+        git_url=$(echo "$spec" | cut -d= -f2-)
+        echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
+        pip install --break-system-packages --prefix /home/user/.local "$git_url" 2>/dev/null || true
+    done
+fi
+
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
 pip install --break-system-packages --prefix /home/user/.local dvc-http
