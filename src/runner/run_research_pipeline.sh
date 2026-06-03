@@ -296,6 +296,12 @@ log_info "Searching for a free port for web interface..."
 # Use EXPOSED_PORT if defined in .cluster-ci, otherwise find a free port
 EXPOSED_PORT=$(grep -oE -e 'EXPOSED_PORT=[0-9]+' .cluster-ci | cut -d= -f2 | head -n 1)
 if [ -n "$EXPOSED_PORT" ]; then
+    # Validate: reject reserved ports that would collide with cluster-ci services
+    if [ "$EXPOSED_PORT" -lt 1024 ] || [ "$EXPOSED_PORT" -eq 5000 ] || [ "$EXPOSED_PORT" -eq 6000 ]; then
+        log_error "EXPOSED_PORT=$EXPOSED_PORT is reserved (ports <1024, 5000=scheduler, 6000=worker agent)."
+        log_error "Please choose a port >= 1024 and not 5000 or 6000 in your .cluster-ci file."
+        exit 1
+    fi
     VIEWER_PORT=$EXPOSED_PORT
     log_info "Using explicit EXPOSED_PORT from .cluster-ci: $VIEWER_PORT"
     DOCKER_PORT_MAPPING="-p 0.0.0.0:$VIEWER_PORT:$VIEWER_PORT"
