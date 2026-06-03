@@ -60,7 +60,7 @@ if m:
         # Step 1: Install git deps to system site-packages
         while read pkg_name git_url; do
             echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name from $git_url"
-            pip install --no-progress-bar --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
+            pip install --progress-bar off --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
         done < "$GIT_DEPS_FILE"
 
         # Step 2: Temporarily strip git deps from pyproject.toml
@@ -84,12 +84,12 @@ pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
     | grep -iv "^colorama==" \
     > "$CONSTRAINTS_FILE"
 echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned (websockets/tokenizers/colorama excluded)"
-pip install --no-progress-bar --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
+pip install --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . 2>&1 || {
     echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
-    pip install --no-progress-bar --break-system-packages --ignore-installed --prefix /home/user/.local -e . 2>&1
+    pip install --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local -e . 2>&1
 }
-pip install --no-progress-bar --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
-    pip install --no-progress-bar --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http 2>&1
+pip install --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http 2>&1 || {
+    pip install --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http 2>&1
 }
 
 # --- NVSHMEM Stub Fix for DGX Spark (PyTorch container) ---
