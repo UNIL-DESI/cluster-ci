@@ -341,6 +341,8 @@ docker run -d \
     -v /etc/passwd:/etc/passwd:ro \
     -v /etc/group:/etc/group:ro \
     -w /workspace \
+    --ulimit memlock=-1 \
+    --ulimit stack=67108864 \
     --ipc=host \
     --user "$(id -u):$(id -g)" \
     -e HOME=/home/user \
@@ -603,6 +605,8 @@ else
         -v "$(pwd):/workspace" -w /workspace \
         -v "$HOME_CACHE_VOLUME:/home/user" \
         -p "0.0.0.0:$VIEWER_PORT:$VIEWER_PORT" \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
         --ipc=host \
         --user "$(id -u):$(id -g)" -e HOME=/home/user \
         -e CLUSTER_CI_MODE=executor \
