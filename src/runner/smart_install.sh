@@ -26,10 +26,11 @@ fi
 echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${DEPS_HASH:0:8}…). Installing..."
 
 # Pre-install private git dependencies declared in [tool.uv.sources] that pip cannot resolve from PyPI.
-# This parses pyproject.toml for git sources and installs them into system site-packages first,
-# so the subsequent `pip install -e .` can discover them during dependency resolution.
-# NOTE: We install to system (not --prefix) because pip does not search --prefix targets
-# when resolving dependencies for subsequent installs.
+# Strategy: install to system site-packages AND generate a constraints file so the subsequent
+# `pip install --prefix ... -e .` knows these deps are already satisfied and skips PyPI lookup.
+CONSTRAINTS_FILE="/tmp/cluster-ci-constraints.txt"
+> "$CONSTRAINTS_FILE"
+
 if [ -f "pyproject.toml" ]; then
     python3 -c "
 import re
@@ -50,11 +51,17 @@ if m:
         git_url=$(echo "$spec" | cut -d= -f2-)
         echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
         pip install --break-system-packages "$git_url" || true
+        # Record installed version as constraint so pip --prefix skips PyPI resolution
+        installed_ver=$(pip show "$pkg_name" 2>/dev/null | grep '^Version:' | awk '{print $2}')
+        if [ -n "$installed_ver" ]; then
+            echo "$pkg_name==$installed_ver" >> "$CONSTRAINTS_FILE"
+        fi
     done
 fi
 
-# Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
-pip install --break-system-packages --prefix /home/user/.local -e .
+# Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch.
+# The constraints file tells pip that private git deps are already satisfied (installed above).
+PIP_CONSTRAINT="$CONSTRAINTS_FILE" pip install --break-system-packages --prefix /home/user/.local -e .
 pip install --break-system-packages --prefix /home/user/.local dvc-http
 
 # Post-install: purge any PyPI-downloaded NVIDIA/PyTorch/vLLM packages that would
