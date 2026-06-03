@@ -99,7 +99,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
 # Principaux résultats
 
-- **Status**: Operational & secured against zombie processes (Last updated: 1 June 2026). Includes hardware-level VRAM purging and a clean codebase free from legacy debugging/testing artifacts.
+- **Status**: Operational & secured against zombie processes (Last updated: 3 June 2026). Includes hardware-level VRAM purging and a clean codebase free from legacy debugging/testing artifacts.
 
 # Documentation Index
 
