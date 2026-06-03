@@ -360,8 +360,7 @@ docker exec \
         -e HEADNODE_URL="$HEADNODE_URL" \
         -e CLUSTER_CI_MODE=executor \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
-        -e PYTHONUSERBASE=/home/user/.local \
-        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
+        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && export PYTHONPATH=/home/user/.local/lib/python3.12/site-packages:\${PYTHONPATH:-.} && $1"
 }
 
 log_info "Image used: $DOCKER_IMAGE"

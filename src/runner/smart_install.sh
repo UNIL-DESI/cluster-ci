@@ -24,6 +24,13 @@ if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
     # losing the pip --prefix /home/user/.local packages while the hash file survives.
     # We check for any .dist-info directory in the pip prefix as a proxy.
     if ls /home/user/.local/lib/python3.*/site-packages/*.dist-info 1>/dev/null 2>&1; then
+        # Ensure the .pth file exists in system site-packages (may be lost on container rebuild)
+        SYSTEM_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+        PREFIX_SITE=$(ls -d /home/user/.local/lib/python3.*/site-packages 2>/dev/null | head -1)
+        if [ -n "$PREFIX_SITE" ] && [ -n "$SYSTEM_SITE" ] && [ ! -f "$SYSTEM_SITE/cluster-ci-prefix.pth" ]; then
+            echo "$PREFIX_SITE" > "$SYSTEM_SITE/cluster-ci-prefix.pth"
+            echo "📦 [Cluster-CI] Restored .pth link for cached prefix packages."
+        fi
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
         exit 0
     else
@@ -79,6 +86,18 @@ set -e
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
 pip install --break-system-packages --prefix /home/user/.local dvc-http
+
+# CRITICAL: Make prefix-installed packages discoverable by Python.
+# pip --prefix installs to /home/user/.local/lib/python3.X/site-packages/ but this path
+# is NOT in sys.path by default. DVC stages use PYTHONPATH=. which overwrites any PYTHONPATH
+# env var. The only reliable mechanism is a .pth file in the SYSTEM site-packages,
+# which Python reads at startup regardless of PYTHONPATH.
+SYSTEM_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])")
+PREFIX_SITE=$(ls -d /home/user/.local/lib/python3.*/site-packages 2>/dev/null | head -1)
+if [ -n "$PREFIX_SITE" ] && [ -n "$SYSTEM_SITE" ]; then
+    echo "$PREFIX_SITE" > "$SYSTEM_SITE/cluster-ci-prefix.pth"
+    echo "📦 [Cluster-CI] Created .pth link: $SYSTEM_SITE/cluster-ci-prefix.pth → $PREFIX_SITE"
+fi
 
 # Restore original pyproject.toml
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
