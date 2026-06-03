@@ -2299,6 +2299,11 @@
                     
                     const ramUsedPercent = ramTotal > 0 ? ((ramTotal - ramAvail) / ramTotal * 100).toFixed(1) : 0;
                     const storageUsedPercent = storageTotal > 0 ? ((storageTotal - storageAvail) / storageTotal * 100).toFixed(1) : 0;
+
+                    // VRAM calculations (only relevant when GPU is present)
+                    const vramUsed = (w.total_vram_gb || 0) - (w.available_vram_gb || 0);
+                    const vramUsedPercent = w.total_vram_gb > 0 ? (vramUsed / w.total_vram_gb * 100).toFixed(1) : 0;
+                    const vramColor = vramUsedPercent >= 85 ? 'bg-danger' : (vramUsedPercent >= 60 ? 'bg-warning' : 'bg-success');
                     
                     const workerJobs = activeRuns.filter(r => r.worker_id === w.worker_id);
                     
@@ -2318,6 +2323,19 @@
                         jobsHtml = '<div class="mt-3 text-muted small">No active jobs.</div>';
                     }
 
+                    // Build conditional VRAM progress bar HTML
+                    const vramBarHtml = w.total_vram_gb > 0 ? `
+                                    <div class="mb-2">
+                                        <div class="d-flex justify-content-between mb-1 small">
+                                            <span class="fw-bold text-muted">VRAM</span>
+                                            <span>${vramUsed.toFixed(1)} / ${w.total_vram_gb.toFixed(1)} GB (${vramUsedPercent}%)</span>
+                                        </div>
+                                        <div class="progress" style="height: 8px;">
+                                            <div class="progress-bar ${vramColor}" 
+                                                 style="width: ${vramUsedPercent}%"></div>
+                                        </div>
+                                    </div>` : '';
+
                     html += `
                         <div class="col">
                             <div class="card shadow-sm h-100 border-0" style="background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);">
@@ -2335,6 +2353,7 @@
                                                  style="width: ${ramUsedPercent}%"></div>
                                         </div>
                                     </div>
+                                    ${vramBarHtml}
                                     <div>
                                         <div class="d-flex justify-content-between mb-1 small">
                                             <span class="fw-bold text-muted">STORAGE</span>
