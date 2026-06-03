@@ -91,6 +91,7 @@ run_pip_silently() {
 # Exclude packages where NGC version conflicts with project requirements.
 CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
 pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
+    | grep -v " @ " \
     | grep -iv "^websockets==" \
     | grep -iv "^tokenizers==" \
     | grep -iv "^colorama==" \
