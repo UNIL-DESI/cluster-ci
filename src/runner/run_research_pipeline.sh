@@ -363,13 +363,16 @@ SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
 if [ -n "$SITE" ]; then
     find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
 fi
-# Neutralize libtorch_nvshmem.so on single-GPU systems without NVSHMEM runtime.
-# The NGC vLLM container ships this for multi-GPU communication, but on DGX Spark
-# (single GPU, unified memory) the NVSHMEM symbols are missing, causing torch to crash.
-NVSHMEM_SO=$(find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null | head -1)
-if [ -n "$NVSHMEM_SO" ] && ! ldconfig -p 2>/dev/null | grep -q "libnvshmem"; then
-    echo "🔧 [Cluster-CI] Neutralizing libtorch_nvshmem.so (NVSHMEM runtime not available)"
-    mv "$NVSHMEM_SO" "${NVSHMEM_SO}.disabled" 2>/dev/null || true
+# Neutralize libtorch_nvshmem.so on single-GPU systems.
+# The NGC vLLM container ships this for multi-GPU NVSHMEM communication.
+# On DGX Spark (single GPU, unified memory), the NVSHMEM symbols are
+# incompatible, causing torch import to crash. Safe to disable on single-GPU.
+GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
+if [ "${GPU_COUNT:-0}" -le 1 ]; then
+    for nvshmem_so in $(find /usr/local/lib -name "libtorch_nvshmem.so" 2>/dev/null); do
+        echo "🔧 [Cluster-CI] Neutralizing $nvshmem_so (single-GPU system, NVSHMEM not needed)"
+        mv "$nvshmem_so" "${nvshmem_so}.disabled" 2>/dev/null || true
+    done
 fi
 INIT_SCRIPT
 docker cp /tmp/_cluster_ci_init.sh "${MAIN_CONTAINER_NAME}":/tmp/_cluster_ci_init.sh
