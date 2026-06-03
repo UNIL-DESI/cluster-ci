@@ -257,7 +257,8 @@ EOF
 # ⚠️ AI AGENT INSTRUCTIONS (JOULES / CURSOR) ⚠️
 # Configuration pour Cluster-CI.
 #
-# REQUIRED_RAM: Contrainte de placement (ex: 16GB). Défaut: 2GB.
+# REQUIRED_RAM: Contrainte de placement RAM (ex: 16GB). Défaut: 2GB.
+# REQUIRED_VRAM: Contrainte de placement VRAM GPU (ex: 24GB). Défaut: 0.
 # MAX_RUNTIME_HOURS: Durée maximale du job (max 24h). OBLIGATOIRE.
 # EXPOSED_PORT: Port à exposer (ex: 8501). Active le routage pour une interface web.
 #
@@ -265,6 +266,7 @@ EOF
 # Laisse vide après les variables pour tout exécuter (dvc repro).
 # =========================================================================================
 REQUIRED_RAM=2GB
+REQUIRED_VRAM=0GB
 MAX_RUNTIME_HOURS=1
 
 EOF
@@ -374,10 +376,12 @@ stages:
 **Fichier `.cluster-ci`** (paramètres d'exécution) :
 ```env
 REQUIRED_RAM=2GB
+REQUIRED_VRAM=24GB
 MAX_RUNTIME_HOURS=1
 ```
 - `MAX_RUNTIME_HOURS` (max 24) : **obligatoire**.
-- `REQUIRED_RAM` : contrainte de placement (défaut: 2GB).
+- `REQUIRED_RAM` : contrainte de placement RAM (défaut: 2GB).
+- `REQUIRED_VRAM` : contrainte de placement VRAM GPU (défaut: 0, pas de contrainte). Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
 - `EXPOSED_PORT=<port>` : pour interfaces web (Gradio, Streamlit, TensorBoard).
 - `STAGES` : **laisser vide par défaut** → exécute toute la pipeline (`dvc repro`), optimal pour le debug progressif. Si besoin de cibler un sous-ensemble, indique uniquement le **dernier stage voulu** — DVC réexécutera automatiquement les dépendances nécessaires.
 - Les secrets GitHub Repository sont automatiquement transmis au cluster.
