@@ -167,16 +167,22 @@ for ((i=1; i<=WORKER_COUNT; i++)); do
 
         # Force-update Docker images on worker (per-architecture config)
         echo "🐳 Updating Docker images on worker $i..."
-        sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" \
+        if ! sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" \
             "WORKER_ENV=\"\$HOME/cluster-ci/.env\" && \
              if [ -f \"\$WORKER_ENV\" ]; then \
                  sed -i 's|^DOCKER_BASE_IMAGE=.*|DOCKER_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\"; \
                  grep -q '^DOCKER_IMAGE_AMD64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_AMD64=.*|DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_AMD64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$WORKER_ENV\"; \
                  grep -q '^DOCKER_IMAGE_ARM64=' \"\$WORKER_ENV\" && sed -i 's|^DOCKER_IMAGE_ARM64=.*|DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3|' \"\$WORKER_ENV\" || echo 'DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.04-py3' >> \"\$WORKER_ENV\"; \
                  echo '✅ Docker images updated in .env (AMD64 + ARM64)'; \
-             fi"
+             fi"; then
+            echo "⚠️  Worker $i ($ip_val) is unreachable. Skipping."
+            continue
+        fi
 
-        sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" "export SUDO_PASSWORD='$pass_val'; curl -sSL https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh | bash -s -- worker"
+        if ! sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" "export SUDO_PASSWORD='$pass_val'; curl -sSL https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh | bash -s -- worker"; then
+            echo "⚠️  Worker $i ($ip_val): installation failed or host unreachable. Skipping."
+            continue
+        fi
     fi
 done
 

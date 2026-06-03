@@ -3,9 +3,11 @@
 <!-- CLUSTER-CI:START -->
 ## ⚠️ Instructions Spécifiques pour la CI (Cluster-CI)
 
-Ce dépôt est orchestré par le système hybride **Cluster-CI** sur un cluster hétérogène :
+Ce dépôt est orchestré par le système hybride **Cluster-CI** sur un cluster hétérogène multi-architecture :
 - **Workers ARM64** : GPU Blackwell GB10, 128GB RAM partagée, Ubuntu 24.04
-- **Headnode (AMD x86_64)** : 2× RTX 3090 (48GB VRAM), 125GB RAM, Ubuntu 20.04
+- **Headnode (AMD x86_64, dual-mode)** : 2× RTX 3090 (48GB VRAM), 125GB RAM, Ubuntu 20.04 — fonctionne simultanément comme **scheduler ET executor**
+
+Le runner détecte automatiquement l'architecture hôte (`uname -m`) et sélectionne l'image Docker correspondante (`DOCKER_IMAGE_AMD64` ou `DOCKER_IMAGE_ARM64`). Le flag `--platform` est injecté dans toutes les commandes Docker.
 
 En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes suivantes pour ne pas casser l'infrastructure distante et mener tes expériences avec succès :
 
