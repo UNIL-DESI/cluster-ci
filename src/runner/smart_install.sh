@@ -88,15 +88,54 @@ run_pip_silently() {
 
 # Install project deps. Strategy: freeze system packages as constraints to prevent
 # pip from re-downloading torch (426MB), nvidia-cudnn (444MB), etc.
-# Exclude packages where NGC version conflicts with project requirements.
+# Dynamically exclude all project dependencies from constraints to avoid conflicts
+# when the container ships custom builds (e.g., NeMo transformers + huggingface-hub).
 CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
-pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
-    | grep -v " @ " \
-    | grep -iv "^websockets==" \
-    | grep -iv "^tokenizers==" \
-    | grep -iv "^colorama==" \
-    > "$CONSTRAINTS_FILE"
-echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned (websockets/tokenizers/colorama excluded)"
+
+# Extract project dependency names from pyproject.toml
+PROJECT_DEPS=""
+if [ -f "pyproject.toml" ]; then
+    PROJECT_DEPS=$(python3 -c "
+import re
+try:
+    with open('pyproject.toml') as f:
+        content = f.read()
+    # Simple extraction: find lines in dependencies array
+    in_deps = False
+    for line in content.split('\n'):
+        if 'dependencies' in line and '=' in line:
+            in_deps = True; continue
+        if in_deps:
+            if line.strip().startswith(']'): break
+            m = re.match(r'\s*\"([a-zA-Z0-9_.-]+)', line)
+            if m: print(m.group(1).lower().replace('-','_').replace('.','_'))
+except: pass
+" 2>/dev/null)
+fi
+
+# Build grep exclusion pattern from project deps
+EXCLUDE_PATTERN=""
+for dep in $PROJECT_DEPS; do
+    if [ -n "$EXCLUDE_PATTERN" ]; then
+        EXCLUDE_PATTERN="$EXCLUDE_PATTERN|^${dep}=="
+    else
+        EXCLUDE_PATTERN="^${dep}=="
+    fi
+done
+
+if [ -n "$EXCLUDE_PATTERN" ]; then
+    pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
+        | grep -v " @ " \
+        | grep -ivE "$EXCLUDE_PATTERN" \
+        > "$CONSTRAINTS_FILE"
+    EXCLUDED_COUNT=$(echo "$PROJECT_DEPS" | wc -w)
+    echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned ($EXCLUDED_COUNT project deps excluded)"
+else
+    pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
+        | grep -v " @ " \
+        > "$CONSTRAINTS_FILE"
+    echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned"
+fi
 
 run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . || {
     echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
