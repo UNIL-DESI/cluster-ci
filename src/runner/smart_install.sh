@@ -30,10 +30,10 @@ echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${
 #   1. Install them to system site-packages from git
 #   2. Temporarily strip them from pyproject.toml so pip install -e . doesn't try to resolve them
 #   3. Restore pyproject.toml after install
-GIT_PKG_NAMES=""
+GIT_DEPS_FILE="/tmp/cluster-ci-git-deps.txt"
 
 if [ -f "pyproject.toml" ]; then
-    GIT_PKG_NAMES=$(python3 -c "
+    python3 -c "
 import re
 content = open('pyproject.toml').read()
 m = re.search(r'\[tool\.uv\.sources\](.*?)(\n\[|\Z)', content, re.DOTALL)
@@ -44,22 +44,21 @@ if m:
         branch_match = re.search(r'branch\s*=\s*\"([^\"]+)\"', match.group(0))
         ref = f'@{branch_match.group(1)}' if branch_match else ''
         print(f'{pkg} git+{url}{ref}')
-" 2>/dev/null)
+" > "$GIT_DEPS_FILE" 2>/dev/null || true
 
-    if [ -n "$GIT_PKG_NAMES" ]; then
-        echo "$GIT_PKG_NAMES" | while read pkg_name git_url; do
-            echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name"
+    if [ -s "$GIT_DEPS_FILE" ]; then
+        # Step 1: Install git deps to system site-packages
+        while read pkg_name git_url; do
+            echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name from $git_url"
             pip install --break-system-packages "$git_url" || true
-        done
+        done < "$GIT_DEPS_FILE"
 
-        # Temporarily patch pyproject.toml: remove private git deps from [project.dependencies]
-        # so pip install -e . doesn't try to resolve them on PyPI.
+        # Step 2: Temporarily strip git deps from pyproject.toml
         cp pyproject.toml pyproject.toml.cluster-ci-bak
-        echo "$GIT_PKG_NAMES" | while read pkg_name git_url; do
-            # Remove lines containing the package name from dependencies (handles dashes/underscores)
+        while read pkg_name git_url; do
             pkg_pattern=$(echo "$pkg_name" | sed 's/[-_]/[-_]/g')
             sed -i "/\"${pkg_pattern}[^a-zA-Z0-9]/d; /\"${pkg_pattern}\"/d" pyproject.toml
-        done
+        done < "$GIT_DEPS_FILE"
         echo "📦 [Cluster-CI] Temporarily stripped private git deps from pyproject.toml for pip compatibility"
     fi
 fi
