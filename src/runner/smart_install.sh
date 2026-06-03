@@ -30,6 +30,9 @@ echo "📦 [Cluster-CI] Dependencies changed (hash: ${CACHED_HASH:0:8}… → ${
 #   1. Install them to system site-packages from git
 #   2. Temporarily strip them from pyproject.toml so pip install -e . doesn't try to resolve them
 #   3. Restore pyproject.toml after install
+# NOTE: We disable set -e here because pip install of git deps may fail (private repo, network, etc.)
+# and we don't want that to kill the entire script.
+set +e
 GIT_DEPS_FILE="/tmp/cluster-ci-git-deps.txt"
 
 if [ -f "pyproject.toml" ]; then
@@ -44,13 +47,13 @@ if m:
         branch_match = re.search(r'branch\s*=\s*\"([^\"]+)\"', match.group(0))
         ref = f'@{branch_match.group(1)}' if branch_match else ''
         print(f'{pkg} git+{url}{ref}')
-" > "$GIT_DEPS_FILE" 2>/dev/null || true
+" > "$GIT_DEPS_FILE" 2>/dev/null
 
     if [ -s "$GIT_DEPS_FILE" ]; then
         # Step 1: Install git deps to system site-packages
         while read pkg_name git_url; do
             echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name from $git_url"
-            pip install --break-system-packages "$git_url" || true
+            pip install --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
         done < "$GIT_DEPS_FILE"
 
         # Step 2: Temporarily strip git deps from pyproject.toml
@@ -62,6 +65,7 @@ if m:
         echo "📦 [Cluster-CI] Temporarily stripped private git deps from pyproject.toml for pip compatibility"
     fi
 fi
+set -e
 
 # Install project with system packages using pip to bypass lockfile conflicts with NGC PyTorch
 pip install --break-system-packages --prefix /home/user/.local -e .
