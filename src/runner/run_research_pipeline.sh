@@ -270,6 +270,14 @@ else
     DOCKER_PLATFORM=""
     DOCKER_IMAGE=${DOCKER_BASE_IMAGE:-"nvcr.io/nvidia/pytorch:26.04-py3"}
 fi
+
+# Per-project Docker image override: allow .cluster-ci to specify a custom image
+# e.g., DOCKER_IMAGE=nvcr.io/nvidia/vllm:26.04-py3 for pre-compiled vLLM
+PROJECT_DOCKER_IMAGE=$(grep -oE 'DOCKER_IMAGE=[^ ]+' .cluster-ci 2>/dev/null | cut -d= -f2 | head -n 1)
+if [ -n "$PROJECT_DOCKER_IMAGE" ]; then
+    log_info "Project-level Docker image override: $PROJECT_DOCKER_IMAGE (was: $DOCKER_IMAGE)"
+    DOCKER_IMAGE="$PROJECT_DOCKER_IMAGE"
+fi
 PLATFORM_FLAG=""
 if [ -n "$DOCKER_PLATFORM" ]; then
     PLATFORM_FLAG="--platform $DOCKER_PLATFORM"
