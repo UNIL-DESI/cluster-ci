@@ -308,6 +308,18 @@ def clear_run_state():
     except Exception:
         pass
 
+def update_run_state_job_id(job_id):
+    """Update job_id inside the active run state file."""
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            state["job_id"] = job_id
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f)
+    except Exception:
+        pass
+
 def _headnode_stop_job(job_id, headnode_url, cluster_token):
     """Contact the headnode to stop a job (kills Docker containers, releases RAM)."""
     if not job_id or not headnode_url:
@@ -663,14 +675,65 @@ def stream_logs(run_id, commit_sha, branch=None):
                     print("\n🟢 Live stream connected.")
                     received_data = True
                 print_line(line_stripped, force=True)
+                
+                # Extract job_id from logs if available to keep client and state file fully synchronized
+                if "Job submitted successfully! ID:" in line_stripped:
+                    m = re.search(r"Job submitted successfully!\s+ID:\s*([a-f0-9\-]+)", line_stripped, re.IGNORECASE)
+                    if m:
+                        extracted_job_id = m.group(1)
+                        update_run_state_job_id(extracted_job_id)
+
                 total_lines_processed += 1
                 last_gha_poll_time = time.time()
             except queue.Empty:
-                if time.time() - last_gha_poll_time > 5:
-                    status = "queued"
-                    conclusion = None
-                    
-                    # Periodic headnode scheduler healthcheck to detect raw container crashes/exterminations
+                gha_completed = False
+                try:
+                    res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    if res.returncode == 0:
+                        info = json.loads(res.stdout)
+                        status = info.get("status")
+                        conclusion = info.get("conclusion")
+                        url = info.get("url", "URL non disponible")
+                        if status == "completed" or conclusion:
+                            gha_completed = True
+                            # Drain remaining logs from the ppng.io pipe before quitting.
+                            # The GHA run just finished, but some log lines may still be in transit.
+                            drain_deadline = time.time() + 5  # drain for up to 5 seconds
+                            while time.time() < drain_deadline:
+                                try:
+                                    line = q.get(timeout=0.2)
+                                    line_stripped = line.rstrip('\r\n')
+                                    if line_stripped and "has been established already" not in line_stripped:
+                                        print_line(line_stripped, force=True)
+                                except queue.Empty:
+                                    break  # No more data in pipe
+                            if proc:
+                                try: proc.terminate()
+                                except: pass
+                            if conclusion == "success":
+                                print("\n✅ Cluster-CI run completed successfully!")
+                                close_log_redirection()
+                                print_log_summary()
+                                return 0
+                            elif conclusion == "cancelled":
+                                print("\n⚠️ [ERREUR] L'exécution a été annulée.")
+                                print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
+                                print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+                                close_log_redirection()
+                                print_log_summary()
+                                return 1
+                            else:
+                                print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
+                                print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                                print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+                                close_log_redirection()
+                                print_log_summary()
+                                return 1
+                except Exception:
+                    pass
+
+                # If GHA run is still active, perform scheduler health check to detect unexpected backend failures
+                if not gha_completed and (time.time() - last_gha_poll_time > 5):
                     headnode_url = discover_headnode_url()
                     job_id = None
                     try:
@@ -683,22 +746,14 @@ def stream_logs(run_id, commit_sha, branch=None):
                         
                     if headnode_url and job_id:
                         try:
-                            # Contact scheduler runs endpoint
-                            url = f"{headnode_url}/api/projects/{REPO_FULL_NAME}/runs"
+                            # Contact specific job endpoint directly (case-insensitive and precise)
+                            url = f"{headnode_url}/job_status/{job_id}"
                             req = urllib.request.Request(url)
                             with urllib.request.urlopen(req, timeout=5) as resp:
-                                runs = json.loads(resp.read().decode())
-                                job_active = False
-                                job_finished_normally = False
-                                for run in runs:
-                                    if run.get("job_id") == job_id:
-                                        status_val = run.get("status")
-                                        if status_val in ("running", "assigned", "pending"):
-                                            job_active = True
-                                            break
-                                        elif status_val in ("completed", "failed"):
-                                            job_finished_normally = True
-                                            break
+                                job_data = json.loads(resp.read().decode())
+                                status_val = job_data.get("status")
+                                job_active = status_val in ("running", "assigned", "pending")
+                                job_finished_normally = status_val in ("completed", "failed")
                                 if not job_active and not job_finished_normally:
                                     print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
                                     print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
@@ -710,54 +765,10 @@ def stream_logs(run_id, commit_sha, branch=None):
                                     return 1
                         except Exception:
                             pass
-                            
-                    try:
-                        res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                        if res.returncode == 0:
-                            info = json.loads(res.stdout)
-                            status = info.get("status")
-                            conclusion = info.get("conclusion")
-                            url = info.get("url", "URL non disponible")
-                            if status == "completed" or conclusion:
-                                # Drain remaining logs from the ppng.io pipe before quitting.
-                                # The GHA run just finished, but some log lines may still be in transit.
-                                drain_deadline = time.time() + 5  # drain for up to 5 seconds
-                                while time.time() < drain_deadline:
-                                    try:
-                                        line = q.get(timeout=0.2)
-                                        line_stripped = line.rstrip('\r\n')
-                                        if line_stripped and "has been established already" not in line_stripped:
-                                            print_line(line_stripped, force=True)
-                                    except queue.Empty:
-                                        break  # No more data in pipe
-                                if proc:
-                                    try: proc.terminate()
-                                    except: pass
-                                if conclusion == "success":
-                                    print("\n✅ Cluster-CI run completed successfully!")
-                                    close_log_redirection()
-                                    print_log_summary()
-                                    return 0
-                                elif conclusion == "cancelled":
-                                    print("\n⚠️ [ERREUR] L'exécution a été annulée.")
-                                    print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
-                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
-                                    close_log_redirection()
-                                    print_log_summary()
-                                    return 1
-                                else:
-                                    print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
-                                    print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
-                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
-                                    close_log_redirection()
-                                    print_log_summary()
-                                    return 1
-                    except Exception:
-                        pass
 
                     if not received_data:
                         if not display_clean_queue_status(run_id):
-                            print("\r⏳ En attente de l'allocation d'un runner GitHub Actions...", end="", flush=True)
+                            print("\n⏳ En attente de l'allocation d'un runner GitHub Actions...")
                     
                     last_gha_poll_time = time.time()
 
