@@ -85,6 +85,9 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
 
     cleanup_delegation() {
         echo "Cleaning up delegation resources..."
+        if [ -n "$HEARTBEAT_PID" ]; then
+            kill "$HEARTBEAT_PID" 2>/dev/null || true
+        fi
         if [ -n "$PUSHER_PID" ]; then
             kill "$PUSHER_PID" 2>/dev/null || true
         fi
@@ -92,18 +95,37 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     }
     trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
 
+    # Start heartbeat subprocess: writes ♥ to log file every 10s if no new data arrived.
+    # This keeps the ppng.io channel alive and lets the client detect real disconnections
+    # vs normal silence (e.g. long GPU computation with no output).
+    (
+        while [ -f "$LOG_TEMP" ]; do
+            sleep 10
+            if [ -f "$LOG_TEMP" ]; then
+                last_mod=$(stat -c %Y "$LOG_TEMP" 2>/dev/null || echo 0)
+                now=$(date +%s)
+                if [ $((now - last_mod)) -ge 8 ]; then
+                    echo "♥" >> "$LOG_TEMP"
+                fi
+            fi
+        done
+    ) &
+    HEARTBEAT_PID=$!
+
     # Start a robust background log pusher.
     # Piping Server accepts a single connection at a time. By looping, if the client disconnects,
     # curl exits and the loop immediately launches a new curl instance streaming the entire
     # file from the beginning (tail -c +1). This guarantees that a reconnecting client
     # retrieves the full log history of the run.
+    # --max-time 120: Forces the POST to restart every 2 minutes. This bounds the re-pairing
+    # delay after a client disconnection (the old TCP POST may linger as a zombie for minutes).
     (
         while [ -f "$LOG_TEMP" ]; do
             sleep 2
             if [ ! -f "$LOG_TEMP" ]; then
                 break
             fi
-            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
+            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --max-time 120 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
         done
     ) &
     PUSHER_PID=$!

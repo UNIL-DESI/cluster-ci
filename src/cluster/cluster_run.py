@@ -607,8 +607,14 @@ def stream_logs(run_id, commit_sha, branch=None):
 
         def start_curl_stream():
             nonlocal proc, reader_thread, lines_to_skip, q
+            # Properly drain old process and thread before starting new ones
             if proc:
                 try: proc.terminate()
+                except: pass
+                try: proc.wait(timeout=2)
+                except: pass
+            if reader_thread and reader_thread.is_alive():
+                try: reader_thread.join(timeout=3)
                 except: pass
             
             # Recreate queue to prevent residual logs from previous connection
@@ -699,6 +705,14 @@ def stream_logs(run_id, commit_sha, branch=None):
                 
                 # Reset exponential backoff on successful read
                 reconnect_delay = 5
+                
+                # Heartbeat filtering: server sends ♥ every 10s to keep channel alive.
+                # Update the timer (proof of life) but don't display or log.
+                if line_stripped.strip() == "♥":
+                    total_lines_processed += 1
+                    last_log_received_time = time.time()
+                    continue
+                
                 print_line(line_stripped, force=True)
                 
                 # Extract job_id from logs if available to keep client and state file fully synchronized
@@ -795,12 +809,12 @@ def stream_logs(run_id, commit_sha, branch=None):
                         except Exception:
                             pass
 
-                # Active connection watchdog: if the log stream has been silent for more than 30s,
-                # the connection might be silently hung. Force a reconnect if GHA is still running.
-                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 30):
+                # Active connection watchdog: if no data (including heartbeats) for 60s,
+                # the connection is dead. With server heartbeats every 10s, 60s means 6+ missed → real disconnect.
+                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 60):
                     if time.time() - last_reconnect_time > 10:
                         last_reconnect_time = time.time()
-                        print_line("⚡ [Réseau] Flux inactif depuis 30s. Reconnexion préventive au flux de logs...", force=True)
+                        print_line("⚡ [Réseau] Flux inactif depuis 60s (6+ heartbeats manqués). Reconnexion au flux de logs...", force=True)
                         reconnect_delay = 5
                         start_curl_stream()
                         # Reset received time to prevent infinite loops of reconnects
