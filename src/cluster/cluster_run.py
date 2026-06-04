@@ -442,11 +442,27 @@ def recover_orphaned_run():
         # Check if the process that wrote this state is still alive
         if orphan_pid:
             try:
-                os.kill(orphan_pid, 0)  # signal 0 = check existence
-                # Process is still alive — this is not an orphan
-                return
-            except (OSError, ProcessLookupError):
-                pass  # Process is dead — this IS an orphan
+                import psutil
+                if psutil.pid_exists(orphan_pid):
+                    # Process is still alive — this is not an orphan
+                    return
+            except ImportError:
+                # Fallback if psutil is not available
+                try:
+                    if os.name == "nt":
+                        import ctypes
+                        kernel32 = ctypes.windll.kernel32
+                        SYNCHRONIZE = 0x100000
+                        process = kernel32.OpenProcess(SYNCHRONIZE, 0, orphan_pid)
+                        if process != 0:
+                            kernel32.CloseHandle(process)
+                            return
+                    else:
+                        os.kill(orphan_pid, 0)
+                        return
+                except (OSError, ProcessLookupError, Exception):
+                    pass  # Process is dead — this IS an orphan
+
 
         print(f"\n⚠️  Detected orphaned run from a previous force-killed session.")
         print(f"   Run ID: {orphan_run_id} | Branch: {orphan_branch}")
