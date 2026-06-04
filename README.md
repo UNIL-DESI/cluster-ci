@@ -181,7 +181,7 @@ cluster-ci/
 - [x] [Hybrid Liveness Watchdog — JIT Zombie Detection](https://github.com/UNIL-DESI/cluster-ci/pull/67)
 - [x] Fix Scheduler assigning jobs to busy workers (single-threaded worker exclusion)
 - [x] Inversion de l'ordre DVC/P2P (Pull avant le Hash) et suppression des erreurs de suppression Docker.
-- [x] Segmented Pipeline Logs: Modal de logs interactif avec navigation par étape (Setup, DVC stages, Sync/GC), couleurs d'état, lazy loading progressif, indicateur de lignes, copie presse-papier, bouton d'erreur rapide, animation de chargement pour l'étape en cours, et emoji ☠️ avec raison pour les jobs tués
+- [x] Segmented Pipeline Logs: Modal de logs interactif avec navigation par étape (Setup, DVC stages, Sync/GC), regroupement intelligent des exécutions répétées (ex: `dvc-code-analysis`), couleurs d'état cumulatives, lazy loading progressif, indicateur de lignes, copie presse-papier robuste et restylée, bouton "Last Error" intelligent restreint à la fin de l'exécution ciblant la section en échec, animation de chargement pour l'étape en cours, et emoji ☠️ avec raison pour les jobs tués
 - [x] Fix Bug: `submit_job.py` lisait `.cluster-ci` depuis le CWD cluster-ci au lieu du repo cible → RAM toujours à 2GB en mode Delegation. Correction via shallow clone du `.cluster-ci` distant.
 - [x] Fix Bug: Jobs en `pending` infini en cas de demande de RAM dépassant la capacité physique des workers (fail-fast implémenté).
 - [x] Fix Bug: `dvc-viewer` connection refused (port binding explicitement forcé sur 0.0.0.0 pour contourner l'isolation IPv6/loopback de Docker).
