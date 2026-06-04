@@ -78,14 +78,50 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     
     # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)
     # This ensures the python script receives the signal and completes its graceful cancellation HTTP call.
-    trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."' TERM INT
+    # We also cleanly stop the log pusher process and delete the temporary log file.
+    LOG_TEMP="/tmp/cluster-ci-submit-${CALLER_COMMIT_SHA}.log"
+    touch "$LOG_TEMP"
+    chmod 600 "$LOG_TEMP"
 
+    cleanup_delegation() {
+        echo "Cleaning up delegation resources..."
+        if [ -n "$PUSHER_PID" ]; then
+            kill "$PUSHER_PID" 2>/dev/null || true
+        fi
+        rm -f "$LOG_TEMP" 2>/dev/null || true
+    }
+    trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
+
+    # Start a robust background log pusher.
+    # Piping Server accepts a single connection at a time. By looping, if the client disconnects,
+    # curl exits and the loop immediately launches a new curl instance streaming the entire
+    # file from the beginning (tail -c +1). This guarantees that a reconnecting client
+    # retrieves the full log history of the run.
+    (
+        while [ -f "$LOG_TEMP" ]; do
+            sleep 2
+            if [ ! -f "$LOG_TEMP" ]; then
+                break
+            fi
+            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
+        done
+    ) &
+    PUSHER_PID=$!
+
+    # Run the job submission script, outputting to stdout (for GHA runners) and appending to LOG_TEMP.
+    set +e
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | tee "$LOG_TEMP"
+        SUBMIT_RET=${PIPESTATUS[0]}
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | tee "$LOG_TEMP"
+        SUBMIT_RET=${PIPESTATUS[0]}
     fi
-    exit ${PIPESTATUS[0]}
+    set -e
+
+    cleanup_delegation
+    trap - TERM INT EXIT
+    exit $SUBMIT_RET
 fi
 
 REPO_WORK_DIR="repositories/$TARGET_REPO"
