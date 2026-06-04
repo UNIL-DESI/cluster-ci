@@ -220,7 +220,7 @@ def print_line(line, force=False):
             _LAST_WAS_TQDM = False
 
     # Always write to log file if redirection is active
-    if _LOG_TEMP_FILE:
+    if _LOG_TEMP_FILE and "[Réseau]" not in line:
         try:
             _LOG_TEMP_FILE.write(line + "\n")
             _LOG_TEMP_FILE.flush()
@@ -598,8 +598,8 @@ def stream_logs(run_id, commit_sha, branch=None):
             
             # Recreate queue to prevent residual logs from previous connection
             q = queue.Queue()
-            # Skip already printed lines when server replays the logs file
-            lines_to_skip = total_lines_processed
+            # ppng.io is a real-time stream and does not replay history; do not skip lines
+            lines_to_skip = 0
             
             proc = subprocess.Popen(
                 ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
@@ -773,12 +773,12 @@ def stream_logs(run_id, commit_sha, branch=None):
                         except Exception:
                             pass
 
-                # Active connection watchdog: if the log stream has been silent for more than 25s,
+                # Active connection watchdog: if the log stream has been silent for more than 90s,
                 # the connection might be silently hung. Force a reconnect if GHA is still running.
-                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 25):
+                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 90):
                     if time.time() - last_reconnect_time > 10:
                         last_reconnect_time = time.time()
-                        print_line("⚡ [Réseau] Flux inactif depuis 25s. Reconnexion préventive au flux de logs...", force=True)
+                        print_line("⚡ [Réseau] Flux inactif depuis 90s. Reconnexion préventive au flux de logs...", force=True)
                         start_curl_stream()
                         # Reset received time to prevent infinite loops of reconnects
                         last_log_received_time = time.time()
