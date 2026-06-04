@@ -183,18 +183,32 @@ def get_cache_false_paths(dvc_yaml_path):
     return list(paths)
 
 def sync_metrics():
-    added_any = False
-
-    # 1. Stage dvc.lock if it exists
+    # Check if dvc.lock has changes or is untracked
+    dvc_lock_changed = False
     if os.path.exists('dvc.lock'):
-        # Check if dvc.lock has changes before adding
+        # Check for modifications
         res_diff = subprocess.run(['git', 'diff', '--quiet', 'dvc.lock'])
         if res_diff.returncode != 0:
-            subprocess.run(['git', 'add', 'dvc.lock'], check=True)
-            log_info("Staged modified dvc.lock for synchronization")
-            added_any = True
+            dvc_lock_changed = True
         else:
-            log_info("dvc.lock is already up to date, skipping staging.")
+            # Check if it is untracked
+            res_status = subprocess.run(['git', 'status', '--porcelain', 'dvc.lock'], capture_output=True, text=True)
+            if '??' in res_status.stdout:
+                dvc_lock_changed = True
+    else:
+        # No dvc.lock found
+        pass
+
+    if not dvc_lock_changed:
+        log_info("dvc.lock is unchanged (no cache changes). Skipping sync.")
+        return
+
+    added_any = False
+
+    # Stage dvc.lock since we know it changed
+    subprocess.run(['git', 'add', 'dvc.lock'], check=True)
+    log_info("Staged modified dvc.lock for synchronization")
+    added_any = True
 
     # 2. Stage metrics and plots
     dvc_yaml_path = 'dvc.yaml'

@@ -535,12 +535,22 @@ def display_clean_queue_status(run_id):
         # Fallback to simple print if something goes wrong
         return False
 
-def stream_logs(run_id, commit_sha):
+def stream_logs(run_id, commit_sha, branch=None):
     """Monitor GHA run and capture live log stream via piping or fallback API."""
     init_log_redirection()
     has_curl = check_curl()
     last_gha_poll_time = 0
     
+    # Resolve branch name
+    if not branch:
+        branch = BRANCH
+    if not branch:
+        try:
+            user = get_current_user()
+            branch = f"cluster-draft/{user}"
+        except Exception:
+            branch = "main"
+
     # For 'view' mode or resuming, it's good to show what happened before
     print(f"📦 Fetching latest logs from GitHub Actions (Run ID: {run_id})...")
     try:
@@ -586,7 +596,16 @@ def stream_logs(run_id, commit_sha):
             reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
             reader_thread.start()
 
+        last_sync_time = time.time()
+        last_synced_sha = commit_sha
+
         while True:
+            # Periodic intermediate synchronization (every 10s) once live stream is active
+            if received_data and time.time() - last_sync_time > 10:
+                success, remote_sha = fetch_cluster_results(branch, last_synced_sha, silent_if_no_changes=True)
+                if success and remote_sha:
+                    last_synced_sha = remote_sha
+                last_sync_time = time.time()
             try:
                 line = q.get(timeout=1)
                 line_stripped = line.rstrip('\r\n')
@@ -778,10 +797,10 @@ def clean_old_results():
     if removed > 0:
         print(f"🧹 Purged {removed} old result file(s) to ensure a fresh start.")
 
-def fetch_cluster_results(branch, commit_sha=None):
+def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
     """Fetch and checkout files modified by the cluster from the draft branch.
 
-    Returns True if sync succeeded, False otherwise.
+    Returns (success, remote_sha) if sync succeeded, (False, None) otherwise.
     """
     try:
         # 1. Fetch the latest commits on the draft branch
@@ -790,8 +809,20 @@ def fetch_cluster_results(branch, commit_sha=None):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
         )
 
+        # Get the remote commit SHA
+        res_sha = subprocess.run(
+            ["git", "rev-parse", f"origin/{branch}"],
+            capture_output=True, text=True, check=True
+        )
+        remote_sha = res_sha.stdout.strip()
+
         # 2. Determine base ref for diff
         base_ref = commit_sha if commit_sha else "HEAD"
+
+        if base_ref == remote_sha:
+            if not silent_if_no_changes:
+                print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
+            return True, remote_sha
 
         # 3. Detect files modified by the execution on the cluster
         res_diff = subprocess.run(
@@ -803,7 +834,7 @@ def fetch_cluster_results(branch, commit_sha=None):
                 f"⚠️  Could not diff against origin/{branch} (exit code {res_diff.returncode}).",
                 file=sys.stderr,
             )
-            return False
+            return False, None
 
         cluster_files = []
         for line in res_diff.stdout.splitlines():
@@ -812,21 +843,21 @@ def fetch_cluster_results(branch, commit_sha=None):
                 cluster_files.append(name)
 
         if cluster_files:
-            print("📂 Auto-syncing updated DVC results and metrics from cluster:")
-            for f in cluster_files:
-                print(f"   - {f}")
             # Force checkout of these files, overwriting any local copy
             subprocess.run(
                 ["git", "checkout", f"origin/{branch}", "--"] + cluster_files,
                 check=True,
             )
-            print("✅ Local workspace synchronized with cluster results successfully!")
-        else:
+            print(f"\n✨ [Auto-sync] Rapatriement réussi de {len(cluster_files)} fichier(s) de métriques/plots :")
+            for f in cluster_files:
+                print(f"   🎉 {f}")
+            print()
+        elif not silent_if_no_changes:
             print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
-        return True
+        return True, remote_sha
     except Exception as e:
         print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
-        return False
+        return False, None
 
 
 def shadow_run():
@@ -950,7 +981,7 @@ def shadow_run():
     print(f"📺 Streaming logs for run {run_id} (Ctrl+C to cancel)...")
     
     try:
-        stream_logs(run_id, commit_sha)
+        stream_logs(run_id, commit_sha, BRANCH)
     except KeyboardInterrupt:
         USER_INTERRUPTED = True
         print("\n🛑 Execution interrupted by user.")
@@ -978,7 +1009,7 @@ def shadow_run():
     # Even on failure, earlier stages may have produced valuable metrics,
     # plots, and dvc.lock updates that must be preserved locally.
     print("📥 Fetching updated results (metrics, plots, dvc.lock) from cluster...")
-    sync_success = fetch_cluster_results(BRANCH, COMMIT_SHA)
+    sync_success, _ = fetch_cluster_results(BRANCH, COMMIT_SHA)
     clear_run_state()
 
     if conclusion != "success":
@@ -1018,11 +1049,12 @@ def main():
         subprocess.run(["gh", "run", "list", "--workflow", "Cluster-CI Execution"])
     
     elif args.command == "view":
+        check_gh_auth()
+        user = get_current_user()
+        branch = f"cluster-draft/{user}"
+        
         run_id = args.run_id
         if not run_id:
-            check_gh_auth()
-            user = get_current_user()
-            branch = f"cluster-draft/{user}"
             try:
                 res = subprocess.run(["gh", "run", "list", "--branch", branch, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 runs = json.loads(res.stdout) if res.returncode == 0 else []
@@ -1045,7 +1077,7 @@ def main():
                 if status in ("in_progress", "queued"):
                     # We can always call stream_logs, it will handle fallback if head_sha is missing
                     try:
-                        stream_logs(run_id, head_sha)
+                        stream_logs(run_id, head_sha, branch)
                     except KeyboardInterrupt:
                         print("\n🛑 Stream interrupted by user.")
                     return
@@ -1075,7 +1107,7 @@ def main():
         user = get_current_user()
         branch = f"cluster-draft/{user}"
         print(f"📥 Manual sync from origin/{branch}...")
-        success = fetch_cluster_results(branch)
+        success, _ = fetch_cluster_results(branch)
         if not success:
             sys.exit(1)
 
