@@ -713,6 +713,17 @@ def stream_logs(run_id, commit_sha, branch=None):
                 if "has been established already" in line_stripped:
                     continue
                 
+                # Handle ppng.io limit errors directly (do not count in total_lines_processed)
+                if "[ERROR] The number of receivers has reached limits" in line_stripped:
+                    print("\n⏳ [Réseau] Trop de connexions fantômes au flux de logs. Le serveur distant (ppng.io) limite les accès.")
+                    print("🔄 Attente de 15 secondes pour permettre au serveur de purger les connexions inactives...")
+                    time.sleep(15)
+                    # Force reconnect logic to kick in smoothly
+                    if proc:
+                        try: proc.terminate()
+                        except: pass
+                    continue
+                
                 # Deduplication logic: skip lines we have already displayed
                 if lines_to_skip > 0:
                     lines_to_skip -= 1
