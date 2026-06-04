@@ -555,7 +555,7 @@ function docker_exec_bootstrap() {
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=\$PATH:/home/user/.local/bin && $1"
 }
 docker_exec_bootstrap "uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh || python3 -m pip install uv --user --break-system-packages"
-docker_exec_bootstrap "dvc version && uv tool upgrade dvc --with dvc-http || uv tool install dvc --with dvc-http"
+docker_exec_bootstrap "dvc version && uv tool upgrade dvc || uv tool install dvc --with dvc-http"
 docker_exec_bootstrap "uv tool upgrade dvc-viewer || uv tool install git+https://github.com/UNIL-DESI/dvc-viewer.git || true"
 
 log_info "Reading DVC parameters from .cluster-ci..."
