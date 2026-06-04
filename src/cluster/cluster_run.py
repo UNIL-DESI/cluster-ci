@@ -700,6 +700,12 @@ def stream_logs(run_id, commit_sha, branch=None):
                 # Deduplication logic: skip lines we have already displayed
                 if lines_to_skip > 0:
                     lines_to_skip -= 1
+                    # CRITICAL: We are receiving valid data from ppng.io, so we must
+                    # update the watchdog timer and reset the reconnection counter.
+                    # Otherwise, replaying a large log file will trigger a false watchdog
+                    # timeout, leading to an infinite loop of silent reconnections.
+                    last_log_received_time = time.time()
+                    reconnect_count = 0
                     continue
 
                 if not received_data:
