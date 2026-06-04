@@ -224,6 +224,10 @@ def print_line(line, force=False):
         try:
             _LOG_TEMP_FILE.write(line + "\n")
             _LOG_TEMP_FILE.flush()
+            try:
+                os.fsync(_LOG_TEMP_FILE.fileno())
+            except Exception:
+                pass
         except Exception:
             pass
         _LOG_LINE_COUNT += 1
@@ -946,6 +950,8 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
         return True, remote_sha
     except Exception as e:
         print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
+        print("💡 [Info] En cas de défaillance réseau persistante, vous pourrez synchroniser vos résultats manuellement via la commande :", file=sys.stderr)
+        print("   cluster-run sync", file=sys.stderr)
         return False, None
 
 
