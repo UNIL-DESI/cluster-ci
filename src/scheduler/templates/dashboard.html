@@ -297,6 +297,30 @@
             50% { box-shadow: 0 0 12px rgba(37,99,235,0.8); }
         }
 
+        .btn-copy-logs {
+            border: 1px solid #475569 !important;
+            color: #94a3b8 !important;
+            background-color: #1e293b !important;
+            border-radius: 6px !important;
+            padding: 6px 12px !important;
+            font-size: 0.8rem !important;
+            font-weight: 500 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            transition: all 0.2s ease !important;
+        }
+        .btn-copy-logs:hover {
+            background-color: #334155 !important;
+            color: #f8fafc !important;
+            border-color: #64748b !important;
+        }
+        .btn-copy-logs.copied {
+            background-color: #16a34a !important;
+            border-color: #16a34a !important;
+            color: #ffffff !important;
+        }
+
         .log-section-content {
             white-space: pre-wrap;
             font-family: var(--font-mono);
@@ -2557,27 +2581,42 @@
                 const end = i + 1 < stageMatches.length ? stageMatches[i + 1].index : dvcContent.length;
                 const content = dvcContent.substring(start, end).trim();
                 const stageName = stageMatches[i].name;
+                const sectionId = 'dvc_' + stageName;
 
-                // Prettify label: step_format -> Format, step_train -> Train, etc.
-                let prettyLabel = stageName;
-                if (stageName.startsWith('step_')) {
-                    prettyLabel = stageName.replace('step_', '').replace(/_/g, ' ');
-                    prettyLabel = prettyLabel.charAt(0).toUpperCase() + prettyLabel.slice(1);
+                // Check if we already have a section for this stage
+                const existing = sections.find(s => s.id === sectionId);
+                const currentStatus = classifySection(content, subStageInProgress);
+
+                if (existing) {
+                    // Append content to existing section
+                    existing.content += '\n\n' + content;
+                    // Propagate more critical statuses (error > warning > running > success > neutral)
+                    const statusPrecedence = { error: 4, warning: 3, running: 2, success: 1, neutral: 0 };
+                    if (statusPrecedence[currentStatus] > statusPrecedence[existing.status]) {
+                        existing.status = currentStatus;
+                    }
+                } else {
+                    // Prettify label: step_format -> Format, step_train -> Train, etc.
+                    let prettyLabel = stageName;
+                    if (stageName.startsWith('step_')) {
+                        prettyLabel = stageName.replace('step_', '').replace(/_/g, ' ');
+                        prettyLabel = prettyLabel.charAt(0).toUpperCase() + prettyLabel.slice(1);
+                    }
+
+                    sections.push({
+                        id: sectionId,
+                        label: prettyLabel,
+                        icon: 'bi-play-circle',
+                        content: content,
+                        status: currentStatus
+                    });
                 }
-
-                sections.push({
-                    id: 'dvc_' + stageName,
-                    label: prettyLabel,
-                    icon: 'bi-play-circle',
-                    content: content,
-                    status: classifySection(content, subStageInProgress)
-                });
             }
 
             return sections;
         }
 
-        function renderLogStageGrid(sections) {
+        function renderLogStageGrid(sections, isFinished) {
             const grid = document.getElementById('log-stage-grid');
             grid.innerHTML = '';
 
@@ -2598,14 +2637,14 @@
                 grid.appendChild(btn);
             });
 
-            // Add "Last Error" button if any section has error status
+            // Add "Last Error" button if job is finished and any section has error status
             const hasError = sections.some(s => s.status === 'error');
-            if (hasError) {
+            if (isFinished && hasError) {
                 const errBtn = document.createElement('button');
                 const isActive = currentSelectedStage === '__last_error__';
                 errBtn.className = `log-stage-btn status-error ${isActive ? 'active' : ''}`;
                 errBtn.innerHTML = `<i class="bi bi-exclamation-triangle-fill"></i> Last Error`;
-                errBtn.title = 'Show the last 100 lines of the full log';
+                errBtn.title = 'Show the logs of the failed stage';
                 errBtn.onclick = (e) => selectStage('__last_error__', sections, e);
                 grid.appendChild(errBtn);
             }
@@ -2635,6 +2674,10 @@
         function getStageContent(stageId, sections) {
             if (stageId === '__all__') return fullLogBuffer;
             if (stageId === '__last_error__') {
+                const errorSections = sections ? sections.filter(s => s.status === 'error') : [];
+                if (errorSections.length > 0) {
+                    return errorSections[errorSections.length - 1].content;
+                }
                 return fullLogBuffer.split('\n').slice(-100).join('\n');
             }
             const section = sections ? sections.find(s => s.id === stageId) : null;
@@ -2697,15 +2740,39 @@
         function copyLogs() {
             // Always copy the FULL section content, not just the rendered portion
             const text = currentSectionLines.join('\n');
-            navigator.clipboard.writeText(text).then(() => {
+            
+            const handleSuccess = () => {
                 const btn = document.querySelector('.btn-copy-logs');
                 btn.classList.add('copied');
-                btn.innerHTML = '<i class="bi bi-check-lg"></i> Copied!';
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> Copié !';
                 setTimeout(() => {
                     btn.classList.remove('copied');
-                    btn.innerHTML = '<i class="bi bi-clipboard"></i> Copy';
+                    btn.innerHTML = '<i class="bi bi-clipboard"></i> Copier';
                 }, 2000);
-            });
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(handleSuccess).catch(err => {
+                    console.error('Failed to copy logs using clipboard API:', err);
+                });
+            } else {
+                // Fallback for non-HTTPS or older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.top = '0';
+                textArea.style.left = '0';
+                textArea.style.position = 'fixed';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) handleSuccess();
+                } catch (err) {
+                    console.error('Fallback copy failed:', err);
+                }
+                document.body.removeChild(textArea);
+            }
         }
 
         function showLogs(jobId) {
@@ -2771,12 +2838,26 @@
 
         async function pollLogs(jobId) {
             try {
+                // Fetch job status to check if it is finished (completed or failed)
+                let isFinished = false;
+                try {
+                    const statusResp = await fetch(`/job_status/${jobId}`);
+                    if (statusResp.ok) {
+                        const jobInfo = await statusResp.json();
+                        isFinished = ['completed', 'failed'].includes(jobInfo.status);
+                    }
+                } catch (statusErr) {
+                    console.error("Failed to fetch job status during polling", statusErr);
+                }
+
                 const resp = await fetch(`/api/jobs/${jobId}/logs?offset=${lastLogOffset}`);
                 const data = await resp.json();
 
-                if (data.logs) {
-                    fullLogBuffer += data.logs;
-                    lastLogOffset = data.offset;
+                if (data.logs || lastLogOffset > 0) {
+                    if (data.logs) {
+                        fullLogBuffer += data.logs;
+                        lastLogOffset = data.offset;
+                    }
 
                     const sections = parseLogSections(fullLogBuffer);
 
@@ -2786,7 +2867,7 @@
                         currentSelectedStage = sections[sections.length - 1].id;
                     }
 
-                    renderLogStageGrid(sections);
+                    renderLogStageGrid(sections, isFinished);
 
                     // Check if user is at bottom BEFORE updating content
                     const shouldAutoScroll = isUserAtBottom();
