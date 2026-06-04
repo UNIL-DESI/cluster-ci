@@ -7,6 +7,8 @@
 | [Concurrency Management](tasks/concurrency_management.md) | Management of obsolete job cancellations. | 2026-05-05 | Infrastructure |
 | [Docker Multi-Arch Strategy](architecture/docker_arm_strategy.md) | Stratégie multi-architecture Docker (ARM64/AMD64) avec sélection per-arch via `DOCKER_IMAGE_AMD64`/`DOCKER_IMAGE_ARM64` et fallback `DOCKER_BASE_IMAGE`. | 2026-06-03 | Up to date |
 | [Zombie Prevention](architecture/zombie_prevention.md) | Stratégie d'éradication et de prévention des processus orphelins dvc-viewer et conteneurs zombies (Issue #94). | 2026-05-24 | Up to date |
+| [Resilient Logging](architecture/resilient_logging.md) | Stratégie de reconconnexion résiliente des logs et protocole de heartbeat pour ppng.io (Issue #111). | 2026-06-04 | Up to date |
+
 
 ## Headnode/Worker Topology and Dynamic Scheduling
 
