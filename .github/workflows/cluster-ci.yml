@@ -6,7 +6,7 @@ name: Cluster-CI Execution
 #
 # This workflow is managed by the external Cluster-CI orchestrator. It executes
 # the pipeline in a fully configured environment where dependencies (uv) and
-# SECRETS (like DVC_GDRIVE_CREDENTIALS) are automatically injected by the runner.
+# SECRETS are automatically injected by the runner.
 #
 # If you need to run tests or research scripts, DO NOT create a separate workflow
 # file running native shell commands (like 'pytest' or 'uv run ...'). Native steps

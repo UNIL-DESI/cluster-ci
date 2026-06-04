@@ -125,26 +125,85 @@ def fix_pyproject(pyproject_path, fix_python=False, remove_torch_pin=False):
         return True
     return False
 
+def _get_project_dep_names(pyproject_path):
+    """Extract normalized dependency names from pyproject.toml."""
+    try:
+        with open(pyproject_path, "r") as f:
+            doc = tomlkit.parse(f.read())
+        deps = doc.get("project", {}).get("dependencies", [])
+        names = set()
+        for dep in deps:
+            # Extract package name (before any version specifier)
+            name = re.split(r"[><=!~\[;]", dep.strip())[0].strip()
+            names.add(name.lower().replace("-", "_").replace(".", "_"))
+        return names
+    except Exception:
+        return set()
+
+
+def _filter_constraints(constraints_path, pyproject_path):
+    """Create a filtered constraints file that excludes packages which are also
+    direct project dependencies. This prevents false resolution failures when
+    the container ships custom builds (e.g., NeMo's transformers) with different
+    dependency metadata than PyPI publishes."""
+    project_deps = _get_project_dep_names(pyproject_path)
+    if not project_deps:
+        return constraints_path
+
+    filtered_lines = []
+    excluded = []
+    with open(constraints_path, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                filtered_lines.append(line)
+                continue
+            pkg_name = re.split(r"[><=!~\[;]", stripped)[0].strip()
+            normalized = pkg_name.lower().replace("-", "_").replace(".", "_")
+            if normalized in project_deps:
+                excluded.append(pkg_name)
+                continue
+            filtered_lines.append(line)
+
+    if excluded:
+        log_info(f"Excluded {len(excluded)} project deps from constraints: {', '.join(excluded)}")
+        fd, filtered_path = tempfile.mkstemp(suffix=".txt", prefix="filtered_constraints_")
+        with os.fdopen(fd, "w") as f:
+            f.writelines(filtered_lines)
+        return filtered_path
+
+    return constraints_path
+
+
 def simulate_resolution(pyproject_path, constraints_path):
     if not os.path.exists(constraints_path):
         log_info(f"No constraints file found at {constraints_path}. Skipping full simulation.")
         return True
-    
+
+    # Filter out project deps from constraints to avoid false conflicts
+    # with custom container builds (e.g., NeMo's transformers + huggingface-hub)
+    effective_constraints = _filter_constraints(constraints_path, pyproject_path)
+
     log_info("Simulating ARM64 resolution with uv...")
     cmd = [
         "uv", "pip", "compile",
         "--python-platform", "aarch64-unknown-linux-gnu",
         "--python", "3.12",
-        "-c", constraints_path,
+        "-c", effective_constraints,
         pyproject_path
     ]
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
+
+    # Cleanup filtered constraints if we created one
+    if effective_constraints != constraints_path and os.path.exists(effective_constraints):
+        os.remove(effective_constraints)
+
     if result.returncode != 0:
         log_error("Resolution simulation failed!")
         print(result.stderr)
         return False
-    
+
     log_success("Resolution simulation passed.")
     return True
 

@@ -1,54 +1,70 @@
 # Règles de l'Agent pour ce Répertoire
 
 <!-- CLUSTER-CI:START -->
-## ⚠️ Instructions Spécifiques pour la CI (Cluster-CI)
+## ⚠️ Cluster-CI — Instructions Agent
 
-Ce dépôt est orchestré par le système hybride **Cluster-CI** sur un cluster hétérogène multi-architecture :
-- **Workers ARM64** : GPU Blackwell GB10, 128GB RAM partagée, Ubuntu 24.04
-- **Headnode (AMD x86_64, dual-mode)** : 2× RTX 3090 (48GB VRAM), 125GB RAM, Ubuntu 20.04 — fonctionne simultanément comme **scheduler ET executor**
+Ce dépôt utilise **Cluster-CI** : un cluster ARM64 NVIDIA (GPU Blackwell GB10, 128GB RAM, Ubuntu 24.04).
 
-Le runner détecte automatiquement l'architecture hôte (`uname -m`) et sélectionne l'image Docker correspondante (`DOCKER_IMAGE_AMD64` ou `DOCKER_IMAGE_ARM64`). Le flag `--platform` est injecté dans toutes les commandes Docker.
+### 🚫 Règle n°1 — NE TOUCHE PAS à l'infrastructure cluster
 
-En tant qu'agent autonome, tu DOIS respecter scrupuleusement les contraintes suivantes pour ne pas casser l'infrastructure distante et mener tes expériences avec succès :
+Les dossiers et fichiers suivants sont gérés automatiquement par le cluster. **Ne les modifie pas, ne les débogue pas, n'essaie pas de les "réparer"** :
+- `.cluster-ci-tools/`, `.cluster-ci-logs/`, `.dvc/`, `.dvc-viewer/`
+- `.github/workflows/cluster-ci.yml`
+- Tout script temporaire installé par le système (hooks, bootstrap, viewers, hashes)
 
-1. **Version Python** : Le conteneur d'exécution utilise **Python 3.12**. Si tu utilises `pyproject.toml`, la directive `requires-python` doit include `3.12` (ex: `>=3.10`). Tu peux utiliser les dernières versions de toutes les bibliothèques.
-2. **Dépendances GPU (PyTorch)** :
-   - Le conteneur NGC (`nvcr.io/nvidia/pytorch:26.05-py3`) embarque déjà **PyTorch 2.12** avec **CUDA 13.2**.
-   - Sur ARM64, le système utilise l'héritage natif `pip` : il ne télécharge que les dépendances manquantes et réutilise le `torch` pré-installé.
-   - Ne spécifie **aucune contrainte de version stricte** (`==`) pour `torch`, `torchvision`, etc. Utilise `torch` sans version ou avec `>=2.0`.
-3. **Exécution des Jobs & Pipeline (DVC + `.cluster-ci`)** :
-   - NE MODIFIE PAS le fichier `.github/workflows/cluster-ci.yml`.
-   - Les commandes shell natives (`pytest`, `uv run`, etc.) ne doivent pas être exécutées manuellement dans les workflows.
-   - **Toute exécution (tests, entraînement, expériences) DOIT passer par un stage DVC** défini dans le fichier `dvc.yaml`.
-   - **Comment déclarer ton expérience** :
-     1. Définis un stage dans `dvc.yaml` contenant ta commande d'expérience. Exemple :
-        ```yaml
-        stages:
-          my_experiment:
-            cmd: python3 src/experiments/run_training.py --epochs 10
-            deps:
-              - src/experiments/run_training.py
-            outs:
-              - results/model.pt
-        ```
-     2. Pour cibler ce stage pour exécution, inscris son nom dans le fichier `.cluster-ci` à la racine (tu peux lister plusieurs stages séparés par des espaces ou retours à la ligne). Exemple :
-        ```env
-        STAGES=my_experiment
-        MAX_RUNTIME_HOURS=24
-        REQUIRED_RAM=16GB
-        REQUIRED_VRAM=24GB
-        ```
-     3. **Paramètres Obligatoires** : Tu DOIS définir `MAX_RUNTIME_HOURS` (max 24) dans `.cluster-ci`. Tu peux aussi définir `REQUIRED_RAM` (ex: `16GB`) et `REQUIRED_VRAM` (ex: `24GB`) pour filtrer les workers compatibles.
-     4. **VRAM** : Si ton expérience nécessite une quantité minimale de VRAM GPU, utilise `REQUIRED_VRAM=24GB`. Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
-     5. **Interfaces Graphiques** : Pour déployer une interface interactive (Gradio, Streamlit, TensorBoard), ajoute `EXPOSED_PORT=<port>` dans `.cluster-ci`. Le système routera automatiquement le trafic vers ton application.
-     6. **Secrets** : Tous les secrets définis dans "GitHub Repository Secrets" sont automatiquement transmis au cluster.
-4. **Tests et Itération Rapide (CLI `cluster-run`)** :
-   - En tant qu'agent, pour tester ton code ou lancer une expérience sur le cluster, **n'attends pas le déclenchement passif de GitHub**.
-   - Utilise la commande locale `cluster-run` dans ton terminal.
-   - **Guide d'utilisation de `cluster-run`** :
-     - `cluster-run` : Pousse un shadow commit avec l'état actuel de ton espace de travail (y compris les fichiers non commités et fichiers untracked) vers une branche de draft temporaire. Cela va déclencher le runner, soumettre le job au scheduler du Headnode, puis **streamer en direct et en temps réel les logs d'exécution ligne par ligne dans ton terminal local**. C'est la commande principale pour itérer rapidement sans polluer l'historique git.
-     - `cluster-run list` : Affiche l'historique et le statut (pending, running, completed, failed) des runs récents.
-     - `cluster-run view [run_id]` : Affiche ou reprend le streaming des logs d'un run spécifié (ou du tout dernier run si aucun ID n'est fourni).
-     - `cluster-run cancel [run_id]` : Interrompt proprement l'exécution d'un run en cours et nettoie la branche temporaire correspondante.
-   - **Règle absolue** : Respecte toujours cette pipeline de soumission pour tester ou exécuter du code sur le cluster. N'essaie jamais de te connecter directement en SSH au Headnode ou aux Workers pour exécuter des scripts manuellement.
+Si tu vois des messages inhabituels dans les logs de `cluster-run` concernant ces composants (DVC viewer, hashes, mémoire, queues, allocation), **c'est normal** — ignore-les.
+
+### 🐍 Environnement d'exécution
+
+- **Python 3.12** — `requires-python` doit inclure `3.12` (ex: `>=3.10`).
+- **PyTorch 2.12 + CUDA 13.2** pré-installés dans le conteneur NGC. Ne mets **aucune version fixe** (`==`) pour `torch`, `torchvision`, etc. Utilise `torch` sans version ou `>=2.0`.
+- Tu peux utiliser les dernières versions de toutes les autres bibliothèques.
+
+### 🔬 Pipeline DVC + `.cluster-ci`
+
+Toute exécution (tests, entraînement, expériences) **DOIT passer par un stage DVC** dans `dvc.yaml`.
+
+**Déclarer un stage** :
+```yaml
+stages:
+  my_experiment:
+    cmd: python3 src/run.py --epochs 10
+    deps: [src/run.py]
+    outs: [results/model.pt]
+    metrics: [results/metrics.json: {cache: false}]
+    plots: [results/plot.png: {cache: false}]
+```
+
+**Fichier `.cluster-ci`** (paramètres d'exécution) :
+```env
+REQUIRED_RAM=2GB
+REQUIRED_VRAM=24GB
+MAX_RUNTIME_HOURS=1
+```
+- `MAX_RUNTIME_HOURS` (max 24) : **obligatoire**.
+- `REQUIRED_RAM` : contrainte de placement RAM (défaut: 2GB).
+- `REQUIRED_VRAM` : contrainte de placement VRAM GPU (défaut: 0, pas de contrainte). Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
+- `EXPOSED_PORT=<port>` : pour interfaces web (Gradio, Streamlit, TensorBoard).
+- `STAGES` : **laisser vide par défaut** → exécute toute la pipeline (`dvc repro`), optimal pour le debug progressif. Si besoin de cibler un sous-ensemble, indique uniquement le **dernier stage voulu** — DVC réexécutera automatiquement les dépendances nécessaires.
+- Les secrets GitHub Repository sont automatiquement transmis au cluster.
+
+### 📊 Outs/Deps vs Métriques/Plots — Deux circuits distincts
+
+| | `deps` / `outs` | `metrics` / `plots` |
+|---|---|---|
+| **Stockage** | Peer-to-peer géré par le cluster | Synchronisés via Git |
+| **À gérer ?** | Non — le cluster s'en charge | Oui — les déclarer avec `cache: false` |
+| **Recommandation** | Déclare-les dans `dvc.yaml`, ne t'occupe pas de leur transfert | **Au moins 1 métrique + 1 plot par stage** pour le suivi |
+
+**Conflits Git attendus** : Les métriques et plots sont automatiquement committés par le cluster à chaque nouveau résultat (commits sans déclenchement CI). Lors d'un `git pull`, des conflits sur ces fichiers sont **normaux et voulus**. Choisis simplement quelle version garder (résultats locaux via `cluster-run` ou résultats du dernier commit automatique).
+
+### 🚀 CLI `cluster-run`
+
+Pour tester/itérer sans attendre GitHub, utilise `cluster-run` dans ton terminal :
+- `cluster-run` : pousse un shadow commit, déclenche l'exécution et **stream les logs en temps réel**.
+- `cluster-run list` : statut des runs récents.
+- `cluster-run view [id]` : reprend le streaming d'un run.
+- `cluster-run cancel [id]` : annule un run en cours.
+
+**Jamais de SSH direct** sur le cluster. Toujours passer par `cluster-run`.
 <!-- CLUSTER-CI:END -->
