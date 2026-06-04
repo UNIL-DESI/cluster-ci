@@ -203,7 +203,7 @@ cluster-ci/
 - [x] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105)
 - [x] [Orchestrateur : Fallback silencieux de HEADNODE_URL et absence de feedback réseau](https://github.com/UNIL-DESI/cluster-ci/issues/109)
 - [x] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go (Fausse alerte)](https://github.com/UNIL-DESI/cluster-ci/issues/107)
-- [x] [Fix(logs) : Streaming résilient et résolution des workflows GHA bloqués](https://github.com/UNIL-DESI/cluster-ci/issues/111)
+- [x] [Fix(logs) : Streaming résilient, reconconnexion et résolution de la fausse erreur d'infrastructure en fin de job](https://github.com/UNIL-DESI/cluster-ci/issues/111)
 - [🔄] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106)
 - [ ] [Bugs Interface Web : Tri aléatoire des dates et heures dans l'Historique DVC](https://github.com/UNIL-DESI/cluster-ci/issues/101)
 - [x] Fix Zombie Jobs : Guard branch-level dans le scheduler, cancellation headnode-aware dans `cluster-run`, auto-cancel dans la version déployée, et correction du crash HTTP 500 sur `/api/jobs/{id}/stop`
