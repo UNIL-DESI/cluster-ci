@@ -603,7 +603,7 @@ def stream_logs(run_id, commit_sha, branch=None):
         total_lines_processed = 0
         lines_to_skip = 0
         last_reconnect_time = 0
-        reconnect_delay = 5
+        reconnect_count = 0  # Track consecutive reconnections without data
 
         def start_curl_stream():
             nonlocal proc, reader_thread, lines_to_skip, q
@@ -664,16 +664,16 @@ def stream_logs(run_id, commit_sha, branch=None):
                     last_synced_sha = remote_sha
                 last_sync_time = time.time()
 
-            # Active connection monitoring to auto-reconnect if the curl process died
+            # Active connection monitoring to auto-reconnect if the curl process died.
+            # The server POST recycles periodically (--max-time), causing the GET to receive
+            # EOF. This is EXPECTED behavior, not an error. Reconnect silently with a short
+            # fixed delay (no exponential backoff).
             if has_curl and commit_sha:
                 if proc and proc.poll() is not None:
-                    # Connection died. Check if the GHA run is still active before reconnecting.
-                    # Wait with exponential backoff between reconnection attempts to avoid flooding.
-                    if time.time() - last_reconnect_time > reconnect_delay:
+                    if time.time() - last_reconnect_time > 3:  # Fixed 3s delay between retries
                         last_reconnect_time = time.time()
                         reconnect_needed = True
                         try:
-                            # Apply short timeout=3 to avoid freezing on GHA query when offline
                             res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
                             if res.returncode == 0:
                                 info = json.loads(res.stdout)
@@ -685,8 +685,10 @@ def stream_logs(run_id, commit_sha, branch=None):
                             pass
                         
                         if reconnect_needed:
-                            print_line("⚡ [Réseau] Connexion fluctuante détectée. Reconnexion automatique au flux de logs...", force=True)
-                            reconnect_delay = min(reconnect_delay * 2, 60)
+                            reconnect_count += 1
+                            # Only warn user after multiple consecutive failures (not routine recycling)
+                            if reconnect_count >= 3:
+                                print_line("⚡ [Réseau] Reconnexion au flux de logs...", force=True)
                             start_curl_stream()
 
             try:
@@ -704,8 +706,8 @@ def stream_logs(run_id, commit_sha, branch=None):
                     print("\n🟢 Live stream connected.")
                     received_data = True
                 
-                # Reset exponential backoff on successful read
-                reconnect_delay = 5
+                # Reset reconnection counter on successful data receipt
+                reconnect_count = 0
                 
                 # Heartbeat filtering: server sends ♥ every 10s to keep channel alive.
                 # Update the timer (proof of life) but don't display or log.
@@ -810,16 +812,31 @@ def stream_logs(run_id, commit_sha, branch=None):
                         except Exception:
                             pass
 
-                # Active connection watchdog: if no data (including heartbeats) for 60s,
-                # the connection is dead. With server heartbeats every 10s, 60s means 6+ missed → real disconnect.
-                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 60):
-                    if time.time() - last_reconnect_time > 10:
-                        last_reconnect_time = time.time()
-                        print_line("⚡ [Réseau] Flux inactif depuis 60s (6+ heartbeats manqués). Reconnexion au flux de logs...", force=True)
-                        reconnect_delay = 5
-                        start_curl_stream()
-                        # Reset received time to prevent infinite loops of reconnects
-                        last_log_received_time = time.time()
+                # Two-tier watchdog for stale connections:
+                #
+                # Tier 1 — Post-reconnection fast watchdog (20s):
+                #   After a reconnection, if the new GET paired with a zombie POST on ppng.io,
+                #   we receive no data. Kill and retry quickly instead of waiting 60s.
+                #
+                # Tier 2 — Steady-state watchdog (60s):
+                #   During normal operation, 60s without data (including heartbeats every 10s)
+                #   means 6+ missed heartbeats → genuine disconnection.
+                if not gha_completed and has_curl and commit_sha:
+                    time_since_data = time.time() - last_log_received_time
+                    time_since_reconnect = time.time() - last_reconnect_time
+                    
+                    # Tier 1: Fast retry after reconnection (if we reconnected recently and got no data)
+                    watchdog_threshold = 20 if (reconnect_count > 0 and time_since_reconnect < 25) else 60
+                    
+                    if time_since_data > watchdog_threshold:
+                        if time.time() - last_reconnect_time > 5:
+                            last_reconnect_time = time.time()
+                            reconnect_count += 1
+                            if watchdog_threshold == 60:
+                                print_line("⚡ [Réseau] Flux inactif depuis 60s. Reconnexion au flux de logs...", force=True)
+                            start_curl_stream()
+                            # Reset received time to prevent infinite loops of reconnects
+                            last_log_received_time = time.time()
 
                 if not received_data:
                     # Throttle queue status display to avoid spamming
