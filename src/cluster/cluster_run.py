@@ -33,6 +33,8 @@ _CLEANUP_DONE = False
 # Global variables and regex for tqdm and stream log optimizations
 _LAST_WAS_TQDM = False
 TQDM_REGEX = re.compile(r"\d+%%\s*\|[█░■□▊▋▌▍▎▏\s\-]*\|?\s*\d+/\d+\s*\[\d+:\d+")
+_LAST_SYNC_ERROR_TIME = 0
+
 
 
 # Log redirection settings
@@ -601,6 +603,7 @@ def stream_logs(run_id, commit_sha, branch=None):
         total_lines_processed = 0
         lines_to_skip = 0
         last_reconnect_time = 0
+        reconnect_delay = 5
 
         def start_curl_stream():
             nonlocal proc, reader_thread, lines_to_skip, q
@@ -610,11 +613,11 @@ def stream_logs(run_id, commit_sha, branch=None):
             
             # Recreate queue to prevent residual logs from previous connection
             q = queue.Queue()
-            # ppng.io is a real-time stream and does not replay history; do not skip lines
-            lines_to_skip = 0
+            # Skip lines we already processed to handle tail -c +1 replay on reconnect
+            lines_to_skip = total_lines_processed
             
             proc = subprocess.Popen(
-                ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                ["curl", "-s", "-N", "--connect-timeout", "5", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                 stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
             )
             
@@ -640,6 +643,7 @@ def stream_logs(run_id, commit_sha, branch=None):
         if has_curl and commit_sha:
             start_curl_stream()
 
+
         last_sync_time = time.time()
         last_synced_sha = commit_sha
         last_log_received_time = time.time()
@@ -657,12 +661,13 @@ def stream_logs(run_id, commit_sha, branch=None):
             if has_curl and commit_sha:
                 if proc and proc.poll() is not None:
                     # Connection died. Check if the GHA run is still active before reconnecting.
-                    # Wait at least 5s between reconnection attempts to avoid flooding.
-                    if time.time() - last_reconnect_time > 5:
+                    # Wait with exponential backoff between reconnection attempts to avoid flooding.
+                    if time.time() - last_reconnect_time > reconnect_delay:
                         last_reconnect_time = time.time()
                         reconnect_needed = True
                         try:
-                            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                            # Apply short timeout=3 to avoid freezing on GHA query when offline
+                            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
                             if res.returncode == 0:
                                 info = json.loads(res.stdout)
                                 status = info.get("status")
@@ -674,6 +679,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                         
                         if reconnect_needed:
                             print_line("⚡ [Réseau] Connexion fluctuante détectée. Reconnexion automatique au flux de logs...", force=True)
+                            reconnect_delay = min(reconnect_delay * 2, 60)
                             start_curl_stream()
 
             try:
@@ -690,6 +696,9 @@ def stream_logs(run_id, commit_sha, branch=None):
                 if not received_data:
                     print("\n🟢 Live stream connected.")
                     received_data = True
+                
+                # Reset exponential backoff on successful read
+                reconnect_delay = 5
                 print_line(line_stripped, force=True)
                 
                 # Extract job_id from logs if available to keep client and state file fully synchronized
@@ -707,7 +716,8 @@ def stream_logs(run_id, commit_sha, branch=None):
                 if time.time() - last_gha_poll_time > 5:
                     last_gha_poll_time = time.time()
                     try:
-                        res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                        # Apply short timeout=3 to avoid freezing on GHA query when offline
+                        res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
                         if res.returncode == 0:
                             info = json.loads(res.stdout)
                             status = info.get("status")
@@ -785,12 +795,13 @@ def stream_logs(run_id, commit_sha, branch=None):
                         except Exception:
                             pass
 
-                # Active connection watchdog: if the log stream has been silent for more than 90s,
+                # Active connection watchdog: if the log stream has been silent for more than 30s,
                 # the connection might be silently hung. Force a reconnect if GHA is still running.
-                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 90):
+                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 30):
                     if time.time() - last_reconnect_time > 10:
                         last_reconnect_time = time.time()
-                        print_line("⚡ [Réseau] Flux inactif depuis 90s. Reconnexion préventive au flux de logs...", force=True)
+                        print_line("⚡ [Réseau] Flux inactif depuis 30s. Reconnexion préventive au flux de logs...", force=True)
+                        reconnect_delay = 5
                         start_curl_stream()
                         # Reset received time to prevent infinite loops of reconnects
                         last_log_received_time = time.time()
@@ -957,10 +968,15 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
             print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
         return True, remote_sha
     except Exception as e:
-        print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
-        print("💡 [Info] En cas de défaillance réseau persistante, vous pourrez synchroniser vos résultats manuellement via la commande :", file=sys.stderr)
-        print("   cluster-run sync", file=sys.stderr)
+        global _LAST_SYNC_ERROR_TIME
+        current_time = time.time()
+        if current_time - _LAST_SYNC_ERROR_TIME > 60:
+            _LAST_SYNC_ERROR_TIME = current_time
+            print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
+            print("💡 [Info] En cas de défaillance réseau persistante, vous pourrez synchroniser vos résultats manuellement via la commande :", file=sys.stderr)
+            print("   cluster-run sync", file=sys.stderr)
         return False, None
+
 
 
 def shadow_run():
@@ -1097,7 +1113,7 @@ def shadow_run():
     url = "URL non disponible"
     for _ in range(5):
         try:
-            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
             if res.returncode == 0:
                 info = json.loads(res.stdout)
                 conclusion = info.get("conclusion", "unknown")
@@ -1172,7 +1188,7 @@ def main():
         
         # Check run status and headSha to determine if we can stream live logs
         try:
-            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,headSha"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,headSha"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
             if res.returncode == 0:
                 info = json.loads(res.stdout)
                 status = info.get("status")
