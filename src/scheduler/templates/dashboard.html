@@ -2756,6 +2756,11 @@
             const sections = parseLogSections(fullLogBuffer);
             const text = getStageContent(currentSelectedStage, sections) || '';
             
+            if (!text) {
+                console.warn('copyLogs: no text to copy (empty section or no stage selected)');
+                return;
+            }
+
             const handleSuccess = () => {
                 const btn = document.querySelector('.btn-copy-logs');
                 if (!btn) return;
@@ -2768,43 +2773,52 @@
             };
 
             const fallbackCopy = (txt) => {
+                // CRITICAL: Append textarea INSIDE the modal, not document.body.
+                // Bootstrap modals trap focus — elements outside the modal cannot receive focus,
+                // which silently breaks textarea.select() and document.execCommand('copy').
+                const modalEl = document.getElementById('logModal');
+                const container = modalEl || document.body;
+                
                 const textArea = document.createElement('textarea');
                 textArea.value = txt;
+                // Position off-screen but still inside the modal's DOM tree
                 textArea.style.position = 'fixed';
-                textArea.style.top = '-9999px';
-                textArea.style.left = '-9999px';
-                textArea.style.width = '2em';
-                textArea.style.height = '2em';
+                textArea.style.top = '0';
+                textArea.style.left = '0';
+                textArea.style.width = '1px';
+                textArea.style.height = '1px';
                 textArea.style.padding = '0';
                 textArea.style.border = 'none';
                 textArea.style.outline = 'none';
                 textArea.style.boxShadow = 'none';
                 textArea.style.background = 'transparent';
-                document.body.appendChild(textArea);
+                textArea.style.opacity = '0.01';
+                container.appendChild(textArea);
                 textArea.focus();
                 textArea.select();
+                // Also set selection range explicitly for iOS/mobile compatibility
+                textArea.setSelectionRange(0, txt.length);
                 try {
                     const successful = document.execCommand('copy');
                     if (successful) {
                         handleSuccess();
                     } else {
-                        console.error('Fallback copy command was unsuccessful');
+                        console.error('Fallback copy command returned false');
                     }
                 } catch (err) {
                     console.error('Fallback copy failed:', err);
                 }
-                document.body.removeChild(textArea);
+                container.removeChild(textArea);
             };
 
             // In secure contexts (HTTPS or localhost), prefer the modern async Clipboard API.
-            // In insecure contexts (HTTP), the Clipboard API rejects or is undefined,
+            // In insecure contexts (HTTP), the Clipboard API is unavailable,
             // so we MUST use the synchronous fallback immediately during the click event.
             if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(() => {
                     handleSuccess();
                 }).catch(err => {
-                    console.warn('Failed to copy logs using clipboard API, trying fallback:', err);
-                    // Fallback here might fail due to lost user gesture, but it's a best effort
+                    console.warn('Clipboard API failed, trying fallback:', err);
                     fallbackCopy(text);
                 });
             } else {

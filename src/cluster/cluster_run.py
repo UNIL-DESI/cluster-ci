@@ -624,7 +624,6 @@ def stream_logs(run_id, commit_sha, branch=None):
             
             proc = subprocess.Popen(
                 ["curl", "-s", "-N", "--connect-timeout", "5", "--keepalive-time", "10",
-                 "--speed-time", "45", "--speed-limit", "1",
                  f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                 stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
             )
