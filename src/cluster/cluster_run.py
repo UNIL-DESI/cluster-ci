@@ -919,10 +919,14 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
             return False, None
 
         cluster_files = []
+        user_visible_files = []
         for line in res_diff.stdout.splitlines():
             name = line.strip()
             if name and not name.startswith(".cluster-ci"):
                 cluster_files.append(name)
+                is_hidden = name.startswith(".dvc-viewer/hashes/") or name == "dvc.lock"
+                if not is_hidden:
+                    user_visible_files.append(name)
 
         if cluster_files:
             # Force checkout of these files, overwriting any local copy
@@ -930,10 +934,13 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
                 ["git", "checkout", f"origin/{branch}", "--"] + cluster_files,
                 check=True,
             )
-            print(f"\n✨ [Auto-sync] Rapatriement réussi de {len(cluster_files)} fichier(s) de métriques/plots :")
-            for f in cluster_files:
-                print(f"   🎉 {f}")
-            print()
+            if user_visible_files:
+                print(f"\n✨ [Auto-sync] Rapatriement réussi de {len(user_visible_files)} fichier(s) de métriques/plots :")
+                for f in user_visible_files:
+                    print(f"   🎉 {f}")
+                print()
+            elif not silent_if_no_changes:
+                print("ℹ️ No changes in metrics or plots detected on the cluster (internal config updated).")
         elif not silent_if_no_changes:
             print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
         return True, remote_sha
