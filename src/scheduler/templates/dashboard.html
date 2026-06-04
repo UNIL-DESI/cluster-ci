@@ -2751,13 +2751,14 @@
             }
         }
 
-        async function copyLogs() {
+        function copyLogs() {
             // Always copy the FULL section content, not just the rendered portion
             const sections = parseLogSections(fullLogBuffer);
-            const text = getStageContent(currentSelectedStage, sections);
+            const text = getStageContent(currentSelectedStage, sections) || '';
             
             const handleSuccess = () => {
                 const btn = document.querySelector('.btn-copy-logs');
+                if (!btn) return;
                 btn.classList.add('copied');
                 btn.innerHTML = '<i class="bi bi-check-lg"></i> Copié !';
                 setTimeout(() => {
@@ -2795,14 +2796,17 @@
                 document.body.removeChild(textArea);
             };
 
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                try {
-                    await navigator.clipboard.writeText(text);
+            // In secure contexts (HTTPS or localhost), prefer the modern async Clipboard API.
+            // In insecure contexts (HTTP), the Clipboard API rejects or is undefined,
+            // so we MUST use the synchronous fallback immediately during the click event.
+            if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => {
                     handleSuccess();
-                } catch (err) {
+                }).catch(err => {
                     console.warn('Failed to copy logs using clipboard API, trying fallback:', err);
+                    // Fallback here might fail due to lost user gesture, but it's a best effort
                     fallbackCopy(text);
-                }
+                });
             } else {
                 fallbackCopy(text);
             }
