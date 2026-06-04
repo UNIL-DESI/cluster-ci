@@ -630,6 +630,8 @@ def stream_logs(run_id, commit_sha, branch=None):
 
         last_sync_time = time.time()
         last_synced_sha = commit_sha
+        last_log_received_time = time.time()
+        last_gha_poll_time = 0
 
         while True:
             # Periodic intermediate synchronization (every 10s) once live stream is active
@@ -646,18 +648,20 @@ def stream_logs(run_id, commit_sha, branch=None):
                     # Wait at least 5s between reconnection attempts to avoid flooding.
                     if time.time() - last_reconnect_time > 5:
                         last_reconnect_time = time.time()
+                        reconnect_needed = True
                         try:
                             res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                             if res.returncode == 0:
                                 info = json.loads(res.stdout)
                                 status = info.get("status")
                                 conclusion = info.get("conclusion")
-                                if status != "completed" and not conclusion:
-                                    print_line("⚡ [Réseau] Connexion fluctuante détectée. Reconnexion automatique au flux de logs...", force=True)
-                                    start_curl_stream()
+                                if status == "completed" or conclusion:
+                                    reconnect_needed = False
                         except Exception:
-                            # In case of general network failure, gh command will fail.
-                            # We still try to reconnect curl to keep trying.
+                            pass
+                        
+                        if reconnect_needed:
+                            print_line("⚡ [Réseau] Connexion fluctuante détectée. Reconnexion automatique au flux de logs...", force=True)
                             start_curl_stream()
 
             try:
@@ -684,56 +688,59 @@ def stream_logs(run_id, commit_sha, branch=None):
                         update_run_state_job_id(extracted_job_id)
 
                 total_lines_processed += 1
-                last_gha_poll_time = time.time()
+                last_log_received_time = time.time()
             except queue.Empty:
                 gha_completed = False
-                try:
-                    res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if res.returncode == 0:
-                        info = json.loads(res.stdout)
-                        status = info.get("status")
-                        conclusion = info.get("conclusion")
-                        url = info.get("url", "URL non disponible")
-                        if status == "completed" or conclusion:
-                            gha_completed = True
-                            # Drain remaining logs from the ppng.io pipe before quitting.
-                            # The GHA run just finished, but some log lines may still be in transit.
-                            drain_deadline = time.time() + 5  # drain for up to 5 seconds
-                            while time.time() < drain_deadline:
-                                try:
-                                    line = q.get(timeout=0.2)
-                                    line_stripped = line.rstrip('\r\n')
-                                    if line_stripped and "has been established already" not in line_stripped:
-                                        print_line(line_stripped, force=True)
-                                except queue.Empty:
-                                    break  # No more data in pipe
-                            if proc:
-                                try: proc.terminate()
-                                except: pass
-                            if conclusion == "success":
-                                print("\n✅ Cluster-CI run completed successfully!")
-                                close_log_redirection()
-                                print_log_summary()
-                                return 0
-                            elif conclusion == "cancelled":
-                                print("\n⚠️ [ERREUR] L'exécution a été annulée.")
-                                print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
-                                print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
-                                close_log_redirection()
-                                print_log_summary()
-                                return 1
-                            else:
-                                print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
-                                print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
-                                print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
-                                close_log_redirection()
-                                print_log_summary()
-                                return 1
-                except Exception:
-                    pass
+                # Limit GHA status polling to once every 5 seconds to prevent subprocess calls from blocking the main loop
+                if time.time() - last_gha_poll_time > 5:
+                    last_gha_poll_time = time.time()
+                    try:
+                        res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                        if res.returncode == 0:
+                            info = json.loads(res.stdout)
+                            status = info.get("status")
+                            conclusion = info.get("conclusion")
+                            url = info.get("url", "URL non disponible")
+                            if status == "completed" or conclusion:
+                                gha_completed = True
+                                # Drain remaining logs from the ppng.io pipe before quitting.
+                                # The GHA run just finished, but some log lines may still be in transit.
+                                drain_deadline = time.time() + 5  # drain for up to 5 seconds
+                                while time.time() < drain_deadline:
+                                    try:
+                                        line = q.get(timeout=0.2)
+                                        line_stripped = line.rstrip('\r\n')
+                                        if line_stripped and "has been established already" not in line_stripped:
+                                            print_line(line_stripped, force=True)
+                                    except queue.Empty:
+                                        break  # No more data in pipe
+                                if proc:
+                                    try: proc.terminate()
+                                    except: pass
+                                if conclusion == "success":
+                                    print("\n✅ Cluster-CI run completed successfully!")
+                                    close_log_redirection()
+                                    print_log_summary()
+                                    return 0
+                                elif conclusion == "cancelled":
+                                    print("\n⚠️ [ERREUR] L'exécution a été annulée.")
+                                    print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
+                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+                                    close_log_redirection()
+                                    print_log_summary()
+                                    return 1
+                                else:
+                                    print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
+                                    print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+                                    close_log_redirection()
+                                    print_log_summary()
+                                    return 1
+                    except Exception:
+                        pass
 
                 # If GHA run is still active, perform scheduler health check to detect unexpected backend failures
-                if not gha_completed and (time.time() - last_gha_poll_time > 5):
+                if not gha_completed and (time.time() - last_log_received_time > 5):
                     headnode_url = discover_headnode_url()
                     job_id = None
                     try:
@@ -766,11 +773,21 @@ def stream_logs(run_id, commit_sha, branch=None):
                         except Exception:
                             pass
 
-                    if not received_data:
+                # Active connection watchdog: if the log stream has been silent for more than 25s,
+                # the connection might be silently hung. Force a reconnect if GHA is still running.
+                if not gha_completed and has_curl and commit_sha and (time.time() - last_log_received_time > 25):
+                    if time.time() - last_reconnect_time > 10:
+                        last_reconnect_time = time.time()
+                        print_line("⚡ [Réseau] Flux inactif depuis 25s. Reconnexion préventive au flux de logs...", force=True)
+                        start_curl_stream()
+                        # Reset received time to prevent infinite loops of reconnects
+                        last_log_received_time = time.time()
+
+                if not received_data:
+                    # Throttle queue status display to avoid spamming
+                    if time.time() - last_gha_poll_time > 5:
                         if not display_clean_queue_status(run_id):
                             print("\n⏳ En attente de l'allocation d'un runner GitHub Actions...")
-                    
-                    last_gha_poll_time = time.time()
 
     except KeyboardInterrupt:
         if 'proc' in locals() and proc:
