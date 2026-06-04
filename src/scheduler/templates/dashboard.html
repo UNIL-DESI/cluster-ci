@@ -2449,6 +2449,20 @@
 
         function parseLogSections(rawText) {
             const sections = [];
+            
+            const addOrMergeSection = (newSec) => {
+                const existing = sections.find(s => s.id === newSec.id);
+                if (existing) {
+                    existing.content += '\n\n' + newSec.content;
+                    const statusPrecedence = { error: 4, warning: 3, running: 2, success: 1, neutral: 0 };
+                    if (statusPrecedence[newSec.status] > statusPrecedence[existing.status]) {
+                        existing.status = newSec.status;
+                    }
+                } else {
+                    sections.push(newSec);
+                }
+            };
+
             const stageRegex = /===STAGE:(\w+):(BEGIN|END)===/g;
             let matches = [];
             let match;
@@ -2458,7 +2472,7 @@
 
             if (matches.length === 0) {
                 // Fallback: no markers found (legacy logs)
-                sections.push({
+                addOrMergeSection({
                     id: 'full_log',
                     label: 'Full Log',
                     icon: 'bi-file-text-fill',
@@ -2471,7 +2485,7 @@
             // Content before first marker
             const preamble = rawText.substring(0, matches[0].index).trim();
             if (preamble) {
-                sections.push({
+                addOrMergeSection({
                     id: 'preamble',
                     label: 'Init',
                     icon: 'bi-rocket-takeoff-fill',
@@ -2498,9 +2512,9 @@
                     // Parse DVC sub-stages from the pipeline output
                     const subStages = parseDvcSubStages(stageContent, isInProgress);
                     if (subStages.length > 1) {
-                        subStages.forEach(sub => sections.push(sub));
+                        subStages.forEach(sub => addOrMergeSection(sub));
                     } else {
-                        sections.push({
+                        addOrMergeSection({
                             id: m.name,
                             label: meta.label,
                             icon: meta.icon,
@@ -2509,7 +2523,7 @@
                         });
                     }
                 } else {
-                    sections.push({
+                    addOrMergeSection({
                         id: m.name,
                         label: meta.label,
                         icon: meta.icon,
@@ -2530,7 +2544,7 @@
                     const isTrulyFinished = (lastMatch.name === 'sync' || lastMatch.name === 'teardown');
                     const defaultLabel = isTrulyFinished ? 'Post-Run' : 'System';
                     
-                    sections.push({
+                    addOrMergeSection({
                         id: 'epilogue',
                         label: killReason ? `☠️ ${killReason}` : defaultLabel,
                         icon: killReason ? 'bi-x-octagon-fill' : 'bi-terminal',
