@@ -689,12 +689,17 @@ def stream_logs(run_id, commit_sha, branch=None):
                             with urllib.request.urlopen(req, timeout=5) as resp:
                                 runs = json.loads(resp.read().decode())
                                 job_active = False
+                                job_finished_normally = False
                                 for run in runs:
                                     if run.get("job_id") == job_id:
-                                        if run.get("status") in ("running", "assigned", "pending"):
+                                        status_val = run.get("status")
+                                        if status_val in ("running", "assigned", "pending"):
                                             job_active = True
                                             break
-                                if not job_active:
+                                        elif status_val in ("completed", "failed"):
+                                            job_finished_normally = True
+                                            break
+                                if not job_active and not job_finished_normally:
                                     print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
                                     print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
                                     if proc:
