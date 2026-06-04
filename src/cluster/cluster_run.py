@@ -167,34 +167,42 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
         pass
     return None
 
-def print_line(line, force=False):
-    global _LOG_LINE_COUNT, _LAST_WAS_TQDM
+def should_skip_line(line):
+    """Determine if a log line should be filtered out from displays and logs."""
     if not line:
-        return
+        return True
     line = line.strip()
     if not line:
-        return
+        return True
 
     # Skip tmux status bar lines (e.g. '0:bash*   ...')
     if re.match(r"^\d+:.*\*\s", line) or "bash*" in line:
-        return
+        return True
     # Skip script header/footer and SSH connection status messages
     if line.startswith("Script ") and ("started" in line or "done" in line):
-        return
+        return True
     if "Connection to" in line and "closed" in line:
-        return
+        return True
     if "[server exited]" in line or "[lost server]" in line:
-        return
+        return True
     if "size 80x23 from a smaller client" in line:
-        return
+        return True
     
     # Skip DVC progress bar fragments and artifacts
     if line == "!" or line.startswith("! ") or line.startswith("Checking out"):
-        return
+        return True
     if "file/s]" in line or "files/s]" in line or "B/s]" in line:
-        return
+        return True
     if re.match(r"^Checking out .+:\s+\d+%", line):
+        return True
+    return False
+
+def print_line(line, force=False):
+    global _LOG_LINE_COUNT, _LAST_WAS_TQDM
+    if should_skip_line(line):
         return
+    line = line.strip()
+
 
     # TQDM progress spam filtering and optimization
     is_tqdm = bool(TQDM_REGEX.search(line))
