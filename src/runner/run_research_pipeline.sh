@@ -103,7 +103,7 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
             if [ ! -f "$LOG_TEMP" ]; then
                 break
             fi
-            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
+            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
         done
     ) &
     PUSHER_PID=$!
