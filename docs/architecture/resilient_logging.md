@@ -1,6 +1,6 @@
 # Résilience du Streaming de Logs et Reconnexion Automatique
 
-Ce document décrit le mécanisme de streaming de logs en direct depuis les workers distants du cluster vers le terminal local du chercheur, avec une tolérance élevée aux instabilités réseau et une reconconnexion automatique instantanée.
+Ce document décrit le mécanisme de streaming de logs en direct depuis les workers distants du cluster vers le terminal local du chercheur, avec une tolérance élevée aux instabilités réseau et une reconnexion automatique.
 
 ## 1. Architecture du Pipeline de Logs (ppng.io)
 
@@ -24,28 +24,39 @@ Si la connexion réseau du client flanche temporairement :
 
 ## 3. Stratégie de Résilience Mutuelle (Serveur/Client)
 
-Pour résoudre ce problème de manière structurelle sans dépendance à SSH ou aux APIs GitHub, un protocole d'inactivité et de cycles courts a été implémenté.
+Pour résoudre ce problème de manière structurelle sans dépendance à SSH ou aux APIs GitHub, un protocole de heartbeat + watchdog a été implémenté.
 
-### A. Serveur (Worker) — Émission de Heartbeats et Timeout POST
+### A. Serveur (Worker) — Émission de Heartbeats et Timeout POST de Sécurité
 
 Fichiers concernés : `src/runner/run_research_pipeline.sh`
 
 1. **Heartbeat `♥`** : Un sous-processus daemon vérifie toutes les 10 secondes si le fichier de logs a grossi. Si aucune écriture n'a eu lieu, il injecte un caractère spécial heartbeat (`♥\n`) dans le flux de logs. Cela force un transfert de données actif sur la socket HTTP et évite l'inactivité.
-2. **Timeout de cycle POST `--max-time 30`** : La commande `curl -T` d'envoi du serveur est configurée pour expirer impérativement toutes les 30 secondes. À chaque expiration, le serveur ferme son cycle POST et en démarre un nouveau à partir du dernier octet lu. Ce renouvellement fréquent brise les sockets zombies et permet au client de s'appairer à un nouveau cycle en moins de 30 secondes.
+2. **Timeout de sécurité POST `--max-time 300`** : La commande `curl -T` d'envoi du serveur est configurée pour expirer après **5 minutes**. Ce timeout ne devrait **jamais** se déclencher en fonctionnement normal (les heartbeats maintiennent le canal actif). Il existe uniquement comme filet de sécurité pour libérer le canal ppng.io si un POST TCP zombie persiste après un crash client.
 
-### B. Client (Local) — Watchdog Actif et Timeout de Vitesse
+### B. Client (Local) — Watchdog et Filtrage des Heartbeats
 
 Fichiers concernés : `src/cluster/cluster_run.py`
 
-1. **Timeout de vitesse `--speed-time 45 --speed-limit 1`** : Le client configure sa commande de récupération `curl` pour abandonner et s'arrêter automatiquement si la vitesse de transfert descend en dessous de 1 octet/s pendant plus de 45 secondes.
-2. **Filtrage des Heartbeats** : Le client intercepte le caractère `♥` du flux de logs. Il ne l'affiche pas dans la console et ne l'enregistre pas dans les fichiers de logs locaux pour garder des logs propres. Cependant, la réception du heartbeat remet à zéro l'horloge de l'activité réseau.
-3. **Watchdog souverain de 60s** : Un thread de surveillance (Watchdog) s'exécute localement. Si aucune donnée (y compris les heartbeats) n'est reçue pendant plus de 60 secondes :
-   - Le client considère la connexion comme fluctuante ou coupée.
+1. **Filtrage des Heartbeats** : Le client intercepte le caractère `♥` du flux de logs. Il ne l'affiche pas dans la console et ne l'enregistre pas dans les fichiers de logs locaux pour garder des logs propres. Cependant, la réception du heartbeat remet à zéro l'horloge d'activité réseau du watchdog.
+2. **Watchdog souverain de 60s** : Un thread de surveillance (Watchdog) s'exécute localement. Si aucune donnée (y compris les heartbeats) n'est reçue pendant plus de 60 secondes :
+   - Le client considère la connexion comme réellement coupée (6+ heartbeats manqués).
    - Il termine proprement le processus `curl` en cours (avec drainage complet via `wait` et `join` du thread de lecture).
    - Il réinitie une nouvelle connexion `GET`.
+3. **Détection du curl mort** : Si le processus curl se termine de manière inattendue (code retour, fermeture de connexion par ppng.io), le client vérifie si le run GHA est toujours actif avant de tenter une reconnexion avec un exponential backoff.
 
-### C. Fenêtre Temporelle de Reconnexion (Worst-Case)
+### C. Pourquoi `--max-time` court est dangereux
 
-En cas de coupure réseau complète suivie d'un retour à la normale, le temps maximal nécessaire pour que les logs reprennent est borné à environ **75 secondes** :
-$$\text{Temps de reconconnexion max} = \text{Client speed-time (45s)} + \text{Serveur max-time (30s)}$$
-Cette approche élimine tout blocage infini et résiste aux micro-coupures ainsi qu'aux interruptions prolongées du réseau universitaire.
+L'approche initiale utilisait `--max-time 30` pour forcer un recyclage rapide du POST. Cela s'est avéré catastrophique car :
+- Chaque recyclage de POST cause une déconnexion visible côté client
+- Le client interprète chaque déconnexion comme une instabilité réseau et augmente son délai de reconnexion (exponential backoff)
+- Le replay complet du fichier de logs (`tail -c +1`) à chaque recyclage consomme une partie du budget temps du nouveau cycle
+- Sur un réseau parfaitement stable, le streaming se brise de manière paradoxale
+
+### D. Fenêtre Temporelle de Reconnexion (Worst-Case)
+
+En cas de coupure réseau **réelle** suivie d'un retour à la normale :
+- Le client détecte la perte de heartbeat après **60 secondes** maximum
+- Le serveur libère le canal POST zombie après **5 minutes** maximum (via `--max-time 300`)
+- La reconnexion effective est bornée à **~5 minutes** dans le pire cas (zombie TCP)
+
+Sur un réseau stable, **aucune reconnexion ne devrait jamais avoir lieu** — les heartbeats maintiennent le canal actif indéfiniment.
