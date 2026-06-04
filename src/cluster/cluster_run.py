@@ -36,11 +36,9 @@ TQDM_REGEX = re.compile(r"\d+%%\s*\|[█░■□▊▋▌▍▎▏\s\-]*\|?\s*\
 
 
 # Log redirection settings
-LOG_LIMIT = 1000
 _LOG_LINE_COUNT = 0
 _LOG_TEMP_FILE = None
 _LOG_TEMP_FILEPATH = None
-_LOG_OVER_LIMIT = False
 
 
 def init_log_redirection():
@@ -50,9 +48,8 @@ def init_log_redirection():
     which is automatically added to .gitignore if not already present.
     Only the 5 most recent log files are kept (older ones are rotated out).
     """
-    global _LOG_TEMP_FILE, _LOG_TEMP_FILEPATH, _LOG_LINE_COUNT, _LOG_OVER_LIMIT
+    global _LOG_TEMP_FILE, _LOG_TEMP_FILEPATH, _LOG_LINE_COUNT
     _LOG_LINE_COUNT = 0
-    _LOG_OVER_LIMIT = False
     
     # 1. Ensure local log directory exists
     log_dir = os.path.join(os.getcwd(), ".cluster-ci-logs")
@@ -88,7 +85,6 @@ def init_log_redirection():
         )
         _LOG_TEMP_FILEPATH = _LOG_TEMP_FILE.name
         print(f"\n📄 Logs are duplicated to: {_LOG_TEMP_FILEPATH}")
-        print(f"   (Console output will be limited to {LOG_LIMIT} lines; the file captures everything)")
     except Exception as e:
         print(f"⚠️  Could not create log file: {e}", file=sys.stderr)
         _LOG_TEMP_FILE = None
@@ -130,10 +126,7 @@ def print_log_summary():
     """Print a final summary pointing to the log file."""
     if _LOG_TEMP_FILEPATH:
         print(f"\n{'='*80}")
-        if _LOG_OVER_LIMIT:
-            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines (console was limited to {LOG_LIMIT}).")
-        else:
-            print(f"📋 Total log output: {_LOG_LINE_COUNT} lines.")
+        print(f"📋 Total log output: {_LOG_LINE_COUNT} lines.")
         print(f"📂 Full logs saved to: {_LOG_TEMP_FILEPATH}")
         print(f"{'='*80}")
 
@@ -175,7 +168,7 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     return None
 
 def print_line(line, force=False):
-    global _LOG_LINE_COUNT, _LOG_OVER_LIMIT, _LAST_WAS_TQDM
+    global _LOG_LINE_COUNT, _LAST_WAS_TQDM
     if not line:
         return
     line = line.strip()
@@ -207,8 +200,7 @@ def print_line(line, force=False):
     is_tqdm = bool(TQDM_REGEX.search(line))
     if is_tqdm:
         # Interactive carriage return display to keep console clean
-        if not _LOG_OVER_LIMIT:
-            print(f"\r{line}", end="", flush=True)
+        print(f"\r{line}", end="", flush=True)
         
         # Avoid flooding log file with intermediate frames — only write final completion (100%)
         if "100%" in line and _LOG_TEMP_FILE:
@@ -224,8 +216,7 @@ def print_line(line, force=False):
     else:
         if _LAST_WAS_TQDM:
             # Append a physical newline before displaying standard log after a progress bar
-            if not _LOG_OVER_LIMIT:
-                print()
+            print()
             _LAST_WAS_TQDM = False
 
     # Always write to log file if redirection is active
@@ -237,23 +228,8 @@ def print_line(line, force=False):
             pass
         _LOG_LINE_COUNT += 1
 
-    # Display to console (always, until limit is reached)
-    if not _LOG_TEMP_FILE:
-        # No redirection active — original behavior, no limit
-        print(line, flush=True)
-    elif not _LOG_OVER_LIMIT:
-        print(line, flush=True)
-        # Check if we just crossed the limit
-        if _LOG_LINE_COUNT >= LOG_LIMIT:
-            _LOG_OVER_LIMIT = True
-            print(f"\n{'='*80}", flush=True)
-            print(f"⚠️  CONSOLE OUTPUT LIMIT REACHED ({LOG_LIMIT} lines displayed).", flush=True)
-            print(f"📂 Full logs continue to stream to: {_LOG_TEMP_FILEPATH}", flush=True)
-            if sys.platform == 'win32':
-                print(f"💡 To follow live: Get-Content -Wait '{_LOG_TEMP_FILEPATH}'", flush=True)
-            else:
-                print(f"💡 To follow live: tail -f '{_LOG_TEMP_FILEPATH}'", flush=True)
-            print(f"{'='*80}\n", flush=True)
+    # Display to console (always, no limit)
+    print(line, flush=True)
 
 def check_dependencies():
     """Verify that gh and git are installed and accessible."""
