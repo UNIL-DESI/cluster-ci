@@ -572,9 +572,23 @@ def stream_logs(run_id, commit_sha, branch=None):
     try:
         q = queue.Queue()
         proc = None
+        reader_thread = None
         received_data = False
+        total_lines_processed = 0
+        lines_to_skip = 0
+        last_reconnect_time = 0
 
-        if has_curl and commit_sha:
+        def start_curl_stream():
+            nonlocal proc, reader_thread, lines_to_skip, q
+            if proc:
+                try: proc.terminate()
+                except: pass
+            
+            # Recreate queue to prevent residual logs from previous connection
+            q = queue.Queue()
+            # Skip already printed lines when server replays the logs file
+            lines_to_skip = total_lines_processed
+            
             proc = subprocess.Popen(
                 ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                 stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
@@ -583,7 +597,10 @@ def stream_logs(run_id, commit_sha, branch=None):
             def log_reader_thread():
                 buffer = []
                 while True:
-                    char = proc.stdout.read(1)
+                    try:
+                        char = proc.stdout.read(1)
+                    except Exception:
+                        char = None
                     if not char:
                         if buffer:
                             q.put("".join(buffer))
@@ -596,6 +613,9 @@ def stream_logs(run_id, commit_sha, branch=None):
             reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
             reader_thread.start()
 
+        if has_curl and commit_sha:
+            start_curl_stream()
+
         last_sync_time = time.time()
         last_synced_sha = commit_sha
 
@@ -606,15 +626,44 @@ def stream_logs(run_id, commit_sha, branch=None):
                 if success and remote_sha:
                     last_synced_sha = remote_sha
                 last_sync_time = time.time()
+
+            # Active connection monitoring to auto-reconnect if the curl process died
+            if has_curl and commit_sha:
+                if proc and proc.poll() is not None:
+                    # Connection died. Check if the GHA run is still active before reconnecting.
+                    # Wait at least 5s between reconnection attempts to avoid flooding.
+                    if time.time() - last_reconnect_time > 5:
+                        last_reconnect_time = time.time()
+                        try:
+                            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                            if res.returncode == 0:
+                                info = json.loads(res.stdout)
+                                status = info.get("status")
+                                conclusion = info.get("conclusion")
+                                if status != "completed" and not conclusion:
+                                    print_line("⚡ [Réseau] Connexion fluctuante détectée. Reconnexion automatique au flux de logs...", force=True)
+                                    start_curl_stream()
+                        except Exception:
+                            # In case of general network failure, gh command will fail.
+                            # We still try to reconnect curl to keep trying.
+                            start_curl_stream()
+
             try:
                 line = q.get(timeout=1)
                 line_stripped = line.rstrip('\r\n')
                 if "has been established already" in line_stripped:
                     continue
+                
+                # Deduplication logic: skip lines we have already displayed
+                if lines_to_skip > 0:
+                    lines_to_skip -= 1
+                    continue
+
                 if not received_data:
                     print("\n🟢 Live stream connected.")
                     received_data = True
                 print_line(line_stripped, force=True)
+                total_lines_processed += 1
                 last_gha_poll_time = time.time()
             except queue.Empty:
                 if time.time() - last_gha_poll_time > 5:
