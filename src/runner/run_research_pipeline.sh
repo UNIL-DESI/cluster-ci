@@ -117,15 +117,16 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     # curl exits and the loop immediately launches a new curl instance streaming the entire
     # file from the beginning (tail -c +1). This guarantees that a reconnecting client
     # retrieves the full log history of the run.
-    # --max-time 120: Forces the POST to restart every 2 minutes. This bounds the re-pairing
-    # delay after a client disconnection (the old TCP POST may linger as a zombie for minutes).
+    # --max-time 30: Forces the POST to restart every 30s. This bounds the re-pairing
+    # delay after a client disconnection (TCP zombies can linger for minutes).
+    # Cost is negligible: tail -c +1 replays the log file on each restart.
     (
         while [ -f "$LOG_TEMP" ]; do
             sleep 2
             if [ ! -f "$LOG_TEMP" ]; then
                 break
             fi
-            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --max-time 120 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
+            tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --max-time 30 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
         done
     ) &
     PUSHER_PID=$!
