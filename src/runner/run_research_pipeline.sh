@@ -297,24 +297,13 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT="2"
 log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 
-# SAFETY: Cap Docker memory to leave at least 8GB for OS/Docker/worker-agent.
-# On unified memory systems, CUDA allocations count against system RAM, so we
-# MUST leave headroom to prevent the entire system from freezing.
-TOTAL_RAM_GB=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024 / 1024}' /proc/meminfo)
-MAX_DOCKER_RAM=$((TOTAL_RAM_GB - 8))
-if [ "$MAX_DOCKER_RAM" -lt 2 ]; then
-    MAX_DOCKER_RAM=2
-fi
-if [ "$(echo "$RAM_LIMIT" | cut -d. -f1)" -gt "$MAX_DOCKER_RAM" ]; then
-    log_info "⚠️  RAM limit (${RAM_LIMIT}GB) exceeds safe maximum (${MAX_DOCKER_RAM}GB = total ${TOTAL_RAM_GB}GB - 8GB OS reserve). Capping."
-    RAM_LIMIT="$MAX_DOCKER_RAM"
-fi
-
 # Docker cgroups memory enforcement: the container is hard-limited to REQUIRED_RAM.
 # If user code exceeds this, Docker OOM-kills the container process — NOT the host.
 # --memory-swap equal to --memory disables swap (prevents silent degradation).
+# NOTE: The scheduler already rejects jobs where REQUIRED_RAM > (worker_total_ram - 8GB),
+# so by the time we get here, RAM_LIMIT is always safe for this worker.
 DOCKER_MEMORY_FLAG="--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g"
-log_info "Docker memory hard-limit: ${RAM_LIMIT}GB (cgroups enforced, no swap, OS reserve: $((TOTAL_RAM_GB - ${RAM_LIMIT%.*}))GB)"
+log_info "Docker memory hard-limit: ${RAM_LIMIT}GB (cgroups enforced, no swap)"
 
 # Extract VRAM limit from .cluster-ci (REQUIRED_VRAM=70GB)
 # This is enforced by the GPU watchdog (nvidia-smi monitoring), not by Docker.

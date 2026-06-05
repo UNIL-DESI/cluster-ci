@@ -198,9 +198,12 @@ def schedule_jobs():
 
                     # Hard Constraint: Filter workers by RAM
                     # Since workers are single-threaded and exclusively run one job at a time,
-                    # they can use their full physical RAM minus a small OS overhead (2GB).
+                    # they can use their full physical RAM minus OS overhead (8GB).
+                    # 8GB headroom protects the OS/Docker/worker-agent from OOM on unified
+                    # memory systems (GB10/Grace) where CUDA allocations consume system RAM.
                     # We don't use 'available_ram_gb' because it is artificially lowered by ZFS ARC and reclaimable caches.
-                    candidates = [w for w in workers if (w['total_ram_gb'] - 2.0) >= ram_required]
+                    OS_HEADROOM_GB = 8.0
+                    candidates = [w for w in workers if (w['total_ram_gb'] - OS_HEADROOM_GB) >= ram_required]
 
                     # Hard Constraint: Filter by VRAM (if required)
                     if vram_required > 0:
@@ -219,8 +222,8 @@ def schedule_jobs():
                             cursor.execute('SELECT MAX(total_vram_gb) FROM workers WHERE status = "online"')
                             max_vram = cursor.fetchone()[0] or 0.0
 
-                        if ram_required > (max_total - 2.0):
-                            logger.error(f"Job {job_id} requires {ram_required} GB RAM but max cluster capacity is {max_total - 2.0:.1f} GB. Failing job.")
+                        if ram_required > (max_total - OS_HEADROOM_GB):
+                            logger.error(f"Job {job_id} requires {ram_required} GB RAM but max cluster capacity is {max_total - OS_HEADROOM_GB:.1f} GB (total {max_total:.0f} GB - {OS_HEADROOM_GB:.0f} GB OS reserve). Failing job.")
                             with get_db_conn() as conn:
                                 cursor = conn.cursor()
                                 cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
