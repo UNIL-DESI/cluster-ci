@@ -876,12 +876,29 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
         remote_sha = res_sha.stdout.strip()
 
         # 2. Determine base ref for diff
-        base_ref = commit_sha if commit_sha else "HEAD"
+        if not commit_sha:
+            if not silent_if_no_changes:
+                print("ℹ️ Run was cancelled before initialization. Nothing to sync.")
+            return False, None
+            
+        base_ref = commit_sha
 
         if base_ref == remote_sha:
             if not silent_if_no_changes:
                 print("ℹ️ No changes in metrics, plots or dvc.lock detected on the cluster.")
             return True, remote_sha
+
+        # Safety check: Ensure the remote branch actually contains our shadow commit.
+        # If the user cancels before the push completes, remote_sha will point to an old run.
+        # Diffing against an old run would detect local code changes as "modifications to revert".
+        res_ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", base_ref, remote_sha],
+            capture_output=True
+        )
+        if res_ancestor.returncode != 0:
+            if not silent_if_no_changes:
+                print("ℹ️ Run was cancelled before push completed. No new results to sync.")
+            return False, None
 
         # 3. Detect files modified by the execution on the cluster
         res_diff = subprocess.run(

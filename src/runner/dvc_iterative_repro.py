@@ -166,12 +166,33 @@ def main():
         if ret.returncode != 0:
             clear_status()
             print(f"❌ Stage {stage} failed with code {ret.returncode}")
-            print(f"🔄 Syncing partial metrics and plots for failed stage '{stage}'...")
-            dvc_git_helper_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dvc_git_helper.py")
-            sync_cmd = ["uv", "run", "--with", "ruamel.yaml", "python3", dvc_git_helper_path, "sync"]
-            sync_ret = subprocess.run(sync_cmd)
-            if sync_ret.returncode != 0:
-                print(f"⚠️ Warning: Auto-syncing metrics after failed stage '{stage}' failed with code {sync_ret.returncode}")
+            print(f"💾 Committing and pushing failure state to GitHub...")
+            subprocess.run(["git", "add", "."], check=False)
+            status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
+            if status.stdout.strip():
+                subprocess.run(["git", "config", "user.name", "cluster-ci"])
+                subprocess.run(["git", "config", "user.email", "cluster-ci@cluster.local"])
+                commit_msg = f"cluster-ci: failed stage {stage} [skip ci]"
+                subprocess.run(["git", "commit", "-m", commit_msg])
+            
+            target_branch = os.environ.get("TARGET_BRANCH")
+            if not target_branch:
+                res_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+                if res_branch.returncode == 0:
+                    target_branch = res_branch.stdout.strip()
+            
+            if target_branch and target_branch != "HEAD":
+                print(f"Pushing failure state to branch: {target_branch}")
+                try:
+                    subprocess.run(["git", "push", "origin", target_branch], timeout=60)
+                except subprocess.TimeoutExpired:
+                    print("⚠️ Warning: git push timed out after 60s, continuing...")
+            else:
+                print("Pushing failure state to default HEAD branch...")
+                try:
+                    subprocess.run(["git", "push", "origin", "HEAD"], timeout=60)
+                except subprocess.TimeoutExpired:
+                    print("⚠️ Warning: git push timed out after 60s, continuing...")
             sys.exit(ret.returncode)
             
         print(f"==================================================")
