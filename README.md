@@ -212,5 +212,6 @@ cluster-ci/
 - [x] VRAM Tracking & Headnode-as-Worker : Détection automatique GPU/VRAM via `nvidia-smi`, contrainte `REQUIRED_VRAM` dans `.cluster-ci`, headnode enregistré comme worker dual-mode (scheduler + executor), affichage GPU/VRAM dans le dashboard et les diagnostics de file d'attente
 - [x] Fix Runner : Masquage des erreurs anxiogènes (`Checkout failed`) de `dvc checkout` en mode Best-Effort
 - [x] Fix Runner : Blocage infini du runner sur la phase sync après échec d'un stage (ajout de timeouts sur watchdog cleanup, git push/pull et docker exec sync)
+- [x] Fix Workspace Corruption : Le CLI `cluster-run` n'écrase plus les modifications de code local (uncommitted) du chercheur lors d'un Ctrl+C ou d'un échec (remplacement du `git add .` indiscriminé par `dvc_git_helper.py sync`)
 - [ ] [Ordonnancement multi-GPU : Support multi-slot et isolation matérielle GPU](https://github.com/UNIL-DESI/cluster-ci/issues/110)
 
