@@ -703,6 +703,35 @@ def stream_logs(run_id, commit_sha, branch=None):
                                 status_val = job_data.get("status")
                                 job_active = status_val in ("running", "assigned", "pending")
                                 job_finished_normally = status_val in ("completed", "failed")
+                                if job_finished_normally:
+                                    drain_deadline = time.time() + 5
+                                    while time.time() < drain_deadline:
+                                        try:
+                                            line = q.get(timeout=0.2)
+                                            line_stripped = line.rstrip('\r\n')
+                                            if line_stripped and "has been established already" not in line_stripped:
+                                                print_line(line_stripped, force=True)
+                                        except queue.Empty:
+                                            break
+                                    if proc:
+                                        try: proc.terminate()
+                                        except: pass
+
+                                    exit_code = job_data.get("exit_code")
+                                    if status_val == "completed" or exit_code == 0:
+                                        print("\n✅ Cluster-CI run completed successfully!")
+                                        close_log_redirection()
+                                        print_log_summary()
+                                        return 0
+                                    else:
+                                        # Use the real exit code if available, otherwise fallback to 1
+                                        ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
+                                        print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : failed (Exit code: {ret_code})")
+                                        print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                                        close_log_redirection()
+                                        print_log_summary()
+                                        return int(ret_code)
+
                                 if not job_active and not job_finished_normally:
                                     print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
                                     print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
