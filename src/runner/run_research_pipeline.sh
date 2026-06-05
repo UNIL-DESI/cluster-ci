@@ -294,6 +294,12 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT="2"
 log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 
+# Docker cgroups memory enforcement: the container is hard-limited to REQUIRED_RAM.
+# If user code exceeds this, Docker OOM-kills the container process — NOT the host.
+# --memory-swap equal to --memory disables swap (prevents silent degradation).
+DOCKER_MEMORY_FLAG="--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g"
+log_info "Docker memory hard-limit: ${RAM_LIMIT}GB (cgroups enforced, no swap)"
+
 
 # Configuration Docker — Architecture-aware image selection
 HOST_ARCH=$(uname -m)
@@ -405,6 +411,7 @@ docker run -d \
     $COMMON_LABELS \
     $DOCKER_PORT_MAPPING \
     $PROJECT_DOCKER_FLAGS \
+    $DOCKER_MEMORY_FLAG \
     --entrypoint "tail" \
     --gpus all \
     -v "$(pwd):/workspace" \
@@ -741,7 +748,7 @@ if [ $EXEC_RET -ne 0 ]; then
     OOM_KILLED=$(docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
     if [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
         EXEC_RET=137
-        log_error "Erreur: Le conteneur a été tué par le système (OOM Killer) car il a dépassé la RAM physique disponible de l'hôte. Veuillez optimiser la consommation mémoire de votre code ou augmenter REQUIRED_RAM dans le fichier .cluster-ci pour cibler un worker avec plus de mémoire physique."
+        log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
     else
         log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
     fi
@@ -777,7 +784,7 @@ fi
 
 if [ $EXEC_RET -ne 0 ]; then
     if [ $EXEC_RET -eq 137 ]; then
-        log_error "Erreur: Le conteneur a été tué par le système (OOM Killer) car il a dépassé la RAM physique disponible de l'hôte. Veuillez optimiser la consommation mémoire de votre code ou augmenter REQUIRED_RAM dans le fichier .cluster-ci pour cibler un worker avec plus de mémoire physique."
+        log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
     else
         log_error "Exiting with error code $EXEC_RET due to previous failure."
     fi
