@@ -26,7 +26,7 @@ def test_cuda_properties():
         return False
 
     props = torch.cuda.get_device_properties(0)
-    total_bytes = props.total_mem
+    total_bytes = props.total_memory
     total_gb = total_bytes / (1024 ** 3)
 
     print(f"  Device: {props.name}")
@@ -63,7 +63,7 @@ def test_memory_fraction():
 
     # Set a very small fraction (5% of total) to test enforcement
     props = torch.cuda.get_device_properties(0)
-    total_gb = props.total_mem / (1024 ** 3)
+    total_gb = props.total_memory / (1024 ** 3)
 
     if total_gb < 1.0:
         print("  SKIP: total_mem is ~0, fraction enforcement is meaningless")

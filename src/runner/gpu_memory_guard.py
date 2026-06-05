@@ -35,7 +35,7 @@ def _apply_vram_guard():
             return
 
         # Get total GPU memory — may be 0 on unified memory systems
-        total_mem_bytes = torch.cuda.get_device_properties(0).total_mem
+        total_mem_bytes = torch.cuda.get_device_properties(0).total_memory
         total_mem_gb = total_mem_bytes / (1024 ** 3)
 
         # On unified memory (GB10/Grace), total_mem might be 0 or very small.
