@@ -23,14 +23,18 @@ fi
 # Detect memory monitoring mode
 # On unified memory systems (GB10, Grace-Blackwell), nvidia-smi reports [N/A]
 # for memory.total. In that case, we monitor system RAM instead.
+# Detection strategy: nvidia-smi --query-gpu=memory.total with nounits should return
+# a numeric value (e.g., "24576") on discrete GPUs. On unified memory (GB10/Grace),
+# it returns either "[N/A]", an empty string, or the nvidia-smi timestamp header.
+# We check if the result is a valid positive integer to determine the mode.
 MONITORING_MODE="nvidia-smi"
-NVIDIA_MEM_CHECK=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
+NVIDIA_MEM_CHECK=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
 
-if [ -z "$NVIDIA_MEM_CHECK" ] || echo "$NVIDIA_MEM_CHECK" | grep -qi "N/A"; then
-    MONITORING_MODE="system-ram"
-    echo "[GPU Watchdog] Unified memory detected (nvidia-smi reports [N/A]). Monitoring system RAM via /proc/meminfo."
+if echo "$NVIDIA_MEM_CHECK" | grep -qE '^[0-9]+$' && [ "$NVIDIA_MEM_CHECK" -gt 0 ] 2>/dev/null; then
+    echo "[GPU Watchdog] Discrete GPU detected (VRAM: ${NVIDIA_MEM_CHECK} MiB). Monitoring via nvidia-smi."
 else
-    echo "[GPU Watchdog] Discrete GPU detected. Monitoring via nvidia-smi."
+    MONITORING_MODE="system-ram"
+    echo "[GPU Watchdog] Unified memory detected (nvidia-smi memory.total=[$NVIDIA_MEM_CHECK]). Monitoring system RAM via /proc/meminfo."
 fi
 
 # Convert GB to MiB for comparison
