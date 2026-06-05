@@ -133,6 +133,26 @@ EOF
 sudo chmod 0440 /etc/sudoers.d/cluster-ci
 echo "✅ Sudoers configured."
 
+# 4.6. Hardware Watchdog — Auto-reboot on system freeze
+# On unified memory GPU systems (NVIDIA GB10/Grace), a CUDA driver crash can freeze
+# the entire system. The hardware watchdog timer forces a reboot if systemd can't
+# "pet" the timer within the configured interval. This is the industry-standard
+# solution for unattended server recovery.
+if ! grep -q "^RuntimeWatchdogSec=" /etc/systemd/system.conf 2>/dev/null; then
+    echo "🐕 Configuring hardware watchdog (auto-reboot on system freeze)..."
+    sudo sed -i.bak \
+        -e 's/^#\?RuntimeWatchdogSec=.*/RuntimeWatchdogSec=30/' \
+        -e 's/^#\?RebootWatchdogSec=.*/RebootWatchdogSec=60/' \
+        /etc/systemd/system.conf
+    # If the keys were not found (not even commented), append them
+    grep -q "^RuntimeWatchdogSec=" /etc/systemd/system.conf || echo "RuntimeWatchdogSec=30" | sudo tee -a /etc/systemd/system.conf > /dev/null
+    grep -q "^RebootWatchdogSec=" /etc/systemd/system.conf || echo "RebootWatchdogSec=60" | sudo tee -a /etc/systemd/system.conf > /dev/null
+    sudo rm -f /etc/systemd/system.conf.bak
+    echo "✅ Hardware watchdog configured (30s freeze → auto-reboot)."
+else
+    echo "✅ Hardware watchdog already configured."
+fi
+
 # 5. Systemd Installation
 if [ "$ROLE" == "headnode" ]; then
     echo "⚙️ Installing systemd service for Ephemeral Runner Manager..."
