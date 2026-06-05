@@ -268,6 +268,8 @@ if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
 fi
 
 # Switch and hard reset to ensure clean Git tree
+# Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
+rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
 log_info "Forced branch checkout and re-synchronization..."
 git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
 git reset --hard "origin/$TARGET_BRANCH"
