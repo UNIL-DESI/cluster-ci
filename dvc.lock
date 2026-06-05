@@ -5,7 +5,7 @@ stages:
     outs:
     - path: .dvc-viewer/hashes
       hash: md5
-      md5: bea0ed672fa8fa5ac2cdd5e2659c3fae.dir
+      md5: 8f98fce44045e099dbf1a2b9a2b600f7.dir
       size: 329
       nfiles: 2
   fake_test:

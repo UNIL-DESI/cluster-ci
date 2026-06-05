@@ -5,7 +5,9 @@ import os
 import base64
 import random
 
-# a = 1/(7-7)
+# Bug corrige !
+a = 1  # Correction de la division par zero
+
 
 print("🚀 Starting simulated research pipeline...")
 
