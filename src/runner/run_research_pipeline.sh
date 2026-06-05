@@ -127,7 +127,7 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
             if [ ! -f "$LOG_TEMP" ]; then
                 break
             fi
-            stdbuf -oL tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --no-buffer --max-time 300 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -H "Transfer-Encoding: chunked" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
+            stdbuf -oL tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --no-buffer --max-time 300 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
         done
     ) &
     PUSHER_PID=$!
@@ -135,10 +135,10 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     # Run the job submission script, outputting to stdout (for GHA runners) and appending to LOG_TEMP.
     set +e
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL tee "$LOG_TEMP"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | tee "$LOG_TEMP"
         SUBMIT_RET=${PIPESTATUS[0]}
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL tee "$LOG_TEMP"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | tee "$LOG_TEMP"
         SUBMIT_RET=${PIPESTATUS[0]}
     fi
     set -e
