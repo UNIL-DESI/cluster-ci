@@ -444,6 +444,8 @@ docker run -d \
     -e HEADNODE_URL="$HEADNODE_URL" \
     -e CLUSTER_CI_MODE=executor \
     -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
+    -e CLUSTER_CI_VRAM_LIMIT_GB="$VRAM_LIMIT" \
+    -e PYTHONSTARTUP=/cluster-ci/src/runner/gpu_memory_guard.py \
     "$DOCKER_IMAGE" -f /dev/null >/dev/null
 
 # Ensure the volume and workspace are owned by the current user (must be run as root)
