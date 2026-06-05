@@ -211,5 +211,6 @@ cluster-ci/
 - [x] Fix Dashboard : Scan multi-branches temps réel des artefacts (watchdog commits intermédiaires), correction timezone UTC +2h sur les temps écoulés, et ajout de la date de lancement sur les Active Cluster Runs
 - [x] VRAM Tracking & Headnode-as-Worker : Détection automatique GPU/VRAM via `nvidia-smi`, contrainte `REQUIRED_VRAM` dans `.cluster-ci`, headnode enregistré comme worker dual-mode (scheduler + executor), affichage GPU/VRAM dans le dashboard et les diagnostics de file d'attente
 - [x] Fix Runner : Masquage des erreurs anxiogènes (`Checkout failed`) de `dvc checkout` en mode Best-Effort
+- [x] Fix Runner : Blocage infini du runner sur la phase sync après échec d'un stage (ajout de timeouts sur watchdog cleanup, git push/pull et docker exec sync)
 - [ ] [Ordonnancement multi-GPU : Support multi-slot et isolation matérielle GPU](https://github.com/UNIL-DESI/cluster-ci/issues/110)
 
