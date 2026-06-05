@@ -153,6 +153,15 @@ else
     echo "✅ Hardware watchdog already configured."
 fi
 
+# 4.7. Ensure SSH starts on boot (no user login required for remote access after reboot)
+if systemctl is-enabled ssh 2>/dev/null | grep -q "enabled" || systemctl is-enabled sshd 2>/dev/null | grep -q "enabled"; then
+    echo "✅ SSH daemon already enabled on boot."
+else
+    echo "🔑 Enabling SSH daemon on boot..."
+    sudo systemctl enable ssh 2>/dev/null || sudo systemctl enable sshd 2>/dev/null || true
+    echo "✅ SSH daemon enabled on boot."
+fi
+
 # 5. Systemd Installation
 if [ "$ROLE" == "headnode" ]; then
     echo "⚙️ Installing systemd service for Ephemeral Runner Manager..."
