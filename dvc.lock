@@ -24,8 +24,8 @@ stages:
       size: 64
     - path: simulate_research.py
       hash: md5
-      md5: f54f3db489f78f39fd8b4de86d95712c
-      size: 3422
+      md5: 0de4cd445f5eab8162f29ece811adda6
+      size: 3437
     outs:
     - path: artifacts/data.csv
       hash: md5
@@ -37,13 +37,13 @@ stages:
       size: 189
     - path: artifacts/plot.png
       hash: md5
-      md5: 0c10534bcfb47f8d18fcb08c3d2226b4
-      size: 35808
+      md5: 6034a9acc7b8c9a5f05759e1e0eaefe6
+      size: 37051
     - path: artifacts/random_plot.png
       hash: md5
-      md5: a237f762d172c7f75c55a765c9b8f395
-      size: 34260
+      md5: e4d8aa53c14b53eb63231a26896c9615
+      size: 33170
     - path: artifacts/random_table.csv
       hash: md5
-      md5: 8d7d1687509392fddbe2956880ead950
-      size: 188
+      md5: dfb18b4a9b22422a1cd90152f21d6bd0
+      size: 191

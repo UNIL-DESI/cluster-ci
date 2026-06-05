@@ -3,6 +3,7 @@ psutil
 requests
 authlib
 python-dotenv
+pyyaml
 
 [dev]
 pytest

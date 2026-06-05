@@ -24,6 +24,7 @@ src/scheduler/worker_agent.py
 src/scheduler/tests/test_commit_hash.py
 src/scheduler/tests/test_data_router.py
 src/scheduler/tests/test_derived_ram.py
+src/scheduler/tests/test_fix_p2p_and_cancellation.py
 src/scheduler/tests/test_flow.py
 src/scheduler/tests/test_history_api.py
 src/scheduler/tests/test_locality.py

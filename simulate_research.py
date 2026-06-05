@@ -5,6 +5,8 @@ import os
 import base64
 import random
 
+# a = 1/(7-7)
+
 print("🚀 Starting simulated research pipeline...")
 
 print("⏳ Step 1: Processing data (simulating workload for 30 seconds)...")
