@@ -9,8 +9,13 @@
 # Usage: gpu_watchdog.sh <container_name> <vram_limit_gb>
 # Example: gpu_watchdog.sh cluster-job-abc123 70
 #
-# The watchdog polls every 5 seconds. If usage exceeds the limit for
-# 3 consecutive checks (15s grace period), the container is killed.
+# SAFETY STRATEGY (two thresholds):
+#   1. Soft limit (user-declared VRAM_LIMIT): Kill after 2 consecutive violations (4s grace).
+#   2. Hard limit (90% of total system RAM): IMMEDIATE kill on first violation.
+#      This prevents the system from freezing even if the user declares a limit
+#      close to total RAM.
+#
+# The watchdog polls every 2 seconds for fast reaction time.
 
 CONTAINER_NAME="$1"
 VRAM_LIMIT_GB="$2"
@@ -40,10 +45,27 @@ fi
 # Convert GB to MiB for comparison
 VRAM_LIMIT_MIB=$((VRAM_LIMIT_GB * 1024))
 
-echo "[GPU Watchdog] Started — Container: $CONTAINER_NAME, Memory limit: ${VRAM_LIMIT_GB}GB (${VRAM_LIMIT_MIB} MiB), Mode: $MONITORING_MODE"
+# HARD LIMIT: 90% of total system RAM (absolute ceiling to protect the OS)
+# On unified memory, this prevents the system from freezing even if the user
+# declares a VRAM limit close to total RAM.
+TOTAL_RAM_MIB=$(awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo)
+HARD_LIMIT_MIB=$((TOTAL_RAM_MIB * 90 / 100))
+HARD_LIMIT_GB=$(awk "BEGIN {printf \"%.0f\", $HARD_LIMIT_MIB / 1024}")
+
+# Use the LOWER of user limit and hard limit
+if [ "$VRAM_LIMIT_MIB" -gt "$HARD_LIMIT_MIB" ]; then
+    echo "[GPU Watchdog] ⚠️  User limit (${VRAM_LIMIT_GB}GB) exceeds 90% of system RAM (${HARD_LIMIT_GB}GB). Capping soft limit to ${HARD_LIMIT_GB}GB."
+    VRAM_LIMIT_MIB=$HARD_LIMIT_MIB
+    VRAM_LIMIT_GB=$HARD_LIMIT_GB
+fi
+
+echo "[GPU Watchdog] Started — Container: $CONTAINER_NAME, Soft limit: ${VRAM_LIMIT_GB}GB, Hard limit: ${HARD_LIMIT_GB}GB (90% of ${TOTAL_RAM_MIB}MiB), Mode: $MONITORING_MODE"
+echo "[GPU Watchdog] Poll interval: 2s, Soft threshold: 2 violations (4s), Hard threshold: IMMEDIATE"
 
 CONSECUTIVE_OVER=0
-THRESHOLD=3  # Kill after 3 consecutive violations (15s grace)
+SOFT_THRESHOLD=2  # Kill after 2 consecutive soft violations (4s grace)
+
+POLL_INTERVAL=2   # Poll every 2 seconds (was 5)
 
 get_used_memory_mib() {
     if [ "$MONITORING_MODE" = "nvidia-smi" ]; then
@@ -56,8 +78,20 @@ get_used_memory_mib() {
     fi
 }
 
+kill_container() {
+    local reason="$1"
+    local used_gb="$2"
+    echo "[GPU Watchdog] ❌ $reason"
+    echo "[GPU Watchdog] ❌ Erreur: Le job a dépassé la limite mémoire allouée (utilisé: ${used_gb}GB). Le conteneur a été arrêté préventivement pour protéger le worker."
+    echo "[GPU Watchdog] ❌ Veuillez réduire la consommation mémoire ou augmenter REQUIRED_VRAM dans .cluster-ci"
+
+    # Kill the container — this will cause docker exec to return 137
+    docker kill "$CONTAINER_NAME" 2>/dev/null || true
+    exit 0
+}
+
 while true; do
-    sleep 5
+    sleep $POLL_INTERVAL
 
     # Check if container is still running
     if ! docker inspect "$CONTAINER_NAME" --format '{{.State.Running}}' 2>/dev/null | grep -q "true"; then
@@ -75,17 +109,18 @@ while true; do
 
     USED_GB=$(awk "BEGIN {printf \"%.1f\", $USED_MIB / 1024}")
 
+    # HARD LIMIT CHECK (90% of total RAM) — IMMEDIATE KILL, no grace period
+    if [ "$USED_MIB" -gt "$HARD_LIMIT_MIB" ]; then
+        kill_container "HARD LIMIT BREACHED: ${USED_GB}GB > ${HARD_LIMIT_GB}GB (90% of system RAM). Immediate kill to prevent system freeze." "$USED_GB"
+    fi
+
+    # SOFT LIMIT CHECK (user-declared limit) — Kill after consecutive violations
     if [ "$USED_MIB" -gt "$VRAM_LIMIT_MIB" ]; then
         CONSECUTIVE_OVER=$((CONSECUTIVE_OVER + 1))
-        echo "[GPU Watchdog] ⚠️  Memory usage ${USED_GB}GB > ${VRAM_LIMIT_GB}GB limit (violation $CONSECUTIVE_OVER/$THRESHOLD) [mode: $MONITORING_MODE]"
+        echo "[GPU Watchdog] ⚠️  Memory usage ${USED_GB}GB > ${VRAM_LIMIT_GB}GB limit (violation $CONSECUTIVE_OVER/$SOFT_THRESHOLD) [mode: $MONITORING_MODE]"
 
-        if [ "$CONSECUTIVE_OVER" -ge "$THRESHOLD" ]; then
-            echo "[GPU Watchdog] ❌ VRAM limit exceeded for ${THRESHOLD} consecutive checks. Killing container to protect the worker."
-            echo "[GPU Watchdog] ❌ Erreur: Le job a dépassé la limite mémoire allouée (${VRAM_LIMIT_GB} GB, utilisé: ${USED_GB} GB). Le conteneur a été arrêté préventivement pour protéger le worker. Veuillez réduire la consommation mémoire ou augmenter REQUIRED_VRAM dans .cluster-ci"
-
-            # Kill the container — this will cause docker exec to return 137
-            docker kill "$CONTAINER_NAME" 2>/dev/null || true
-            exit 0
+        if [ "$CONSECUTIVE_OVER" -ge "$SOFT_THRESHOLD" ]; then
+            kill_container "Soft limit exceeded for ${SOFT_THRESHOLD} consecutive checks (${USED_GB}GB > ${VRAM_LIMIT_GB}GB)." "$USED_GB"
         fi
     else
         if [ "$CONSECUTIVE_OVER" -gt 0 ]; then
