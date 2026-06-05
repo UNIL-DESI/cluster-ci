@@ -217,6 +217,7 @@ function cleanup_job_resources() {
 
     [ -n "$DVC_VIEWER_PID" ] && kill -9 "$DVC_VIEWER_PID" 2>/dev/null || true
     [ -n "$WATCHDOG_PID" ] && kill -9 "$WATCHDOG_PID" 2>/dev/null || true
+    [ -n "$GPU_WATCHDOG_PID" ] && kill -9 "$GPU_WATCHDOG_PID" 2>/dev/null || true
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
@@ -301,6 +302,16 @@ log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 # --memory-swap equal to --memory disables swap (prevents silent degradation).
 DOCKER_MEMORY_FLAG="--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g"
 log_info "Docker memory hard-limit: ${RAM_LIMIT}GB (cgroups enforced, no swap)"
+
+# Extract VRAM limit from .cluster-ci (REQUIRED_VRAM=70GB)
+# This is enforced by the GPU watchdog (nvidia-smi monitoring), not by Docker.
+VRAM_LIMIT=$(grep -oE -e 'REQUIRED_VRAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head -n 1)
+[ -z "$VRAM_LIMIT" ] && VRAM_LIMIT="0"
+if [ "$VRAM_LIMIT" != "0" ]; then
+    log_info "VRAM limit detected: ${VRAM_LIMIT}GB (GPU watchdog will enforce)"
+else
+    log_info "No VRAM limit declared. GPU watchdog disabled."
+fi
 
 
 # Configuration Docker — Architecture-aware image selection
@@ -721,6 +732,14 @@ log_info "Starting DVC Watchdog (background)..."
 bash "$BASE_DIR/src/runner/dvc_watchdog.sh" "${MAIN_CONTAINER_NAME}" > dvc_watchdog.log 2>&1 &
 WATCHDOG_PID=$!
 
+# GPU VRAM Watchdog: monitors nvidia-smi and kills container before driver crash
+GPU_WATCHDOG_PID=""
+if [ "$VRAM_LIMIT" != "0" ]; then
+    log_info "Starting GPU VRAM Watchdog (limit: ${VRAM_LIMIT}GB)..."
+    bash "$BASE_DIR/src/runner/gpu_watchdog.sh" "${MAIN_CONTAINER_NAME}" "$VRAM_LIMIT" 2>&1 | tee -a gpu_watchdog.log &
+    GPU_WATCHDOG_PID=$!
+fi
+
 log_info "Launching: dvc repro $DVC_ARGS via Docker"
 # Smart dependency installation: only re-install if pyproject.toml/uv.lock changed.
 # The smart_install.sh script hashes dependency files and caches the result in the
@@ -745,10 +764,23 @@ if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
 fi
+if [ -n "$GPU_WATCHDOG_PID" ]; then
+    log_info "Stopping GPU Watchdog..."
+    kill "$GPU_WATCHDOG_PID" 2>/dev/null || true
+    wait "$GPU_WATCHDOG_PID" 2>/dev/null || true
+fi
 
 if [ $EXEC_RET -ne 0 ]; then
     OOM_KILLED=$(docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
-    if [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
+    GPU_WATCHDOG_KILLED=false
+    if [ -f gpu_watchdog.log ] && grep -q "VRAM limit exceeded" gpu_watchdog.log 2>/dev/null; then
+        GPU_WATCHDOG_KILLED=true
+    fi
+
+    if [ "$GPU_WATCHDOG_KILLED" = "true" ]; then
+        EXEC_RET=137
+        log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_VRAM allouée (${VRAM_LIMIT} GB) et a été arrêté préventivement par le GPU Watchdog pour protéger le worker. Veuillez réduire la consommation VRAM ou augmenter REQUIRED_VRAM dans .cluster-ci"
+    elif [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
         EXEC_RET=137
         log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
     else
@@ -786,7 +818,8 @@ fi
 
 if [ $EXEC_RET -ne 0 ]; then
     if [ $EXEC_RET -eq 137 ]; then
-        log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
+        # Already logged above (RAM or VRAM OOM), just exit
+        true
     else
         log_error "Exiting with error code $EXEC_RET due to previous failure."
     fi
