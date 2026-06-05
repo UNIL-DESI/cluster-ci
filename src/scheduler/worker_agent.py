@@ -482,9 +482,12 @@ def execute_job(job):
 
         # Launch an unbuffered line-by-line real-time log streamer thread
         import threading
+        traceback_time = [None]
         def log_streamer():
             try:
                 for line in process.stdout:
+                    if "Traceback (most recent call last):" in line:
+                        traceback_time[0] = time.time()
                     log_file.write(line)
                     log_file.flush()
                     try:
@@ -532,6 +535,31 @@ def execute_job(job):
                 
                 process.terminate()
                 break
+
+            # 1.5. Watchdog: Check for Deadlock (Hanging after Traceback)
+            if traceback_time[0] is not None:
+                if time.time() - traceback_time[0] > 120:  # 2 minutes grace period
+                    logger.error(f"❌ [WATCHDOG] Job {job_id} hung for 2 minutes after a fatal Traceback (likely non-daemon thread deadlock). Triggering forced destruction.")
+                    error_msg = f"\n❌ [CLUSTER WATCHDOG] Execution hung for 2 minutes after a fatal Python Traceback (possible non-daemon thread deadlock). Terminating.\n"
+                    log_file.write(error_msg)
+                    log_file.flush()
+
+                    safe_job_id = job_id.replace('/', '-')
+                    safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+                    
+                    try:
+                        parent = psutil.Process(process.pid)
+                        for child in parent.children(recursive=True):
+                            try:
+                                child.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                        parent.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                    
+                    process.terminate()
+                    break
 
             # 2. Active Self-Healing Watchdog: check job status on headnode every 10 seconds
             # to robustly detect cancellations from GitHub or Headnode DB even if Flask webhook fails.
