@@ -485,7 +485,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         new_logs = logs_data.get('logs', '')
                         if new_logs:
                             import re
-                            if re.search(r'Exit code 137|OOM|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                            if re.search(r'Exit code 137|\bOOM\b|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
                                 oom_detected = True
                             if not status_printed:
                                 print(f"\n\n[Streaming logs from {worker_url}]")
