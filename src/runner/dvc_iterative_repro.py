@@ -183,10 +183,16 @@ def main():
             
             if target_branch and target_branch != "HEAD":
                 print(f"Pushing failure state to branch: {target_branch}")
-                subprocess.run(["git", "push", "origin", target_branch])
+                try:
+                    subprocess.run(["git", "push", "origin", target_branch], timeout=60)
+                except subprocess.TimeoutExpired:
+                    print("⚠️ Warning: git push timed out after 60s, continuing...")
             else:
                 print("Pushing failure state to default HEAD branch...")
-                subprocess.run(["git", "push", "origin", "HEAD"])
+                try:
+                    subprocess.run(["git", "push", "origin", "HEAD"], timeout=60)
+                except subprocess.TimeoutExpired:
+                    print("⚠️ Warning: git push timed out after 60s, continuing...")
             sys.exit(ret.returncode)
             
         print(f"==================================================")

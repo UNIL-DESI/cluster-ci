@@ -147,6 +147,20 @@ function log_error() {
     echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
 }
 
+# Graceful kill with timeout fallback to SIGKILL
+_kill_with_timeout() {
+    local pid=$1
+    local grace=${2:-5}
+    kill "$pid" 2>/dev/null || return 0
+    local i=0
+    while [ $i -lt $grace ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
 echo "=========================================================================="
 log_info "CLUSTER-CI: GitOps Runner Orchestration Start"
 log_info "   Target Repo   : $TARGET_REPO"
@@ -218,6 +232,9 @@ function cleanup_job_resources() {
     [ -n "$DVC_VIEWER_PID" ] && kill -9 "$DVC_VIEWER_PID" 2>/dev/null || true
     [ -n "$WATCHDOG_PID" ] && kill -9 "$WATCHDOG_PID" 2>/dev/null || true
     [ -n "$GPU_WATCHDOG_PID" ] && kill -9 "$GPU_WATCHDOG_PID" 2>/dev/null || true
+    # Kill pipeline siblings (gpu_watchdog.sh survives when only tee PID is killed)
+    pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
+    pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
@@ -777,13 +794,13 @@ echo "===STAGE:sync:BEGIN==="
 
 if [ -n "$WATCHDOG_PID" ]; then
     log_info "Stopping DVC Watchdog..."
-    kill "$WATCHDOG_PID" 2>/dev/null || true
-    wait "$WATCHDOG_PID" 2>/dev/null || true
+    _kill_with_timeout "$WATCHDOG_PID" 5
 fi
 if [ -n "$GPU_WATCHDOG_PID" ]; then
     log_info "Stopping GPU Watchdog..."
-    kill "$GPU_WATCHDOG_PID" 2>/dev/null || true
-    wait "$GPU_WATCHDOG_PID" 2>/dev/null || true
+    _kill_with_timeout "$GPU_WATCHDOG_PID" 5
+    # Kill the gpu_watchdog.sh process in the pipeline (tee was $GPU_WATCHDOG_PID)
+    pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
 fi
 
 if [ $EXEC_RET -ne 0 ]; then
@@ -805,7 +822,7 @@ if [ $EXEC_RET -ne 0 ]; then
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync failed."
+docker_exec "timeout 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.

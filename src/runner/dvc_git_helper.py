@@ -269,18 +269,18 @@ def sync_metrics():
         # Push all accumulated local commits robustly
         log_info("Pushing all accumulated local commits to origin...")
         try:
-            subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
+            subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
             log_success("All changes pushed successfully.")
-        except subprocess.CalledProcessError as e:
-            log_warn(f"Initial push failed, attempting reconciliation (rebase): {e.stderr.strip()}")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            log_warn(f"Initial push failed, attempting reconciliation (rebase): {getattr(e, 'stderr', '') or e}")
             try:
                 # Attempt to pull with rebase to handle remote changes
-                subprocess.run(['git', 'pull', '--rebase', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
+                subprocess.run(['git', 'pull', '--rebase', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
                 log_info("Rebase successful, retrying push...")
-                subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True)
+                subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
                 log_success("All changes pushed successfully after reconciliation.")
-            except subprocess.CalledProcessError as rebase_err:
-                log_warn(f"Reconciliation failed: {rebase_err.stderr.strip()}")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as rebase_err:
+                log_warn(f"Reconciliation failed: {getattr(rebase_err, 'stderr', '') or rebase_err}")
                 # Abort rebase if it's still in progress to leave the repo in a clean state
                 subprocess.run(['git', 'rebase', '--abort'], check=False, capture_output=True)
                 log_warn("Push abandoned. The pipeline will continue, but local commits were not synchronized.")
