@@ -5,7 +5,7 @@ stages:
     outs:
     - path: .dvc-viewer/hashes
       hash: md5
-      md5: 8f98fce44045e099dbf1a2b9a2b600f7.dir
+      md5: 1faf98845f913f29a6961f9c7b472cca.dir
       size: 329
       nfiles: 2
   fake_test:
@@ -20,12 +20,12 @@ stages:
     deps:
     - path: .dvc-viewer/hashes/research.hash
       hash: md5
-      md5: fcdd7067f6f3d36ac96f2b53e5aaf979
+      md5: 9265ec24271a3f3a80189afc0990b326
       size: 64
     - path: simulate_research.py
       hash: md5
-      md5: 0de4cd445f5eab8162f29ece811adda6
-      size: 3437
+      md5: 159eddaaee00056e42f47d5048cac2f2
+      size: 3484
     outs:
     - path: artifacts/data.csv
       hash: md5
@@ -37,13 +37,13 @@ stages:
       size: 189
     - path: artifacts/plot.png
       hash: md5
-      md5: 6034a9acc7b8c9a5f05759e1e0eaefe6
-      size: 37051
+      md5: d12db62b2780486d5d6909ee087cde09
+      size: 36490
     - path: artifacts/random_plot.png
       hash: md5
-      md5: e4d8aa53c14b53eb63231a26896c9615
-      size: 33170
+      md5: 10d2cab1a731c09ed29013d61963718a
+      size: 40363
     - path: artifacts/random_table.csv
       hash: md5
-      md5: dfb18b4a9b22422a1cd90152f21d6bd0
-      size: 191
+      md5: 720c93657e1576bc8301cbe2dd45e965
+      size: 189
