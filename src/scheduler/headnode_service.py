@@ -249,7 +249,10 @@ def submit_job():
     # Metadata extraction (Pre-flight check)
     required_hashes = []
     repo_url = f"https://github.com/{repo}.git"
-    pat = os.environ.get("GITHUB_PAT")
+    
+    # Prioritize token from submit_job (gh_token) over local GITHUB_PAT
+    pat = gh_token or os.environ.get("GITHUB_PAT")
+    
     if pat:
         repo_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
 

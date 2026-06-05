@@ -78,63 +78,50 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     
     # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)
     # This ensures the python script receives the signal and completes its graceful cancellation HTTP call.
-    PPNG_CURL_PID=""
-    HEARTBEAT_PID=""
+    LOG_FILE="/tmp/cluster_job_${CALLER_COMMIT_SHA}.log"
+    STREAM_PIPE="/tmp/cluster_pipe_${CALLER_COMMIT_SHA}"
+    
+    rm -f "$LOG_FILE" "$STREAM_PIPE"
+    touch "$LOG_FILE"
+    mkfifo "$STREAM_PIPE"
 
-    cleanup_delegation() {
-        echo "Cleaning up delegation resources..."
-        if [ -n "$HEARTBEAT_PID" ]; then
-            kill "$HEARTBEAT_PID" 2>/dev/null || true
-        fi
-        if [ -n "$PPNG_CURL_PID" ]; then
-            kill "$PPNG_CURL_PID" 2>/dev/null || true
-        fi
-    }
-    trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
+    # Start curl reading from the pipe
+    curl -s -X POST -H "Content-Type: text/plain" -T "$STREAM_PIPE" -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null &
+    CURL_PID=$!
 
-    # Architecture: Direct pipeline via process substitution.
-    # submit_job.py → tee → >(curl POST ppng.io)
-    #
-    # This is the SIMPLEST and most reliable approach:
-    # - No intermediate file, no tail -F, no pusher loop
-    # - tee sends data simultaneously to GHA stdout AND to curl POST
-    # - stdbuf -oL ensures line-by-line flushing (no buffering stalls)
-    # - If curl POST dies (client disconnect), tee continues writing to stdout (GHA logs)
-    #   without crashing submit_job.py — the "|| true" in process substitution handles this
-    #
-    # Heartbeats: A background process writes ♥ to fd 3, which is merged into the
-    # main pipeline. This keeps the ppng.io channel alive during long silent periods
-    # (e.g. GPU computation with no output).
+    # Start tail pushing logs to the pipe
+    tail -f "$LOG_FILE" > "$STREAM_PIPE" &
+    TAIL_PID=$!
 
-    # Create a named pipe for heartbeat injection
-    HEARTBEAT_PIPE="/tmp/cluster-ci-heartbeat-${CALLER_COMMIT_SHA}"
-    rm -f "$HEARTBEAT_PIPE"
-    mkfifo "$HEARTBEAT_PIPE"
-
-    # Heartbeat writer: sends ♥ every 10s into the named pipe
+    # Start heartbeat pushing to the pipe
     (
         while true; do
             sleep 10
             echo "♥" 2>/dev/null || break
-        done > "$HEARTBEAT_PIPE"
-    ) &
+        done
+    ) > "$STREAM_PIPE" &
     HEARTBEAT_PID=$!
 
-    # Start the background curl POST that receives the merged stream
-    # Use a named pipe approach: cat merges submit_job output + heartbeats,
-    # then tee splits it to stdout (GHA) and curl POST (ppng.io)
+    cleanup_delegation() {
+        echo "Cleaning up delegation resources..."
+        if [ -n "$TAIL_PID" ]; then kill "$TAIL_PID" 2>/dev/null || true; fi
+        if [ -n "$HEARTBEAT_PID" ]; then kill "$HEARTBEAT_PID" 2>/dev/null || true; fi
+        if [ -n "$CURL_PID" ]; then kill "$CURL_PID" 2>/dev/null || true; fi
+        rm -f "$LOG_FILE" "$STREAM_PIPE" 2>/dev/null || true
+    }
+    trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
+
     set +e
     if [ -n "$GH_TOKEN" ]; then
-        (cat "$HEARTBEAT_PIPE" & python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1) | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
         SUBMIT_RET=${PIPESTATUS[0]}
     else
-        (cat "$HEARTBEAT_PIPE" & python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1) | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
         SUBMIT_RET=${PIPESTATUS[0]}
     fi
     set -e
 
     cleanup_delegation
-    rm -f "$HEARTBEAT_PIPE" 2>/dev/null || true
     trap - TERM INT EXIT
     exit $SUBMIT_RET
 fi
