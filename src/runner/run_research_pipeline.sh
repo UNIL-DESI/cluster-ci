@@ -78,72 +78,63 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     
     # TRAP: Prevent bash from exiting instantly on GitHub Action cancellation (SIGTERM)
     # This ensures the python script receives the signal and completes its graceful cancellation HTTP call.
-    # We also cleanly stop the log pusher process and delete the temporary log file.
-    LOG_TEMP="/tmp/cluster-ci-submit-${CALLER_COMMIT_SHA}.log"
-    touch "$LOG_TEMP"
-    chmod 600 "$LOG_TEMP"
+    PPNG_CURL_PID=""
+    HEARTBEAT_PID=""
 
     cleanup_delegation() {
         echo "Cleaning up delegation resources..."
         if [ -n "$HEARTBEAT_PID" ]; then
             kill "$HEARTBEAT_PID" 2>/dev/null || true
         fi
-        if [ -n "$PUSHER_PID" ]; then
-            kill "$PUSHER_PID" 2>/dev/null || true
+        if [ -n "$PPNG_CURL_PID" ]; then
+            kill "$PPNG_CURL_PID" 2>/dev/null || true
         fi
-        rm -f "$LOG_TEMP" 2>/dev/null || true
     }
     trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
 
-    # Start heartbeat subprocess: writes ♥ to log file every 10s if no new data arrived.
-    # This keeps the ppng.io channel alive and lets the client detect real disconnections
-    # vs normal silence (e.g. long GPU computation with no output).
+    # Architecture: Direct pipeline via process substitution.
+    # submit_job.py → tee → >(curl POST ppng.io)
+    #
+    # This is the SIMPLEST and most reliable approach:
+    # - No intermediate file, no tail -F, no pusher loop
+    # - tee sends data simultaneously to GHA stdout AND to curl POST
+    # - stdbuf -oL ensures line-by-line flushing (no buffering stalls)
+    # - If curl POST dies (client disconnect), tee continues writing to stdout (GHA logs)
+    #   without crashing submit_job.py — the "|| true" in process substitution handles this
+    #
+    # Heartbeats: A background process writes ♥ to fd 3, which is merged into the
+    # main pipeline. This keeps the ppng.io channel alive during long silent periods
+    # (e.g. GPU computation with no output).
+
+    # Create a named pipe for heartbeat injection
+    HEARTBEAT_PIPE="/tmp/cluster-ci-heartbeat-${CALLER_COMMIT_SHA}"
+    rm -f "$HEARTBEAT_PIPE"
+    mkfifo "$HEARTBEAT_PIPE"
+
+    # Heartbeat writer: sends ♥ every 10s into the named pipe
     (
-        while [ -f "$LOG_TEMP" ]; do
+        while true; do
             sleep 10
-            if [ -f "$LOG_TEMP" ]; then
-                last_mod=$(stat -c %Y "$LOG_TEMP" 2>/dev/null || echo 0)
-                now=$(date +%s)
-                if [ $((now - last_mod)) -ge 8 ]; then
-                    echo "♥" >> "$LOG_TEMP"
-                fi
-            fi
-        done
+            echo "♥" 2>/dev/null || break
+        done > "$HEARTBEAT_PIPE"
     ) &
     HEARTBEAT_PID=$!
 
-    # Start a robust background log pusher.
-    # Piping Server accepts a single connection at a time. By looping, if the client disconnects,
-    # curl exits and the loop immediately launches a new curl instance streaming the entire
-    # file from the beginning (tail -c +1). This guarantees that a reconnecting client
-    # retrieves the full log history of the run.
-    # --max-time 300: Safety net to kill zombie POST connections after 5 minutes.
-    # This should NEVER fire during normal operation (heartbeats keep the channel alive).
-    # It only exists to reclaim the ppng.io channel if a TCP zombie lingers after a client crash.
-    # Cost is negligible: tail -c +1 replays the log file on each restart.
-    (
-        while [ -f "$LOG_TEMP" ]; do
-            sleep 2
-            if [ ! -f "$LOG_TEMP" ]; then
-                break
-            fi
-            stdbuf -oL tail -c +1 -F "$LOG_TEMP" 2>/dev/null | curl -s -N --no-buffer --max-time 300 --connect-timeout 5 -X POST -H "Content-Type: text/plain" -T - --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true
-        done
-    ) &
-    PUSHER_PID=$!
-
-    # Run the job submission script, outputting to stdout (for GHA runners) and appending to LOG_TEMP.
+    # Start the background curl POST that receives the merged stream
+    # Use a named pipe approach: cat merges submit_job output + heartbeats,
+    # then tee splits it to stdout (GHA) and curl POST (ppng.io)
     set +e
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | tee "$LOG_TEMP"
+        (cat "$HEARTBEAT_PIPE" & python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1) | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
         SUBMIT_RET=${PIPESTATUS[0]}
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | tee "$LOG_TEMP"
+        (cat "$HEARTBEAT_PIPE" & python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1) | stdbuf -oL -eL tee >(curl -s -X POST -H "Content-Type: text/plain" -T - -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null || true)
         SUBMIT_RET=${PIPESTATUS[0]}
     fi
     set -e
 
     cleanup_delegation
+    rm -f "$HEARTBEAT_PIPE" 2>/dev/null || true
     trap - TERM INT EXIT
     exit $SUBMIT_RET
 fi

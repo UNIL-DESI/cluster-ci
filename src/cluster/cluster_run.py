@@ -614,33 +614,11 @@ def stream_logs(run_id, commit_sha, branch=None):
     try:
         q = queue.Queue()
         proc = None
-        reader_thread = None
         received_data = False
-        total_lines_processed = 0
-        lines_to_skip = 0
-        last_reconnect_time = 0
-        reconnect_count = 0  # Track consecutive reconnections without data
 
-        def start_curl_stream():
-            nonlocal proc, reader_thread, lines_to_skip, q
-            # Properly drain old process and thread before starting new ones
-            if proc:
-                try: proc.terminate()
-                except: pass
-                try: proc.wait(timeout=2)
-                except: pass
-            if reader_thread and reader_thread.is_alive():
-                try: reader_thread.join(timeout=3)
-                except: pass
-            
-            # Recreate queue to prevent residual logs from previous connection
-            q = queue.Queue()
-            # Skip lines we already processed to handle tail -c +1 replay on reconnect
-            lines_to_skip = total_lines_processed
-            
+        if has_curl and commit_sha:
             proc = subprocess.Popen(
-                ["curl", "-s", "-N", "--connect-timeout", "5", "--keepalive-time", "10",
-                 f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
                 stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
             )
             
@@ -663,13 +641,8 @@ def stream_logs(run_id, commit_sha, branch=None):
             reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
             reader_thread.start()
 
-        if has_curl and commit_sha:
-            start_curl_stream()
-
-
         last_sync_time = time.time()
         last_synced_sha = commit_sha
-        last_log_received_time = time.time()
         last_gha_poll_time = 0
 
         while True:
@@ -680,73 +653,20 @@ def stream_logs(run_id, commit_sha, branch=None):
                     last_synced_sha = remote_sha
                 last_sync_time = time.time()
 
-            # Active connection monitoring to auto-reconnect if the curl process died.
-            # The server POST recycles periodically (--max-time), causing the GET to receive
-            # EOF. This is EXPECTED behavior, not an error. Reconnect silently with a short
-            # fixed delay (no exponential backoff).
-            if has_curl and commit_sha:
-                if proc and proc.poll() is not None:
-                    if time.time() - last_reconnect_time > 3:  # Fixed 3s delay between retries
-                        last_reconnect_time = time.time()
-                        reconnect_needed = True
-                        try:
-                            res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
-                            if res.returncode == 0:
-                                info = json.loads(res.stdout)
-                                status = info.get("status")
-                                conclusion = info.get("conclusion")
-                                if status == "completed" or conclusion:
-                                    reconnect_needed = False
-                        except Exception:
-                            pass
-                        
-                        if reconnect_needed:
-                            reconnect_count += 1
-                            # Only warn user after multiple consecutive failures (not routine recycling)
-                            if reconnect_count >= 3:
-                                print_line("⚡ [Réseau] Reconnexion au flux de logs...", force=True)
-                            start_curl_stream()
-
             try:
                 line = q.get(timeout=1)
                 line_stripped = line.rstrip('\r\n')
                 if "has been established already" in line_stripped:
                     continue
                 
-                # Handle ppng.io limit errors directly (do not count in total_lines_processed)
-                if "[ERROR] The number of receivers has reached limits" in line_stripped:
-                    print("\n⏳ [Réseau] Trop de connexions fantômes au flux de logs. Le serveur distant (ppng.io) limite les accès.")
-                    print("🔄 Attente de 15 secondes pour permettre au serveur de purger les connexions inactives...")
-                    time.sleep(15)
-                    # Force reconnect logic to kick in smoothly
-                    if proc:
-                        try: proc.terminate()
-                        except: pass
-                    continue
-                
-                # Deduplication logic: skip lines we have already displayed
-                if lines_to_skip > 0:
-                    lines_to_skip -= 1
-                    # CRITICAL: We are receiving valid data from ppng.io, so we must
-                    # update the watchdog timer and reset the reconnection counter.
-                    # Otherwise, replaying a large log file will trigger a false watchdog
-                    # timeout, leading to an infinite loop of silent reconnections.
-                    last_log_received_time = time.time()
-                    reconnect_count = 0
-                    continue
-
                 if not received_data:
                     print("\n🟢 Live stream connected.")
                     received_data = True
                 
-                # Reset reconnection counter on successful data receipt
-                reconnect_count = 0
-                
                 # Heartbeat filtering: server sends ♥ every 10s to keep channel alive.
-                # Update the timer (proof of life) but don't display or log.
+                # Update the poll timer (proof of life) but don't display or log.
                 if line_stripped.strip() == "♥":
-                    total_lines_processed += 1
-                    last_log_received_time = time.time()
+                    last_gha_poll_time = time.time()
                     continue
                 
                 print_line(line_stripped, force=True)
@@ -758,15 +678,45 @@ def stream_logs(run_id, commit_sha, branch=None):
                         extracted_job_id = m.group(1)
                         update_run_state_job_id(extracted_job_id)
 
-                total_lines_processed += 1
-                last_log_received_time = time.time()
+                last_gha_poll_time = time.time()
             except queue.Empty:
-                gha_completed = False
-                # Limit GHA status polling to once every 5 seconds to prevent subprocess calls from blocking the main loop
                 if time.time() - last_gha_poll_time > 5:
-                    last_gha_poll_time = time.time()
+                    gha_completed = False
+                    
+                    # Scheduler health check to detect unexpected backend failures (OOM, SIGKILL)
+                    headnode_url = discover_headnode_url()
+                    job_id = None
                     try:
-                        # Apply short timeout=3 to avoid freezing on GHA query when offline
+                        if os.path.exists(STATE_FILE):
+                            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                                state = json.load(f)
+                                job_id = state.get("job_id")
+                    except Exception:
+                        pass
+                        
+                    if headnode_url and job_id:
+                        try:
+                            url = f"{headnode_url}/job_status/{job_id}"
+                            req = urllib.request.Request(url)
+                            with urllib.request.urlopen(req, timeout=5) as resp:
+                                job_data = json.loads(resp.read().decode())
+                                status_val = job_data.get("status")
+                                job_active = status_val in ("running", "assigned", "pending")
+                                job_finished_normally = status_val in ("completed", "failed")
+                                if not job_active and not job_finished_normally:
+                                    print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
+                                    print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
+                                    if proc:
+                                        try: proc.terminate()
+                                        except: pass
+                                    close_log_redirection()
+                                    print_log_summary()
+                                    return 1
+                        except Exception:
+                            pass
+
+                    # GHA status check
+                    try:
                         res = subprocess.run(["gh", "run", "view", str(run_id), "--json", "status,conclusion,url"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3)
                         if res.returncode == 0:
                             info = json.loads(res.stdout)
@@ -776,8 +726,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                             if status == "completed" or conclusion:
                                 gha_completed = True
                                 # Drain remaining logs from the ppng.io pipe before quitting.
-                                # The GHA run just finished, but some log lines may still be in transit.
-                                drain_deadline = time.time() + 5  # drain for up to 5 seconds
+                                drain_deadline = time.time() + 5
                                 while time.time() < drain_deadline:
                                     try:
                                         line = q.get(timeout=0.2)
@@ -785,7 +734,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                                         if line_stripped and "has been established already" not in line_stripped:
                                             print_line(line_stripped, force=True)
                                     except queue.Empty:
-                                        break  # No more data in pipe
+                                        break
                                 if proc:
                                     try: proc.terminate()
                                     except: pass
@@ -811,71 +760,11 @@ def stream_logs(run_id, commit_sha, branch=None):
                     except Exception:
                         pass
 
-                # If GHA run is still active, perform scheduler health check to detect unexpected backend failures
-                if not gha_completed and (time.time() - last_log_received_time > 5):
-                    headnode_url = discover_headnode_url()
-                    job_id = None
-                    try:
-                        if os.path.exists(STATE_FILE):
-                            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                                state = json.load(f)
-                                job_id = state.get("job_id")
-                    except Exception:
-                        pass
-                        
-                    if headnode_url and job_id:
-                        try:
-                            # Contact specific job endpoint directly (case-insensitive and precise)
-                            url = f"{headnode_url}/job_status/{job_id}"
-                            req = urllib.request.Request(url)
-                            with urllib.request.urlopen(req, timeout=5) as resp:
-                                job_data = json.loads(resp.read().decode())
-                                status_val = job_data.get("status")
-                                job_active = status_val in ("running", "assigned", "pending")
-                                job_finished_normally = status_val in ("completed", "failed")
-                                if not job_active and not job_finished_normally:
-                                    print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
-                                    print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
-                                    if proc:
-                                        try: proc.terminate()
-                                        except: pass
-                                    close_log_redirection()
-                                    print_log_summary()
-                                    return 1
-                        except Exception:
-                            pass
-
-                # Two-tier watchdog for stale connections:
-                #
-                # Tier 1 — Post-reconnection fast watchdog (20s):
-                #   After a reconnection, if the new GET paired with a zombie POST on ppng.io,
-                #   we receive no data. Kill and retry quickly instead of waiting 60s.
-                #
-                # Tier 2 — Steady-state watchdog (60s):
-                #   During normal operation, 60s without data (including heartbeats every 10s)
-                #   means 6+ missed heartbeats → genuine disconnection.
-                if not gha_completed and has_curl and commit_sha:
-                    time_since_data = time.time() - last_log_received_time
-                    time_since_reconnect = time.time() - last_reconnect_time
-                    
-                    # Tier 1: Fast retry after reconnection (if we reconnected recently and got no data)
-                    watchdog_threshold = 20 if (reconnect_count > 0 and time_since_reconnect < 25) else 60
-                    
-                    if time_since_data > watchdog_threshold:
-                        if time.time() - last_reconnect_time > 5:
-                            last_reconnect_time = time.time()
-                            reconnect_count += 1
-                            if watchdog_threshold == 60:
-                                print_line("⚡ [Réseau] Flux inactif depuis 60s. Reconnexion au flux de logs...", force=True)
-                            start_curl_stream()
-                            # Reset received time to prevent infinite loops of reconnects
-                            last_log_received_time = time.time()
-
-                if not received_data:
-                    # Throttle queue status display to avoid spamming
-                    if time.time() - last_gha_poll_time > 5:
+                    if not received_data:
                         if not display_clean_queue_status(run_id):
                             print("\n⏳ En attente de l'allocation d'un runner GitHub Actions...")
+                    
+                    last_gha_poll_time = time.time()
 
     except KeyboardInterrupt:
         if 'proc' in locals() and proc:
