@@ -151,6 +151,7 @@ function log_error() {
 _kill_with_timeout() {
     local pid=$1
     local grace=${2:-5}
+    if [ -z "$pid" ]; then return 0; fi
     kill "$pid" 2>/dev/null || return 0
     local i=0
     while [ $i -lt $grace ] && kill -0 "$pid" 2>/dev/null; do
@@ -158,7 +159,6 @@ _kill_with_timeout() {
         i=$((i + 1))
     done
     kill -9 "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
 }
 
 echo "=========================================================================="
@@ -800,11 +800,11 @@ if [ -n "$GPU_WATCHDOG_PID" ]; then
     log_info "Stopping GPU Watchdog..."
     _kill_with_timeout "$GPU_WATCHDOG_PID" 5
     # Kill the gpu_watchdog.sh process in the pipeline (tee was $GPU_WATCHDOG_PID)
-    pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
+    timeout 5 pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
 fi
 
-if [ $EXEC_RET -ne 0 ]; then
-    OOM_KILLED=$(docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
+if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
+    OOM_KILLED=$(timeout 10 docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
     GPU_WATCHDOG_KILLED=false
     if [ -f gpu_watchdog.log ] && grep -q "VRAM limit exceeded" gpu_watchdog.log 2>/dev/null; then
         GPU_WATCHDOG_KILLED=true
@@ -822,7 +822,7 @@ if [ $EXEC_RET -ne 0 ]; then
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-docker_exec "timeout 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+timeout 130 docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
@@ -843,10 +843,10 @@ if [ -n "$GITHUB_STEP_SUMMARY" ]; then
     log_info "Generating GitHub Step Summary (Markdown Report)..."
     echo "# 🧪 Cluster-CI Run Report" >> "$GITHUB_STEP_SUMMARY"
     echo "## 📊 DVC Metrics" >> "$GITHUB_STEP_SUMMARY"
-    docker_exec "dvc metrics diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No metric changes or error." >> "$GITHUB_STEP_SUMMARY"
+    timeout 30 docker_exec "dvc metrics diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No metric changes or error." >> "$GITHUB_STEP_SUMMARY"
     
     echo "## 📈 DVC Plots" >> "$GITHUB_STEP_SUMMARY"
-    docker_exec "dvc plots diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No plot changes or error." >> "$GITHUB_STEP_SUMMARY"
+    timeout 30 docker_exec "dvc plots diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No plot changes or error." >> "$GITHUB_STEP_SUMMARY"
 fi
 
 if [ $EXEC_RET -ne 0 ]; then
