@@ -199,16 +199,12 @@ def sync_metrics():
         # No dvc.lock found
         pass
 
-    if not dvc_lock_changed:
-        log_info("dvc.lock is unchanged (no cache changes). Skipping sync.")
-        return
-
     added_any = False
 
-    # Stage dvc.lock since we know it changed
-    subprocess.run(['git', 'add', 'dvc.lock'], check=True)
-    log_info("Staged modified dvc.lock for synchronization")
-    added_any = True
+    if dvc_lock_changed:
+        subprocess.run(['git', 'add', 'dvc.lock'], check=True)
+        log_info("Staged modified dvc.lock for synchronization")
+        added_any = True
 
     # 2. Stage metrics and plots
     dvc_yaml_path = 'dvc.yaml'
@@ -220,8 +216,8 @@ def sync_metrics():
 
         size_mb = os.path.getsize(path) / (1024 * 1024)
         if size_mb < 5:
-            # Check if file has modifications or is untracked
-            res_status = subprocess.run(['git', 'status', '--porcelain', path], capture_output=True, text=True)
+            # Check if file has modifications or is untracked (even if ignored)
+            res_status = subprocess.run(['git', 'status', '--porcelain', '--ignored', path], capture_output=True, text=True)
             if res_status.stdout.strip():
                 subprocess.run(['git', 'add', '-f', path], check=True)
                 log_info(f"Staged {path} ({size_mb:.2f} MB)")

@@ -822,7 +822,7 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-timeout 130 docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
