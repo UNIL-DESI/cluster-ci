@@ -671,6 +671,14 @@ def stream_logs(run_id, commit_sha, branch=None):
                 
                 print_line(line_stripped, force=True)
                 
+                # Immediate sync trigger: when DVC-Git-Helper pushes metrics/plots on the cluster,
+                # pull them locally right away so the user sees files appear in real-time.
+                if "[DVC-Git-Helper] All changes pushed successfully" in line_stripped:
+                    success, remote_sha = fetch_cluster_results(branch, last_synced_sha, silent_if_no_changes=True)
+                    if success and remote_sha:
+                        last_synced_sha = remote_sha
+                    last_sync_time = time.time()
+
                 # Extract job_id from logs if available to keep client and state file fully synchronized
                 if "Job submitted successfully! ID:" in line_stripped:
                     m = re.search(r"Job submitted successfully!\s+ID:\s*([a-f0-9\-]+)", line_stripped, re.IGNORECASE)
