@@ -29,6 +29,9 @@ Exécutez cette commande à la racine de votre dépôt Git pour l'intégration a
 curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=$(date +%s)" | bash
 ```
 
+> [!IMPORTANT]
+> **Windows User Note**: Execute this command using a **Git Bash** terminal. Executing it directly in PowerShell will fail because `curl` is aliased to `Invoke-WebRequest`, which handles headers differently. Alternatively, run: `bash -c "curl -H 'Cache-Control: no-cache, no-store' -sSL \"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=\$(date +%s)\" | bash"`.
+
 Ce script injecte :
 1. Le workflow Github Actions (`.github/workflows/cluster-ci.yml`)
 2. Le fichier de contrôle DVC (`.cluster-ci`)
