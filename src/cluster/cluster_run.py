@@ -480,6 +480,36 @@ def recover_orphaned_run():
         print(f"⚠️  Could not recover orphaned run state: {e}", file=sys.stderr)
         clear_run_state()
 
+def check_and_redirect_cwd():
+    """If the current directory does not have a .cluster-ci file, check other projects in db.json."""
+    if os.path.exists(".cluster-ci"):
+        return
+
+    # Try to find db.json
+    possible_db_paths = [
+        r"C:\Users\hjamet\Documents\code\antigravity-apk\server\db.json",
+        os.path.expanduser(r"~\Documents\code\antigravity-apk\server\db.json")
+    ]
+    for db_path in possible_db_paths:
+        if os.path.exists(db_path):
+            try:
+                with open(db_path, "r", encoding="utf-8") as f:
+                    db = json.load(f)
+                projects = db.get("projects", [])
+                for proj in projects:
+                    proj_path = proj.get("path")
+                    if proj_path and os.path.exists(os.path.join(proj_path, ".cluster-ci")):
+                        print(f"🔄 [CWD Redirect] Redirecting cluster-run to Cluster-CI project: {proj_path}")
+                        os.chdir(proj_path)
+                        return
+            except Exception as e:
+                print(f"⚠️  Could not read projects from db.json: {e}", file=sys.stderr)
+
+    # If no redirection occurred and still no .cluster-ci, warn and exit
+    if not os.path.exists(".cluster-ci"):
+        print("❌ Error: Not in a Cluster-CI project (file .cluster-ci not found) and no fallback project found.", file=sys.stderr)
+        sys.exit(1)
+
 def _signal_handler(signum, frame):
     """Handle SIGTERM/SIGINT to ensure cleanup runs on termination."""
     global USER_INTERRUPTED
@@ -1052,7 +1082,7 @@ def shadow_run():
     time.sleep(4)
     run_id = None
     
-    for attempt in range(15):
+    for attempt in range(30):
         try:
             res = subprocess.run(["gh", "run", "list", "--branch", BRANCH, "--limit", "1", "--json", "databaseId,status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
@@ -1146,6 +1176,7 @@ def shadow_run():
         sys.exit(1)
 
 def main():
+    check_and_redirect_cwd()
     # Force standard output streams to use UTF-8 to prevent UnicodeEncodeError under Windows CMD/PowerShell
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
