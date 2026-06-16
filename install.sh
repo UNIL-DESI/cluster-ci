@@ -256,6 +256,7 @@ jobs:
   execute-on-cluster:
     name: Execute Research Pipeline
     runs-on: [self-hosted, cluster-worker]
+    timeout-minutes: 1440
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
