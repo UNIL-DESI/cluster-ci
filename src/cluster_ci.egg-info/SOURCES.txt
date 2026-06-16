@@ -11,6 +11,8 @@ src/cluster_ci.egg-info/top_level.txt
 src/runner/dvc_git_helper.py
 src/runner/dvc_iterative_repro.py
 src/runner/gc_orchestrator.py
+src/runner/gpu_memory_guard.py
+src/runner/stress_test_cuda.py
 src/runner/test_dvc_git_helper.py
 src/runner/test_gc.py
 src/runner/test_tiered_gc.py

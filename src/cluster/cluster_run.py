@@ -499,15 +499,15 @@ def check_and_redirect_cwd():
                 for proj in projects:
                     proj_path = proj.get("path")
                     if proj_path and os.path.exists(os.path.join(proj_path, ".cluster-ci")):
-                        print(f"🔄 [CWD Redirect] Redirecting cluster-run to Cluster-CI project: {proj_path}")
+                        print(f"[CWD Redirect] Redirecting cluster-run to Cluster-CI project: {proj_path}")
                         os.chdir(proj_path)
                         return
             except Exception as e:
-                print(f"⚠️  Could not read projects from db.json: {e}", file=sys.stderr)
+                print(f"[Warning] Could not read projects from db.json: {e}", file=sys.stderr)
 
     # If no redirection occurred and still no .cluster-ci, warn and exit
     if not os.path.exists(".cluster-ci"):
-        print("❌ Error: Not in a Cluster-CI project (file .cluster-ci not found) and no fallback project found.", file=sys.stderr)
+        print("Error: Not in a Cluster-CI project (file .cluster-ci not found) and no fallback project found.", file=sys.stderr)
         sys.exit(1)
 
 def _signal_handler(signum, frame):
@@ -1176,12 +1176,13 @@ def shadow_run():
         sys.exit(1)
 
 def main():
-    check_and_redirect_cwd()
     # Force standard output streams to use UTF-8 to prevent UnicodeEncodeError under Windows CMD/PowerShell
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+    check_and_redirect_cwd()
 
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, _signal_handler)
