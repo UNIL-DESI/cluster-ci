@@ -32,6 +32,7 @@ nav:
       - Onboarding: user/onboarding.md
       - Command-Line Client: user/client.md
       - DVC & Storage: user/dvc.md
+      - Docker Containers: user/containers.md
       - CI & Queue Scheduler: user/ci_queue.md
       - Monitoring Dashboard: user/dashboard.md
       - Support & Contributions: user/support.md

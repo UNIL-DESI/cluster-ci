@@ -103,11 +103,25 @@ If the winning worker lacks some of the dependencies, but another worker possess
     ```
 4.  This transfers files directly over the internal high-speed network.
 
-### Garbage Collection & Central Backup
-To prevent worker disks from filling up, the worker agent runs `gc_orchestrator.py` asynchronously:
-*   It monitors local disk space.
-*   If available space drops below **100 GB**, it triggers a cleanup.
-*   Before deleting any idle local DVC cache, it pushes them to the central Google Drive remote to ensure they are backed up. It then evicts the files locally to free up disk space.
+### Just-In-Time (JIT) Tiered LRU Garbage Collection
+To prevent worker hard drives from filling up, the runner executes a JIT cleanup routine managed by `gc_orchestrator.py` before and after each job run.
+
+*   **Safety Threshold**: The safety threshold is set to **100 GB** (configured via `GC_FREE_SPACE_THRESHOLD_GB` on the worker host).
+*   **LRU Registry**: The system maintains a metadata registry (`repositories/registry.json`) tracking project usage (active/idle status, last execution timestamp, and disk size).
+*   **Trigger**: If the free space on the partition drops below 100 GB when starting a job, the GC selects the oldest `idle` repositories and applies a **5-level progressive purge** (Least Recently Used first) until the threshold is restored.
+
+#### Progressive Cleanup Levels
+The garbage collector frees space in five progressive steps:
+
+| Level | Target | Action & Recovery |
+| :--- | :--- | :--- |
+| **Level 1** | **DVC History Purge** | Purges historical DVC files in the local cache, preserving only the **last 2 commits** of the repository. |
+| **Level 2** | **Large Untracked Files** | Force-deletes any untracked or ignored files in the workspace that are **larger than 500 MB**. |
+| **Level 3** | **Docker Dependency Volume** | Deletes the project-specific Docker volume (`cluster-ci-home-<owner-repo>`), clearing cached `uv` and `pip` installations. They will be re-downloaded/reinstalled during the next run. |
+| **Level 4** | **Local DVC Cache Wipe** | Wipes the entire local `.dvc/cache` directory. Before wiping, the GC pushes dirty/idle caches to the central backup (Google Drive). The next run will pull them back over the LAN or GDrive. |
+| **Level 5** | **Full Repository Wipe** | Deletes the entire repository directory (`repositories/<owner-repo>`) from the worker. |
+
+Active repositories currently running jobs are **never** targeted by the GC.
 
 ---
 
