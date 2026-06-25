@@ -6,7 +6,7 @@ The Cluster-CI Web Dashboard provides real-time monitoring and visualization of 
 
 ## 1. Live Infrastructure & Job Monitoring
 
-The dashboard main view is divided into three monitoring panels:
+The main dashboard view is divided into three monitoring panels:
 
 ### A. Worker Diagnostics Node View
 Shows the current status of all physical workers in the cluster:
