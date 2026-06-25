@@ -1,0 +1,55 @@
+site_name: Cluster-CI
+site_description: Documentation for the Cluster-CI GPU-accelerated computing platform.
+site_url: https://UNIL-DESI.github.io/cluster-ci/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: light green
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: light green
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - User Guides:
+      - Onboarding: user/onboarding.md
+      - Command-Line Client: user/client.md
+      - DVC & Storage: user/dvc.md
+      - CI & Queue Scheduler: user/ci_queue.md
+      - Monitoring Dashboard: user/dashboard.md
+      - Support & Contributions: user/support.md
+  - Developer Docs:
+      - Architecture: index_architecture.md
+      - Dashboard: index_dashboard.md
+      - Preflight: index_preflight.md
+      - Scheduler: index_scheduler.md
+      - Security: index_security.md
+      - vLLM Integration: index_vllm.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - tables
