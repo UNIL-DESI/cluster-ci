@@ -151,3 +151,30 @@ When sharing code between Windows client machines and Linux worker machines, lin
     *.json text eol=lf
     ```
 This prevents Git from modifying the internal bytes of your files, avoiding model loading failures on the cluster workers.
+
+### Smart CWD Redirection
+The `cluster-run` client executable (defined in `src/cluster/cluster_run.py`) redirects the current working directory (CWD) to allow execution from outside the target repository.
+
+1.  **Repository Validation**: Upon startup, the client checks if the CWD contains a `.cluster-ci` configuration file.
+2.  **Fallback Database Scan**: If the file is missing, the client searches for a local `db.json` database associated with the `antigravity-apk` server (at `C:\Users\hjamet\Documents\code\antigravity-apk\server\db.json` or `~\Documents\code\antigravity-apk\server\db.json`).
+3.  **Project Resolution**: It parses the `projects` array in `db.json`. For each project path, it checks for a `.cluster-ci` file.
+4.  **Automatic Redirect**: If a matching project is found, it updates the process directory via `os.chdir(proj_path)` and prints:
+    `[CWD Redirect] Redirecting cluster-run to Cluster-CI project: <path>`
+    If no project matches, it aborts execution with an error.
+
+### Common-Base Post-Run Sync Validation
+During post-job execution, `cluster-run` fetches metrics, plots, and metadata from the cluster's temporary draft branch (`origin/cluster-draft/<user>`) via `fetch_cluster_results()`.
+
+1.  **The Overwrite Risk**: If a user cancels a run before the shadow push completes, the draft branch HEAD will point to a previous run. Performing a simple diff and checkout against this stale ref would treat local uncommitted code changes as modifications to revert, wiping out the developer's work.
+2.  **Common-Base Ancestorship Check**: To prevent this, the client checks out files only after validating that the local shadow commit (`base_ref`) is an ancestor of the remote branch HEAD (`remote_sha`):
+    `git merge-base --is-ancestor <local_shadow_sha> origin/<draft_branch>`
+3.  **Checkout Filter**: If the check returns non-zero (meaning they do not share our local commit as an ancestor), the sync is aborted with the message `"Run was cancelled before push completed. No new results to sync."`. If it succeeds, the client diffs the commits (`git diff --diff-filter=AM`) and checks out the updated metrics, plots, and `dvc.lock` files.
+
+### Interactive Pre-commit Validation
+The script `src/runner/validate_pyproject.py` acts as a pre-commit check to validate package requirements.
+
+1.  **Python Version Compatibility**: It uses `tomlkit` to parse `pyproject.toml`. It verifies that `project.requires-python` does not exclude Python 3.12 (e.g. `<3.11`). In interactive mode, it prompts the user to auto-correct it to `">=3.12"`.
+2.  **Torch Pinning Relaxation**: Strict dependency pinning (e.g., `torch==2.1.2`) conflicts with custom optimized CUDA builds pre-installed in the cluster's NGC container. The script identifies these pins and, in interactive mode, prompts the user to relax them (e.g. `torch>=2.0`, `torchvision>=0.15`).
+3.  **ARM64 Resolution Simulation**: It fetches the central constraints file `cluster_constraints.txt` from GitHub. To prevent false positives, it excludes packages declared as direct project dependencies. It then runs:
+    `uv pip compile --python-platform aarch64-unknown-linux-gnu --python 3.12 -c <filtered_constraints> pyproject.toml`
+    This simulates dependency resolution for the ARM64 platform before code is pushed to the cluster.
