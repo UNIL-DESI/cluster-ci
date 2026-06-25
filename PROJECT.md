@@ -31,6 +31,8 @@ cluster-ci/
 | 2 | Configuration & CI Setup | Worker configure `mkdocs.yml` et le workflow `.github/workflows/deploy-docs.yml`. | M1 | DONE |
 | 3 | Documentation Writing | Worker rédige le contenu en anglais pour les chercheurs sous `docs/user/` et la page d'accueil `docs/index.md`. | M2 | DONE |
 | 4 | Verification & Quality Gate | Reviewer et Challenger testent localement le build, valident la structure et la navigation, puis Forensic Auditor valide l'intégrité globale. | M3 | DONE |
+| 5 | Technical Gap Enrichment | Worker comble les gaps techniques et documente l'Emergency GC, Lazy transfer, NGC protections, watchdogs, redirection CWD, etc. | M4 | DONE |
+| 6 | Scientific Illustration Integration | Worker insère les images d'illustrations scientifiques dans les guides correspondants. | M5 | DONE |
 
 ## Interface Contracts
 - **MkDocs CLI**: Le site doit compiler via la commande `uv run mkdocs build` (ou `python -m mkdocs build`).
