@@ -20,9 +20,8 @@ name: Cluster-CI Execution
 
 on:
   push:
-    branches: [ main, master, cluster-draft/* ]
-  pull_request:
-    branches: [ main, master ]
+    tags:
+      - 'cluster-run'
   workflow_dispatch:
 
 concurrency:
