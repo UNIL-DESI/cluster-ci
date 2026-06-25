@@ -93,6 +93,90 @@ class TestDVCGitHelper(unittest.TestCase):
         paths = get_cache_false_paths(self.dvc_yaml)
         self.assertIn('results/m1.json', paths)
 
+    def test_get_paths_with_vars(self):
+        content = {
+            'vars': [{'datasets': ['alpha', 'beta']}],
+            'stages': {
+                'download': {
+                    'foreach': '${datasets}',
+                    'do': {
+                        'metrics': [{'metrics-${item}.json': {'cache': False}}]
+                    }
+                }
+            }
+        }
+        with open(self.dvc_yaml, 'w') as f:
+            self.yaml.dump(content, f)
+
+        paths = get_cache_false_paths(self.dvc_yaml)
+        self.assertIn('metrics-alpha.json', paths)
+        self.assertIn('metrics-beta.json', paths)
+
+    def test_get_paths_with_params_yaml(self):
+        content = {
+            'stages': {
+                'download': {
+                    'foreach': '${datasets}',
+                    'do': {
+                        'metrics': [{'metrics-${item}.json': {'cache': False}}]
+                    }
+                }
+            }
+        }
+        with open(self.dvc_yaml, 'w') as f:
+            self.yaml.dump(content, f)
+
+        # Create params.yaml
+        params_yaml = os.path.join(self.test_dir, 'params.yaml')
+        with open(params_yaml, 'w') as f:
+            self.yaml.dump({'datasets': ['alpha', 'beta']}, f)
+
+        paths = get_cache_false_paths(self.dvc_yaml)
+        self.assertIn('metrics-alpha.json', paths)
+        self.assertIn('metrics-beta.json', paths)
+
+    def test_get_paths_with_external_vars_file(self):
+        content = {
+            'vars': ['config.yaml'],
+            'stages': {
+                'download': {
+                    'foreach': '${datasets}',
+                    'do': {
+                        'metrics': [{'metrics-${item}.json': {'cache': False}}]
+                    }
+                }
+            }
+        }
+        with open(self.dvc_yaml, 'w') as f:
+            self.yaml.dump(content, f)
+
+        # Create config.yaml
+        config_yaml = os.path.join(self.test_dir, 'config.yaml')
+        with open(config_yaml, 'w') as f:
+            self.yaml.dump({'datasets': ['alpha', 'beta']}, f)
+
+        paths = get_cache_false_paths(self.dvc_yaml)
+        self.assertIn('metrics-alpha.json', paths)
+        self.assertIn('metrics-beta.json', paths)
+
+    def test_get_paths_unresolved_foreach_fallback(self):
+        content = {
+            'stages': {
+                'download': {
+                    'foreach': '${missing}',
+                    'do': {
+                        'metrics': [{'metrics-${item}.json': {'cache': False}}]
+                    }
+                }
+            }
+        }
+        with open(self.dvc_yaml, 'w') as f:
+            self.yaml.dump(content, f)
+
+        # Should fallback gracefully without throwing errors or iterating on the string characters
+        paths = get_cache_false_paths(self.dvc_yaml)
+        self.assertEqual(len(paths), 0)
+
 
 from unittest.mock import patch, MagicMock
 

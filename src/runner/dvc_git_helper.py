@@ -5,6 +5,13 @@ import argparse
 import subprocess
 from pathlib import Path
 
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 try:
     from ruamel.yaml import YAML
 except ImportError:
@@ -19,6 +26,60 @@ def log_warn(msg):
 
 def log_success(msg):
     print(f"✅ [DVC-Git-Helper] {msg}")
+
+def _load_params(dvc_yaml_path, dvc_data):
+    """Load parameters from params.yaml and any vars section in dvc.yaml.
+    
+    Ensures relative paths in vars are resolved relative to the directory containing dvc.yaml.
+    """
+    params = {}
+    project_dir = os.path.dirname(dvc_yaml_path) or '.'
+    
+    # 1. Load params.yaml (DVC default parameter file)
+    params_path = os.path.join(project_dir, "params.yaml")
+    yaml = YAML()
+    if os.path.exists(params_path):
+        try:
+            with open(params_path, "r") as f:
+                loaded = yaml.load(f) or {}
+                params.update(dict(loaded))
+        except Exception as e:
+            log_warn(f"Failed to load params.yaml: {e}")
+
+    # 2. Load any vars files or inline dicts declared in dvc.yaml
+    vars_section = dvc_data.get("vars", [])
+    if isinstance(vars_section, list):
+        for var_entry in vars_section:
+            if isinstance(var_entry, str):
+                var_path = os.path.join(project_dir, var_entry)
+                if os.path.exists(var_path):
+                    try:
+                        with open(var_path, "r") as f:
+                            loaded = yaml.load(f) or {}
+                            params.update(dict(loaded))
+                    except Exception as e:
+                        log_warn(f"Failed to load vars file '{var_entry}': {e}")
+                else:
+                    log_warn(f"Vars file '{var_entry}' does not exist (resolved as '{var_path}').")
+            elif isinstance(var_entry, dict):
+                params.update(var_entry)
+    return params
+
+def _resolve_interpolation(value, params):
+    """Resolve a ${var.path} reference using the params dict."""
+    if not isinstance(value, str):
+        return value
+    m = re.fullmatch(r"\$\{(.+)\}", value.strip())
+    if not m:
+        return value
+    keys = m.group(1).split(".")
+    result = params
+    for k in keys:
+        if isinstance(result, dict) and k in result:
+            result = result[k]
+        else:
+            return value  # unresolvable → keep raw string
+    return result
 
 def _resolve_foreach_var(text, item_val):
     """Replace ${item} (and ${item.attr} variants) with the concrete foreach value.
@@ -142,6 +203,8 @@ def get_cache_false_paths(dvc_yaml_path):
     if not data:
         return []
 
+    params = _load_params(dvc_yaml_path, data or {})
+
     def extract_from_entries(entries, wdir='.'):
         if isinstance(entries, list):
             for entry in entries:
@@ -169,12 +232,22 @@ def get_cache_false_paths(dvc_yaml_path):
 
             # Foreach/do stage: resolve ${item} for each foreach value
             if foreach_items and isinstance(do_block, dict):
-                for item_val in foreach_items:
-                    do_wdir = do_block.get('wdir', wdir)
-                    for key in ['metrics', 'plots']:
-                        if key in do_block:
-                            resolved = _resolve_entries(do_block[key], item_val)
-                            extract_from_entries(resolved, do_wdir)
+                # Try to resolve foreach variable reference if it is a string template
+                if isinstance(foreach_items, str):
+                    resolved_items = _resolve_interpolation(foreach_items, params)
+                    if resolved_items == foreach_items:
+                        log_warn(f"Could not resolve foreach variable reference '{foreach_items}'")
+                    foreach_items = resolved_items
+
+                # Only iterate if foreach_items is actually resolved to a list/dict, and NOT a string
+                if foreach_items and not isinstance(foreach_items, str):
+                    iterable = list(foreach_items.keys()) if isinstance(foreach_items, dict) else foreach_items
+                    for item_val in iterable:
+                        do_wdir = do_block.get('wdir', wdir)
+                        for key in ['metrics', 'plots']:
+                            if key in do_block:
+                                resolved = _resolve_entries(do_block[key], item_val)
+                                extract_from_entries(resolved, do_wdir)
 
     for key in ['metrics', 'plots']:
         if key in data:
