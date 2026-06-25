@@ -109,6 +109,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 
 | Title (Link) | Description |
 |--------------|-------------|
+| [User Documentation Index (Home)](docs/index.md) | Main entry point for researchers: Onboarding, CLI Client, DVC, CI Queue, Dashboard, and Support |
 | [Architecture Index](docs/index_architecture.md) | Architecture specifications and design notes |
 | [Dashboard Index](docs/index_dashboard.md) | Spécifications du dashboard de monitoring premium et de l'explorateur d'artefacts bidirectionnel |
 | [Pre-flight Index](docs/index_preflight.md) | Validation scanner and pre-commit logic |
