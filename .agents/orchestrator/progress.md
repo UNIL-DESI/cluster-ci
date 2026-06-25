@@ -1,16 +1,13 @@
-# Orchestrator Progress
-
 ## Current Status
-Last visited: 2026-05-23T23:16:00Z
-- [x] Initialize workspace
-- [x] Dispatch Explorer to investigate ghost jobs failure
-- [x] Dispatch Worker to implement fix in `submit_job.py` and `headnode_service.py` (NO PUSH)
-- [x] Dispatch Reviewer / Audit (Iteration 1: VETO)
-- [x] Dispatch Worker to add missing timeout (Iteration 2)
-- [x] Dispatch Reviewer / Audit (Iteration 2: VETO - other timeouts missing)
-- [x] Dispatch Worker to add missing timeout to ALL requests (Iteration 3)
-- [x] Dispatch Reviewer / Audit (Iteration 3: CLEAN)
-- [x] Finalize and Report (Documentation updated, Local commit done)
+Last visited: 2026-06-25T12:50:00+02:00
+
+- [x] Initialiser ORIGINAL_REQUEST.md et BRIEFING.md
+- [x] Démarrer le cron de liveness
+- [x] Établir la décomposition du projet (PROJECT.md)
+- [x] Milestone 1: Investigation & Draft [completed]
+- [x] Milestone 2: Configuration & CI Setup [completed]
+- [x] Milestone 3: Documentation Writing [completed]
+- [ ] Milestone 4: Verification & Quality Gate [in-progress]
 
 ## Iteration Status
-Current iteration: 3 / 32
+Current iteration: 1 / 32

@@ -1,32 +1,32 @@
-# BRIEFING — 2026-05-23T22:56:46+02:00
+# BRIEFING — 2026-06-25T12:39:19+02:00
 
 ## Mission
-Orchestrer la résolution définitive du problème des Ghost Jobs dans cluster-ci sans effectuer de Git Push.
+Créer un site de documentation MkDocs Material de haute qualité pour le projet cluster-ci et automatiser son déploiement via GitHub Actions.
 
 ## 🔒 My Identity
 - Archetype: sentinel
-- Working directory: C:\Users\Jamet\Documents\code\cluster-ci\.agents\sentinel
-- Orchestrator: 07ebcca8-ab94-44b8-b896-520a998970e4
-- Victory Auditor: 3b19b844-e043-46a2-9ba5-725c0834873e
+- Working directory: C:\Users\hjamet\Documents\code\cluster-ci\.agents\sentinel
+- Orchestrator: 475739c0-4065-4527-ba26-08e547ebc66a
+- Victory Auditor: TBD
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
-- STRICTEMENT AUCUN PUSH sur le dépôt cluster-ci (règle bloquante absolue)
-- Respect du protocole de communication (Chat et Artefacts en Français)
+- Adopte une stratégie de commit atomique (valide le travail via commit dès qu'une tâche est achevée/validée)
+- Pas plus de deux sous-agents actifs en même temps (sinon supervision uniquement)
 
 ## User Context
-- **Last user request**: Investigation et correctif robuste pour les Ghost Jobs persistants. Interdiction de push.
+- **Last user request**: Création d'un site de documentation MkDocs/Github Pages et automatisation.
 - **Pending clarifications**: [none]
-- **Delivered results**: [list]
+- **Delivered results**: [none]
 
 ## Project Status
-- **Phase**: complete
+- **Phase**: in progress
 
 ## Victory Audit Status
-- **Triggered**: yes
-- **Verdict**: VICTORY CONFIRMED
+- **Triggered**: no
+- **Verdict**: pending
 - **Retry count**: 0
 
 ## Artifact Index
-- C:\Users\Jamet\Documents\code\cluster-ci\ORIGINAL_REQUEST.md — Original User Request
+- C:\Users\hjamet\Documents\code\cluster-ci\ORIGINAL_REQUEST.md — Original User Request

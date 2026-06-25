@@ -42,6 +42,7 @@ nav:
       - Scheduler: index_scheduler.md
       - Security: index_security.md
       - vLLM Integration: index_vllm.md
+      - Tasks & Roadmap: index_tasks.md
 
 markdown_extensions:
   - admonition
