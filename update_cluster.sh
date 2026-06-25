@@ -131,7 +131,7 @@ sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@
          echo '✅ Docker images updated on headnode (AMD64 + ARM64)'; \
      fi"
 
-sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export SUDO_PASSWORD='$HEADNODE_PASS'; curl -sSL https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh | bash -s -- headnode $TARGET_REPO"
+sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export SUDO_PASSWORD='$HEADNODE_PASS'; curl -sSL \"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=\$(date +%s)\" | bash -s -- headnode $TARGET_REPO"
 
 # Force-update dvc-viewer on the headnode globally
 echo "👁️ Updating dvc-viewer on headnode..."
@@ -179,7 +179,7 @@ for ((i=1; i<=WORKER_COUNT; i++)); do
             continue
         fi
 
-        if ! sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" "export SUDO_PASSWORD='$pass_val'; curl -sSL https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh | bash -s -- worker"; then
+        if ! sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user_val@$ip_val" "export SUDO_PASSWORD='$pass_val'; curl -sSL \"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=\$(date +%s)\" | bash -s -- worker"; then
             echo "⚠️  Worker $i ($ip_val): installation failed or host unreachable. Skipping."
             continue
         fi
