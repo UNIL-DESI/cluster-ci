@@ -28,8 +28,8 @@ cluster-ci/
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | 1 | Investigation & Draft | Explorer analyse la base de code, les commandes, et rédige les maquettes/contenus de la doc. | None | DONE |
-| 2 | Configuration & CI Setup | Worker configure `mkdocs.yml` et le workflow `.github/workflows/deploy-docs.yml`. | M1 | IN_PROGRESS |
-| 3 | Documentation Writing | Worker rédige le contenu en anglais pour les chercheurs sous `docs/user/` et la page d'accueil `docs/index.md`. | M2 | PLANNED |
+| 2 | Configuration & CI Setup | Worker configure `mkdocs.yml` et le workflow `.github/workflows/deploy-docs.yml`. | M1 | DONE |
+| 3 | Documentation Writing | Worker rédige le contenu en anglais pour les chercheurs sous `docs/user/` et la page d'accueil `docs/index.md`. | M2 | IN_PROGRESS |
 | 4 | Verification & Quality Gate | Reviewer et Challenger testent localement le build, valident la structure et la navigation, puis Forensic Auditor valide l'intégrité globale. | M3 | PLANNED |
 
 ## Interface Contracts
