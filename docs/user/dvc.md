@@ -125,7 +125,7 @@ Immediately after **each** pipeline stage completes (or if a stage **fails** to 
     - If a file is **under 5 MB**, it stages it using `git add -f <path>` (which bypasses any `.gitignore` rules).
     - If a file is **5 MB or larger**, the runner ignores it, does not push it, and prints a warning:
       `⚠️ WARNING: File <path> exceeds the 5 MB limit. It will not be synchronized.`
-3.  It commits the staged files with the author name `cluster-ci-bot` (`bot@cluster-ci.io`) and the tag `[skip ci]`.
+3.  It commits the staged files with the author name `cluster-ci-bot` (`bot@cluster-ci.io`) and the commit message directive `[skip ci]`.
 4.  It pushes the commit to your branch. If the push fails because another job pushed changes first, the runner executes `git pull --rebase origin HEAD` to merge the changes automatically and then pushes.
 
 ---
