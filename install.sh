@@ -79,7 +79,7 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
         if [ -d "$INSTALL_DIR/src/cluster_ci.egg-info" ]; then
             sudo rm -rf "$INSTALL_DIR/src/cluster_ci.egg-info" || true
         fi
-        cd "$INSTALL_DIR" && git reset --hard && git clean -fd && git pull && cd - > /dev/null
+        cd "$INSTALL_DIR" && git fetch origin && git reset --hard origin/main && git clean -fd && cd - > /dev/null
     fi
 
     # 2. .env configuration (selective update)
