@@ -1066,7 +1066,7 @@ def shadow_run():
     # Detect the last active GHA run ID before pushing to avoid checking a stale run
     last_known_run_id = None
     try:
-        res = subprocess.run(["gh", "run", "list", "--branch", BRANCH, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode == 0:
             runs = json.loads(res.stdout)
             if runs:
@@ -1074,8 +1074,9 @@ def shadow_run():
     except Exception:
         pass
 
-    print(f"🚀 Shadow pushing to origin/{BRANCH}...")
+    print(f"🚀 Shadow pushing to origin/{BRANCH} and triggering CI via tag cluster-run...")
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/heads/{BRANCH}", "--force", "--quiet"], check=True)
+    subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/cluster-run", "--force", "--quiet"], check=True)
 
     # Find the triggered GHA run
     print("⏳ Waiting for GitHub Actions to trigger...")
@@ -1084,7 +1085,7 @@ def shadow_run():
     
     for attempt in range(30):
         try:
-            res = subprocess.run(["gh", "run", "list", "--branch", BRANCH, "--limit", "1", "--json", "databaseId,status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId,status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
                 runs = json.loads(res.stdout)
                 if runs:
@@ -1097,10 +1098,10 @@ def shadow_run():
             pass
         time.sleep(2)
 
-    # Fallback to the latest run on the branch if we couldn't find a freshly triggered one
+    # Fallback to the latest run on the tag if we couldn't find a freshly triggered one
     if not run_id:
         try:
-            res = subprocess.run(["gh", "run", "list", "--branch", BRANCH, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
                 runs = json.loads(res.stdout)
                 if runs and runs[0].get("databaseId") != last_known_run_id:
@@ -1215,7 +1216,7 @@ def main():
         run_id = args.run_id
         if not run_id:
             try:
-                res = subprocess.run(["gh", "run", "list", "--branch", branch, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 runs = json.loads(res.stdout) if res.returncode == 0 else []
                 if runs:
                     run_id = str(runs[0].get("databaseId"))
@@ -1278,7 +1279,7 @@ def main():
         
         if not run_id:
             try:
-                res = subprocess.run(["gh", "run", "list", "--branch", branch, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 runs = json.loads(res.stdout) if res.returncode == 0 else []
                 if runs:
                     run_id = str(runs[0].get("databaseId"))

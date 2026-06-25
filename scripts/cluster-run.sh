@@ -311,16 +311,17 @@ shadow_run() {
 
     # Get last run ID before push to prevent matching stale run
     local last_known_run_id
-    last_known_run_id=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
+    last_known_run_id=$(gh run list --branch "cluster-run" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || echo "")
 
-    echo "🚀 Shadow pushing to origin/$BRANCH..."
+    echo "🚀 Shadow pushing to origin/$BRANCH and triggering CI via tag cluster-run..."
     git push origin "$commit_to_push:refs/heads/$BRANCH" --force --quiet
+    git push origin "$commit_to_push:refs/tags/cluster-run" --force --quiet
 
     # 3. Find and watch the run
     echo "⏳ Waiting for GitHub Actions to trigger..."
     sleep 4
     for i in {1..15}; do
-        RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId,status -q '.[0] | select(.status != "completed") | .databaseId' 2>/dev/null || true)
+        RUN_ID=$(gh run list --branch "cluster-run" --limit 1 --json databaseId,status -q '.[0] | select(.status != "completed") | .databaseId' 2>/dev/null || true)
         if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "$last_known_run_id" ]; then
             break
         fi
@@ -330,7 +331,7 @@ shadow_run() {
 
     if [ -z "$RUN_ID" ]; then
         # Check if it already finished (very fast run?)
-        RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+        RUN_ID=$(gh run list --branch "cluster-run" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
         if [ "$RUN_ID" == "$last_known_run_id" ]; then
             RUN_ID=""
         fi
@@ -377,7 +378,7 @@ case "$COMMAND" in
             # If no ID provided, try to find the last run for this user
             check_gh_auth
             USER=$(get_current_user)
-            RUN_ID=$(gh run list --branch "cluster-draft/$USER" --limit 1 --json databaseId -q '.[0].databaseId')
+            RUN_ID=$(gh run list --branch "cluster-run" --limit 1 --json databaseId -q '.[0].databaseId')
             if [ -z "$RUN_ID" ]; then
                 echo "Usage: cluster-run view <run_id>"
                 exit 1
@@ -393,7 +394,7 @@ case "$COMMAND" in
             check_gh_auth
             USER=$(get_current_user)
             BRANCH="cluster-draft/$USER"
-            RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId -q '.[0].databaseId')
+            RUN_ID=$(gh run list --branch "cluster-run" --limit 1 --json databaseId -q '.[0].databaseId')
              if [ -z "$RUN_ID" ]; then
                 echo "Usage: cluster-run cancel <run_id>"
                 exit 1
