@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/client/">
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/containers/">
       
       
-        <link rel="prev" href="../onboarding/">
+        <link rel="prev" href="../dvc/">
       
       
-        <link rel="next" href="../dvc/">
+        <link rel="next" href="../ci_queue/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Command-Line Client - Cluster-CI</title>
+        <title>Docker Containers - Cluster-CI</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#command-line-client-execution-guide" class="md-skip">
+        <a href="#docker-containers-compute-environments" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Command-Line Client
+              Docker Containers
             
           </span>
         </div>
@@ -417,37 +417,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Command-Line Client
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../client/" class="md-nav__link">
         
   
   
@@ -463,209 +436,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-client-installation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Client Installation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="1. Client Installation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#installation-command" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Installation Command
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#what-the-installation-script-does" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What the Installation Script Does
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-the-shadow-commit-mechanism" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. The "Shadow Commit" Mechanism
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-real-time-log-streaming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Real-Time Log Streaming
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-command-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Command Reference
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Command Reference">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-default-execution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run (Default Execution)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-list" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run list
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-view" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run view
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-cancel" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run cancel
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run sync
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-safety-features-fault-tolerance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Safety Features &amp; Fault Tolerance
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Safety Features &amp; Fault Tolerance">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#orphaned-run-recovery" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Orphaned Run Recovery
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#line-ending-protection-gitattributes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Line-Ending Protection (.gitattributes)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -703,10 +473,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../containers/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker Containers
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -722,6 +519,138 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-golden-image-nvidia-ngc-pytorch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The "Golden Image" (NVIDIA NGC PyTorch)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. The &#34;Golden Image&#34; (NVIDIA NGC PyTorch)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dynamic-dependency-injection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic Dependency Injection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-overriding-the-docker-image-in-cluster-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Overriding the Docker Image in .cluster-ci
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Overriding the Docker Image in .cluster-ci">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-unsloth-llm-fine-tuning-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Unsloth &amp; LLM Fine-Tuning Setup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Unsloth &amp; LLM Fine-Tuning Setup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended Approach
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-shared-memory-data-loader-optimizations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Shared Memory &amp; Data Loader Optimizations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Shared Memory &amp; Data Loader Optimizations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform Defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1100,44 +1029,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-client-installation" class="md-nav__link">
+  <a href="#1-the-golden-image-nvidia-ngc-pytorch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Client Installation
+        1. The "Golden Image" (NVIDIA NGC PyTorch)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1. Client Installation">
+    <nav class="md-nav" aria-label="1. The &#34;Golden Image&#34; (NVIDIA NGC PyTorch)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#dynamic-dependency-injection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#installation-command" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Installation Command
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#what-the-installation-script-does" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What the Installation Script Does
+        Dynamic Dependency Injection
       
     </span>
   </a>
@@ -1150,88 +1057,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-the-shadow-commit-mechanism" class="md-nav__link">
+  <a href="#2-overriding-the-docker-image-in-cluster-ci" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. The "Shadow Commit" Mechanism
+        2. Overriding the Docker Image in .cluster-ci
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-real-time-log-streaming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Real-Time Log Streaming
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-command-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Command Reference
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Command Reference">
+    <nav class="md-nav" aria-label="2. Overriding the Docker Image in .cluster-ci">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#cluster-run-default-execution" class="md-nav__link">
+  <a href="#supported-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cluster-run (Default Execution)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-list" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run list
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-view" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run view
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-cancel" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run cancel
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cluster-run-sync" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cluster-run sync
+        Supported Parameters
       
     </span>
   </a>
@@ -1244,33 +1085,50 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-safety-features-fault-tolerance" class="md-nav__link">
+  <a href="#3-unsloth-llm-fine-tuning-setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Safety Features &amp; Fault Tolerance
+        3. Unsloth &amp; LLM Fine-Tuning Setup
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="5. Safety Features &amp; Fault Tolerance">
+    <nav class="md-nav" aria-label="3. Unsloth &amp; LLM Fine-Tuning Setup">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#orphaned-run-recovery" class="md-nav__link">
+  <a href="#recommended-approach" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Orphaned Run Recovery
+        Recommended Approach
       
     </span>
   </a>
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#line-ending-protection-gitattributes" class="md-nav__link">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-shared-memory-data-loader-optimizations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Line-Ending Protection (.gitattributes)
+        4. Shared Memory &amp; Data Loader Optimizations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Shared Memory &amp; Data Loader Optimizations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#platform-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Platform Defaults
       
     </span>
   </a>
@@ -1299,128 +1157,95 @@
 
 
 
-<h1 id="command-line-client-execution-guide">Command-Line Client &amp; Execution Guide</h1>
-<p>The <code>cluster-run</code> CLI is the central tool for submitting and monitoring computing jobs on Cluster-CI. This guide details how to install the client environment and how to utilize the command-line interface.</p>
+<h1 id="docker-containers-compute-environments">Docker Containers &amp; Compute Environments</h1>
+<p>Cluster-CI runs all pipeline jobs inside Docker containers to guarantee isolation, reproducibility, and JIT environment cleanup. This guide details how the container runtime is configured, what pre-installed environments are available, and how to customize them for heavy training libraries like <strong>Unsloth</strong> or specific <strong>PyTorch</strong> versions.</p>
 <hr />
-<h2 id="1-client-installation">1. Client Installation</h2>
-<p>The installation process configures your local Git repository to communicate with the cluster orchestrator.</p>
-<h3 id="prerequisites">Prerequisites</h3>
-<p>Before running the installer, ensure you have:
-*   A local Git repository hosting your project.
-*   <strong>Python 3.10+</strong> installed locally.
-*   <strong>GitHub CLI (<code>gh</code>)</strong> installed and authenticated (<code>gh auth login</code>).
-*   <strong>Astral <code>uv</code></strong> package manager installed (the installer will attempt to fetch it automatically if missing).</p>
-<h3 id="installation-command">Installation Command</h3>
-<p>Open your terminal at the root of your local repository and run:</p>
-<p>=== "Linux / macOS"
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
-</span></code></pre></div></p>
-<p>=== "Windows"
-    Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
-</span></code></pre></div></p>
-<h3 id="what-the-installation-script-does">What the Installation Script Does</h3>
-<ol>
-<li><strong>Validation</strong>: Verifies your local Git repository and detects a working Python interpreter.</li>
-<li><strong>Dependencies Setup</strong>: Ensures <code>gh</code> and <code>uv</code> are available. It installs <code>tomlkit</code> locally to support parsing configuration files.</li>
-<li><strong>Workflow Injections</strong>: Injects <code>.github/workflows/cluster-ci.yml</code> which handles the cluster's remote execution steps.</li>
-<li><strong>Repository Settings</strong>: Creates the <code>.cluster-ci</code> configuration file template if missing, and updates <code>.gitignore</code> to ignore internal logs.</li>
-<li><strong>Pre-flight Scanner Hook</strong>: Installs a Git pre-commit hook (<code>.git/hooks/pre-commit</code>) running the dependency validation suite (<code>validate_pyproject.py</code>) before allowing commits.</li>
-<li><strong>CLI Installation</strong>:<ul>
-<li>Installs <code>cluster_run.py</code> to <code>$HOME/.local/bin/cluster-run</code>.</li>
-<li><strong>Windows Wrapper</strong>: Creates <code>cluster-run.cmd</code> inside the target directory so you can invoke <code>cluster-run</code> directly from <strong>PowerShell</strong> or <strong>CMD</strong>.</li>
-<li><strong>PATH Configuration</strong>: Appends the binary path to your shell configuration (<code>.bashrc</code> / <code>.zshrc</code>) or Windows User Environment Variables.</li>
+<h2 id="1-the-golden-image-nvidia-ngc-pytorch">1. The "Golden Image" (NVIDIA NGC PyTorch)</h2>
+<p>To avoid compiling heavy compute packages (like PyTorch, torchvision, or CUDA kernels) during job execution—which is slow on x86_64 and often fails on ARM64 workers—the cluster defaults to a pre-compiled, highly optimized <strong>"Golden Image"</strong>.</p>
+<ul>
+<li><strong>Default Image</strong>: <code>nvcr.io/nvidia/pytorch:26.05-py3</code></li>
+<li><strong>Software Stack</strong>:<ul>
+<li><strong>Python</strong>: 3.12</li>
+<li><strong>PyTorch</strong>: 2.12+ (NVIDIA build)</li>
+<li><strong>CUDA</strong>: 13.2</li>
+<li><strong>Libraries</strong>: Includes NVIDIA TensorRT, cuDNN, NCCL, and optimized mathematical libraries out of the box.</li>
 </ul>
 </li>
-</ol>
-<p><em>After installing, restart your terminal or run <code>source ~/.bashrc</code> (or equivalent) to reload your PATH.</em></p>
-<hr />
-<h2 id="2-the-shadow-commit-mechanism">2. The "Shadow Commit" Mechanism</h2>
-<p>To run experiments without polluting your workspace or Git history, <code>cluster-run</code> utilizes a <strong>Shadow Commit</strong> architecture:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[Local Workspace] ---(cluster-run)---&gt; [Temporary GIT_INDEX_FILE]
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                                                      |
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>                                           Create detached commit
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                                           (Modified + Untracked files)
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                                                      |
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>                                           Force-push to branch:
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>                                     refs/heads/cluster-draft/&lt;username&gt;
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>                                                      |
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>                                           Push tag: cluster-run
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>                                                      |
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>                                            [Triggers GHA Workflow]
-</span></code></pre></div>
-<ul>
-<li><strong>Zero Pollution</strong>: It isolates your workspace's Git index using a temporary index file (<code>GIT_INDEX_FILE</code>). Your local working tree and branch status remain completely untouched.</li>
-<li><strong>File Scope</strong>: The shadow commit packages all modified, deleted, and untracked files in your repository, ensuring the remote worker runs the exact code currently in your editor.</li>
-<li><strong>Git Reference</strong>: The commit is pushed to a remote branch named <code>refs/heads/cluster-draft/&lt;github_username&gt;</code>.</li>
-<li><strong>Trigger</strong>: A git tag named <code>cluster-run</code> is updated on the remote repository, triggering the GitHub Actions workflow.</li>
 </ul>
+<h3 id="dynamic-dependency-injection">Dynamic Dependency Injection</h3>
+<p>When a job starts, the orchestrator bypasses standard virtual environments (<code>.venv</code>) and installs the dependencies listed in your <code>pyproject.toml</code> directly into the container's system Python using <code>uv pip install --system</code>. </p>
+<p>This ensures your custom packages (like <code>tqdm</code>, <code>transformers</code>, or <code>pandas</code>) run directly on top of the pre-optimized NVIDIA PyTorch binary.</p>
 <hr />
-<h2 id="3-real-time-log-streaming">3. Real-Time Log Streaming</h2>
-<p>Cluster-CI streams terminal logs from the executing Docker container back to your local client terminal in real-time.</p>
+<h2 id="2-overriding-the-docker-image-in-cluster-ci">2. Overriding the Docker Image in <code>.cluster-ci</code></h2>
+<p>If your project requires a different base environment, or a specific pre-built image (e.g. for a specific version of a framework), you can override the Docker settings directly in the <code>.cluster-ci</code> file at the root of your repository.</p>
+<p>The platform is <strong>architecture-aware</strong> and allows both global and per-architecture overrides:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Global overrides (applies to both AMD64 and ARM64 workers)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">my-custom-registry/my-project-image:latest</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="na">DOCKER_PLATFORM</span><span class="o">=</span><span class="s">linux/arm64</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Architecture-specific overrides (takes priority on matching workers)</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="na">DOCKER_IMAGE_ARM64</span><span class="o">=</span><span class="s">nvcr.io/nvidia/pytorch:26.05-py3</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="na">DOCKER_IMAGE_AMD64</span><span class="o">=</span><span class="s">my-custom-registry/my-project-image-amd64:latest</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="na">DOCKER_PLATFORM_ARM64</span><span class="o">=</span><span class="s">linux/arm64</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="na">DOCKER_PLATFORM_AMD64</span><span class="o">=</span><span class="s">linux/amd64</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="na">DOCKER_FLAGS_ARM64</span><span class="o">=</span><span class="s">--cap-add=SYS_NICE</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="na">DOCKER_FLAGS_AMD64</span><span class="o">=</span><span class="s">--shm-size=16g</span>
+</span></code></pre></div>
+<h3 id="supported-parameters">Supported Parameters</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>DOCKER_IMAGE</code> / <code>_ARM64</code> / <code>_AMD64</code></td>
+<td style="text-align: left;">The Docker image tag to pull and run.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>DOCKER_PLATFORM</code> / <code>_ARM64</code> / <code>_AMD64</code></td>
+<td style="text-align: left;">Injects the <code>--platform</code> flag (e.g. <code>linux/arm64</code> or <code>linux/amd64</code>).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>DOCKER_FLAGS</code> / <code>_ARM64</code> / <code>_AMD64</code></td>
+<td style="text-align: left;">Arbitrary flags passed directly to <code>docker run</code> (e.g., capability flags, custom mounts).</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-unsloth-llm-fine-tuning-setup">3. Unsloth &amp; LLM Fine-Tuning Setup</h2>
+<p><a href="https://github.com/unslothai/unsloth">Unsloth</a> is a popular library for accelerating LLM fine-tuning (up to 2x faster, 70% less memory). However, it has strict installation requirements: it must match specific versions of PyTorch, Triton, and CUDA, and compiling it from source on ARM64 workers (Blackwell) can be difficult.</p>
+<h3 id="recommended-approach">Recommended Approach</h3>
+<p>To use Unsloth on the cluster, we recommend using a <strong>custom pre-built Docker image</strong> rather than installing it JIT via <code>pyproject.toml</code>.</p>
 <ol>
-<li><strong>Primary Channel (<code>ppng.io</code>)</strong>: The worker pipes output directly to the pub/sub service <code>ppng.io/cluster-ci-log-&lt;commit_sha&gt;</code>. The <code>cluster-run</code> client subscribes to this stream for ultra-low latency.</li>
-<li><strong>Fallback Mode (<code>gh run view</code>)</strong>: If <code>ppng.io</code> is unreachable or blocked by firewalls, the client falls back to polling the GitHub Actions API via <code>gh run view --log</code>. This fallback features higher latency but guarantees you receive the logs.</li>
-<li><strong>Noise Filtering</strong>: The client filters out system telemetry, SSH handshake noise, and Tmux status lines.</li>
-<li><strong>Tqdm Handling</strong>: The client processes carriage returns (<code>\r</code>) so that progress bars update in-place without generating thousands of lines of log spam. The full logs saved to disk only contain the final 100% completion lines.</li>
-<li><strong>Local Log Directory</strong>: Logs are duplicated to <code>.cluster-ci-logs/cluster-ci-run-&lt;timestamp&gt;.log</code>. The CLI automatically keeps only the 5 most recent files to conserve disk space.</li>
+<li><strong>Build a custom Docker image</strong> inheriting from the NVIDIA PyTorch NGC container:
+    <div class="language-dockerfile highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">FROM</span><span class="w"> </span><span class="s">nvcr.io/nvidia/pytorch:26.05-py3</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c"># Install Unsloth dependencies</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">RUN</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--no-cache-dir<span class="w"> </span><span class="s2">&quot;unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git&quot;</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">RUN</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--no-cache-dir<span class="w"> </span>--no-deps<span class="w"> </span>xformers<span class="w"> </span><span class="s2">&quot;trl&lt;0.9.0&quot;</span><span class="w"> </span>peft<span class="w"> </span>accelerate<span class="w"> </span>datasets
+</span></code></pre></div></li>
+<li><strong>Push the image</strong> to your registry (e.g. GitHub Container Registry).</li>
+<li><strong>Configure <code>.cluster-ci</code></strong> in your repository to use this custom image:
+    <div class="language-ini highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">12</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/your-org/unsloth-custom:latest</span>
+</span></code></pre></div></li>
 </ol>
 <hr />
-<h2 id="4-command-reference">4. Command Reference</h2>
-<h3 id="cluster-run-default-execution"><code>cluster-run</code> (Default Execution)</h3>
-<p>Triggers a shadow run of your workspace.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run
-</span></code></pre></div>
-*   Performs pre-flight checks, verifies <code>.gitattributes</code>, packages the shadow commit, and pushes to the cluster.
-*   Streams logs in real-time.
-*   <strong>Post-Run Sync</strong>: Automatically pulls back the updated DVC locks, metrics, and plots from the remote branch to your local workspace upon successful completion.</p>
-<h3 id="cluster-run-list"><code>cluster-run list</code></h3>
-<p>List recent runs.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>list
-</span></code></pre></div>
-*   Queries GitHub Actions for recent "Cluster-CI Execution" runs.
-*   Displays the run ID, status (Completed, In-Progress, Queued), and completion time.</p>
-<h3 id="cluster-run-view"><code>cluster-run view</code></h3>
-<p>View logs for a run.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
-</span></code></pre></div>
-*   If <code>&lt;run_id&gt;</code> is omitted, it automatically targets your last triggered run.
-*   Streams the log output of the target job (either live or historical).</p>
-<h3 id="cluster-run-cancel"><code>cluster-run cancel</code></h3>
-<p>Terminate a running job.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
-</span></code></pre></div>
-*   If <code>&lt;run_id&gt;</code> is omitted, it targets your latest active run.
-*   Sends an API request (<code>POST /api/jobs/&lt;job_id&gt;/stop</code>) to the headnode scheduler to kill the executing container on the worker and release resources.
-*   Cancels the associated GitHub Actions run and cleans up the local <code>.cluster-ci-run.json</code> tracking file.</p>
-<h3 id="cluster-run-sync"><code>cluster-run sync</code></h3>
-<p>Manually synchronize remote results.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>sync
-</span></code></pre></div>
-*   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote <code>cluster-draft/&lt;username&gt;</code> branch and applies them to your local directory.
-*   Useful if log streaming was interrupted or if you want to pull results from an older run.</p>
-<hr />
-<h2 id="5-safety-features-fault-tolerance">5. Safety Features &amp; Fault Tolerance</h2>
-<h3 id="orphaned-run-recovery">Orphaned Run Recovery</h3>
-<p>If your local terminal crashes or you force-kill <code>cluster-run</code> (e.g. via <code>kill -9</code>), the active job continues executing on the cluster, consuming GPU resources.
-*   To prevent resource leaks, <code>cluster-run</code> writes metadata (PID and Run ID) to a local <code>.cluster-ci-run.json</code> file.
-*   The next time you invoke <strong>any</strong> <code>cluster-run</code> command, the CLI inspects this file.
-*   If it detects the local PID is dead but the run is still marked active, it identifies the run as "orphaned".
-*   It immediately sends a termination request to the scheduler, reclaiming cluster RAM and VRAM automatically.</p>
-<h3 id="line-ending-protection-gitattributes">Line-Ending Protection (<code>.gitattributes</code>)</h3>
-<p>When sharing code between Windows client machines and Linux worker machines, line-ending translation (converting LF to CRLF) can corrupt binary files (such as PyTorch models <code>.pt</code> or pickle archives <code>.pkl</code>) during DVC/Git synchronization.
-*   The <code>cluster-run</code> client automatically inspects the repository's <code>.gitattributes</code> file.
-*   If missing, it configures rules to ensure binary extensions are strictly treated as <code>binary</code> and raw text files are normalized properly:
-    <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>*.pt binary
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>*.pkl binary
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>*.png binary
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>*.jpg binary
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>*.gif binary
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>*.csv text eol=lf
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>*.yaml text eol=lf
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>*.json text eol=lf
-</span></code></pre></div>
-This prevents Git from modifying the internal bytes of your files, avoiding model loading failures on the cluster workers.</p>
+<h2 id="4-shared-memory-data-loader-optimizations">4. Shared Memory &amp; Data Loader Optimizations</h2>
+<p>PyTorch <code>DataLoader</code> workers use shared memory (<code>/dev/shm</code>) to pass tensors between processes. By default, Docker allocates only <strong>64 MB</strong> of shared memory, which causes PyTorch to crash with a bus error (<code>SIGBUS</code>) when using <code>num_workers &gt; 0</code>.</p>
+<h3 id="platform-defaults">Platform Defaults</h3>
+<p>To solve this, Cluster-CI <strong>automatically injects</strong> the following configurations for all containers:
+*   <code>--ipc=host</code>: This mounts the host's IPC namespace inside the container.
+*   This grants the container access to <strong>50% of the host physical memory</strong> as shared memory <code>/dev/shm</code>.
+*   <strong>Note</strong>: Legacy <code>.cluster-ci</code> options like <code>SHARED_MEMORY</code> are obsolete and ignored, as <code>--ipc=host</code> solves this issue natively and safely.</p>
 
 
 
