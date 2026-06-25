@@ -270,27 +270,60 @@ git remote set-url origin "$REPO_URL"
 
 # Force fetching latest references (explicitly specify branch mapping to origin/branch
 # as GitHub Actions conditional fetch sometimes omits it)
-log_info "Synchronizing remote reference origin/$TARGET_BRANCH..."
-for i in {1..5}; do
-    if git fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"; then
-        break
+if [ "$TARGET_BRANCH" = "cluster-run" ]; then
+    log_info "Triggered by tag 'cluster-run'. Fetching tag reference and draft branches..."
+    for i in {1..5}; do
+        if git fetch origin "+refs/tags/cluster-run:refs/tags/cluster-run"; then
+            git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" || true
+            break
+        fi
+        log_warn "Failed to fetch tag cluster-run (attempt $i/5). Retrying in 5 seconds..."
+        sleep 5
+    done
+
+    # Switch and hard reset to ensure clean Git tree
+    # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
+    rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
+    log_info "Checking out tag cluster-run..."
+    git checkout -f "refs/tags/cluster-run"
+    git reset --hard "refs/tags/cluster-run"
+
+    # Detect the original draft branch associated with this commit
+    log_info "Detecting draft branch associated with tag cluster-run..."
+    # Allow git branch to output branches containing HEAD
+    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+    if [ -n "$DRAFT_BRANCH" ]; then
+        log_info "Detected draft branch: $DRAFT_BRANCH"
+        TARGET_BRANCH="$DRAFT_BRANCH"
+        # Reset and check out the local branch tracking the remote draft branch
+        git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+        git reset --hard "origin/$TARGET_BRANCH"
+    else
+        log_warn "No draft branch containing this commit was found on origin. Running directly on detached tag cluster-run."
     fi
-    log_warn "Failed to fetch origin/$TARGET_BRANCH (attempt $i/5). Retrying in 5 seconds..."
-    sleep 5
-done
+else
+    log_info "Synchronizing remote reference origin/$TARGET_BRANCH..."
+    for i in {1..5}; do
+        if git fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"; then
+            break
+        fi
+        log_warn "Failed to fetch origin/$TARGET_BRANCH (attempt $i/5). Retrying in 5 seconds..."
+        sleep 5
+    done
 
-# Security validation: does the branch exist on remote?
-if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-    log_error "Branch origin/$TARGET_BRANCH does not exist or was not found."
-    exit 1
+    # Security validation: does the branch exist on remote?
+    if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+        log_error "Branch origin/$TARGET_BRANCH does not exist or was not found."
+        exit 1
+    fi
+
+    # Switch and hard reset to ensure clean Git tree
+    # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
+    rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
+    log_info "Forced branch checkout and re-synchronization..."
+    git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+    git reset --hard "origin/$TARGET_BRANCH"
 fi
-
-# Switch and hard reset to ensure clean Git tree
-# Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
-rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
-log_info "Forced branch checkout and re-synchronization..."
-git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
-git reset --hard "origin/$TARGET_BRANCH"
 
 # Register current commit hash for traceability
 git rev-parse HEAD > .cluster-ci-commit

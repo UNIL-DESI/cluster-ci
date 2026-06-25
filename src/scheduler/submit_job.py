@@ -31,7 +31,7 @@ def get_ram_requirement(repo=None, branch=None):
                 repo_url = f"https://github.com/{repo}.git"
             subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
                            check=True, capture_output=True, timeout=30)
-            subprocess.run(["git", "checkout", f"origin/{branch}", "--", ".cluster-ci"],
+            subprocess.run(["git", "checkout", "HEAD", "--", ".cluster-ci"],
                            cwd=tmp_dir, check=True, capture_output=True, timeout=10)
             ci_file = os.path.join(tmp_dir, ".cluster-ci")
             if os.path.exists(ci_file):
@@ -109,7 +109,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             repo_url = f"https://github.com/{repo}.git"
         subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
                        check=True, capture_output=True, timeout=30)
-        subprocess.run(["git", "checkout", f"origin/{branch}", "--", ".cluster-ci"],
+        subprocess.run(["git", "checkout", "HEAD", "--", ".cluster-ci"],
                        cwd=tmp_dir, check=True, capture_output=True, timeout=10)
         ci_file = os.path.join(tmp_dir, ".cluster-ci")
         if os.path.exists(ci_file):
