@@ -39,3 +39,6 @@ build/
 
 # Agents metadata
 .agents/
+
+# MkDocs build outputs
+site/
