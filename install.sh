@@ -76,6 +76,9 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
         git clone "$REPO_URL" "$INSTALL_DIR"
     else
         echo "📂 Updating repository in $INSTALL_DIR..."
+        if [ -d "$INSTALL_DIR/src/cluster_ci.egg-info" ]; then
+            sudo rm -rf "$INSTALL_DIR/src/cluster_ci.egg-info" || true
+        fi
         cd "$INSTALL_DIR" && git reset --hard && git clean -fd && git pull && cd - > /dev/null
     fi
 
