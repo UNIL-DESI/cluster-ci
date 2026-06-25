@@ -36,6 +36,7 @@ nav:
       - CI & Queue Scheduler: user/ci_queue.md
       - Monitoring Dashboard: user/dashboard.md
       - Support & Contributions: user/support.md
+      - Administration: user/administration.md
   - Developer Docs:
       - Architecture: index_architecture.md
       - Dashboard: index_dashboard.md
