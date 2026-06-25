@@ -657,6 +657,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#smart-cwd-redirection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smart CWD Redirection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-base-post-run-sync-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common-Base Post-Run Sync Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interactive-pre-commit-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactive Pre-commit Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -798,6 +831,34 @@
     
   
     Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
   
 
     
@@ -1277,6 +1338,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#smart-cwd-redirection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smart CWD Redirection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#common-base-post-run-sync-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common-Base Post-Run Sync Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interactive-pre-commit-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactive Pre-commit Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1421,6 +1515,33 @@
 </span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>*.json text eol=lf
 </span></code></pre></div>
 This prevents Git from modifying the internal bytes of your files, avoiding model loading failures on the cluster workers.</p>
+<h3 id="smart-cwd-redirection">Smart CWD Redirection</h3>
+<p>The <code>cluster-run</code> client executable (defined in <code>src/cluster/cluster_run.py</code>) redirects the current working directory (CWD) to allow execution from outside the target repository.</p>
+<ol>
+<li><strong>Repository Validation</strong>: Upon startup, the client checks if the CWD contains a <code>.cluster-ci</code> configuration file.</li>
+<li><strong>Fallback Database Scan</strong>: If the file is missing, the client searches for a local <code>db.json</code> database associated with the <code>antigravity-apk</code> server (at <code>C:\Users\hjamet\Documents\code\antigravity-apk\server\db.json</code> or <code>~\Documents\code\antigravity-apk\server\db.json</code>).</li>
+<li><strong>Project Resolution</strong>: It parses the <code>projects</code> array in <code>db.json</code>. For each project path, it checks for a <code>.cluster-ci</code> file.</li>
+<li><strong>Automatic Redirect</strong>: If a matching project is found, it updates the process directory via <code>os.chdir(proj_path)</code> and prints:
+    <code>[CWD Redirect] Redirecting cluster-run to Cluster-CI project: &lt;path&gt;</code>
+    If no project matches, it aborts execution with an error.</li>
+</ol>
+<h3 id="common-base-post-run-sync-validation">Common-Base Post-Run Sync Validation</h3>
+<p>During post-job execution, <code>cluster-run</code> fetches metrics, plots, and metadata from the cluster's temporary draft branch (<code>origin/cluster-draft/&lt;user&gt;</code>) via <code>fetch_cluster_results()</code>.</p>
+<ol>
+<li><strong>The Overwrite Risk</strong>: If a user cancels a run before the shadow push completes, the draft branch HEAD will point to a previous run. Performing a simple diff and checkout against this stale ref would treat local uncommitted code changes as modifications to revert, wiping out the developer's work.</li>
+<li><strong>Common-Base Ancestorship Check</strong>: To prevent this, the client checks out files only after validating that the local shadow commit (<code>base_ref</code>) is an ancestor of the remote branch HEAD (<code>remote_sha</code>):
+    <code>git merge-base --is-ancestor &lt;local_shadow_sha&gt; origin/&lt;draft_branch&gt;</code></li>
+<li><strong>Checkout Filter</strong>: If the check returns non-zero (meaning they do not share our local commit as an ancestor), the sync is aborted with the message <code>"Run was cancelled before push completed. No new results to sync."</code>. If it succeeds, the client diffs the commits (<code>git diff --diff-filter=AM</code>) and checks out the updated metrics, plots, and <code>dvc.lock</code> files.</li>
+</ol>
+<h3 id="interactive-pre-commit-validation">Interactive Pre-commit Validation</h3>
+<p>The script <code>src/runner/validate_pyproject.py</code> acts as a pre-commit check to validate package requirements.</p>
+<ol>
+<li><strong>Python Version Compatibility</strong>: It uses <code>tomlkit</code> to parse <code>pyproject.toml</code>. It verifies that <code>project.requires-python</code> does not exclude Python 3.12 (e.g. <code>&lt;3.11</code>). In interactive mode, it prompts the user to auto-correct it to <code>"&gt;=3.12"</code>.</li>
+<li><strong>Torch Pinning Relaxation</strong>: Strict dependency pinning (e.g., <code>torch==2.1.2</code>) conflicts with custom optimized CUDA builds pre-installed in the cluster's NGC container. The script identifies these pins and, in interactive mode, prompts the user to relax them (e.g. <code>torch&gt;=2.0</code>, <code>torchvision&gt;=0.15</code>).</li>
+<li><strong>ARM64 Resolution Simulation</strong>: It fetches the central constraints file <code>cluster_constraints.txt</code> from GitHub. To prevent false positives, it excludes packages declared as direct project dependencies. It then runs:
+    <code>uv pip compile --python-platform aarch64-unknown-linux-gnu --python 3.12 -c &lt;filtered_constraints&gt; pyproject.toml</code>
+    This simulates dependency resolution for the ARM64 platform before code is pushed to the cluster.</li>
+</ol>
 
 
 

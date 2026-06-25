@@ -558,6 +558,50 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#composite-dependency-hashing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composite Dependency Hashing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ngc-library-shadowing-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NGC Library Shadowing Protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vllm-nvshmem-stub-symlinking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM NVSHMEM Stub Symlinking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitsandbytes-cuda-compatibility-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bitsandbytes CUDA Compatibility Patch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -727,6 +771,34 @@
     
   
     Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
   
 
     
@@ -1051,6 +1123,50 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#composite-dependency-hashing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composite Dependency Hashing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ngc-library-shadowing-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NGC Library Shadowing Protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vllm-nvshmem-stub-symlinking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM NVSHMEM Stub Symlinking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitsandbytes-cuda-compatibility-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bitsandbytes CUDA Compatibility Patch
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1162,6 +1278,7 @@
 <hr />
 <h2 id="1-the-golden-image-nvidia-ngc-pytorch">1. The "Golden Image" (NVIDIA NGC PyTorch)</h2>
 <p>To avoid compiling heavy compute packages (like PyTorch, torchvision, or CUDA kernels) during job execution—which is slow on x86_64 and often fails on ARM64 workers—the cluster defaults to a pre-compiled, highly optimized <strong>"Golden Image"</strong>.</p>
+<p><img alt="Cluster Architecture" src="../../assets/images/cluster_architecture.png" /></p>
 <ul>
 <li><strong>Default Image</strong>: <code>nvcr.io/nvidia/pytorch:26.05-py3</code></li>
 <li><strong>Software Stack</strong>:<ul>
@@ -1175,6 +1292,38 @@
 <h3 id="dynamic-dependency-injection">Dynamic Dependency Injection</h3>
 <p>When a job starts, the orchestrator bypasses standard virtual environments (<code>.venv</code>) and installs the dependencies listed in your <code>pyproject.toml</code> directly into the container's system Python using <code>uv pip install --system</code>. </p>
 <p>This ensures your custom packages (like <code>tqdm</code>, <code>transformers</code>, or <code>pandas</code>) run directly on top of the pre-optimized NVIDIA PyTorch binary.</p>
+<h3 id="composite-dependency-hashing">Composite Dependency Hashing</h3>
+<p>The <code>src/runner/smart_install.sh</code> shell script implements a <strong>Composite Dependency Hashing</strong> mechanism to speed up container launch times by skipping redundant dependency installations.</p>
+<ol>
+<li><strong>Hash Calculation</strong>: The function <code>compute_deps_hash()</code> aggregates all files defining Python project dependencies: <code>pyproject.toml</code>, <code>uv.lock</code> (if present), <code>requirements.txt</code> (if present), and <code>setup.py</code> (if present). It computes a composite MD5 hash:
+    <code>md5sum $files 2&gt;/dev/null | md5sum | cut -d' ' -f1</code></li>
+<li><strong>State Verification</strong>: The resulting hash is compared against the value stored in the persistent Docker home volume at <code>/home/user/.cluster-ci-deps-hash</code>.</li>
+<li><strong>Sanity Check Bypass</strong>: If the current and cached hashes match, the script performs a quick sanity check to verify that Python packages are actually installed by looking for <code>.dist-info</code> directories in <code>/home/user/.local/lib/python3.*/site-packages</code> or <code>dist-packages</code>. If the sanity check passes, it exits with <code>0</code>, bypassing the installation entirely. If packages are missing, it deletes the hash file and triggers a full dependency install.</li>
+</ol>
+<h3 id="ngc-library-shadowing-protection">NGC Library Shadowing Protection</h3>
+<p>NVIDIA NGC containers contain highly-optimized, hardware-accelerated builds of libraries (e.g. <code>torch</code>, <code>triton</code>, <code>vllm</code>, <code>nvidia-*</code>) pre-installed in system directories (such as <code>/usr/local/lib/python3.12/dist-packages/</code>).</p>
+<ol>
+<li><strong>The Shadowing Problem</strong>: When running local pip/uv installations (e.g., <code>pip install -e .</code> with local prefixes or user directories), transitive dependencies can pull standard public PyPI packages into <code>/home/user/.local/lib/python3.12/site-packages/</code>. Since Python prioritizes local paths over system paths, these generic PyPI packages shadow the optimized NGC builds, causing massive performance drops or CUDA crashes.</li>
+<li><strong>Protection Mechanism</strong>: To prevent this library shadowing, <code>smart_install.sh</code> executes a post-install hook that scans all Python site-packages and dist-packages paths under the user's home folder (<code>/home/user/.local/...</code>, <code>/workspace/.venv/...</code>, etc.) and forcibly removes (<code>rm -rf</code>) any directory matching:
+    <code>torch</code>, <code>torch-*</code>, <code>torchvision</code>, <code>torchvision-*</code>, <code>nvidia*</code>, <code>nvshmem*</code>, <code>triton*</code>, <code>xformers*</code>, and <code>vllm*</code>.
+    This ensures the Python runtime always falls back to the vendor-optimized system libraries provided in the NGC container.</li>
+</ol>
+<h3 id="vllm-nvshmem-stub-symlinking">vLLM NVSHMEM Stub Symlinking</h3>
+<p>When compiling or launching <code>vLLM</code> in multi-GPU clusters, the build searches for the NVSHMEM communication library (<code>libnvshmem.so</code>).</p>
+<ol>
+<li><strong>Single-GPU Worker Absence</strong>: On single-GPU worker nodes, the NVSHMEM runtime is typically absent, which causes vLLM startup to fail with library loading errors.</li>
+<li><strong>Stub Symlink Fix</strong>: During the dependency setup phase, <code>smart_install.sh</code> uses a Python script to locate the active PyTorch library directory (<code>torch/lib</code>) and automatically symlinks the NVIDIA CUDA stub:
+    <code>ln -sf /usr/local/cuda/lib64/stubs/libnvshmem.so &lt;torch_lib_path&gt;/libnvshmem.so</code>
+    This provides vLLM with the required interface definitions, preventing initialization errors on single-GPU nodes.</li>
+</ol>
+<h3 id="bitsandbytes-cuda-compatibility-patch">bitsandbytes CUDA Compatibility Patch</h3>
+<p>The <code>bitsandbytes</code> quantization package loads pre-compiled CUDA backend libraries (e.g., <code>libbitsandbytes_cuda120.so</code>).</p>
+<ol>
+<li><strong>Compatibility Barrier</strong>: When running on cutting-edge platforms like Grace Blackwell (GB10) with newer CUDA drivers (e.g., CUDA 13.2), <code>bitsandbytes</code> fails because it does not ship with a matching pre-compiled library for that major/minor version.</li>
+<li><strong>Dynamic Patching</strong>: <code>smart_install.sh</code> detects the system CUDA version via <code>nvcc --version</code> (e.g. <code>132</code> for <code>13.2</code>), and scans the <code>bitsandbytes</code> site-packages directory to locate the highest pre-compiled <code>.so</code> file available (e.g. <code>libbitsandbytes_cuda126.so</code> for <code>12.6</code>). If the host CUDA version exceeds the highest pre-compiled version and the corresponding <code>.so</code> is missing, it dynamically symlinks:
+    <code>ln -s libbitsandbytes_cuda126.so libbitsandbytes_cuda132.so</code>
+    This forces <code>bitsandbytes</code> to load and run using the latest compatible CUDA library.</li>
+</ol>
 <hr />
 <h2 id="2-overriding-the-docker-image-in-cluster-ci">2. Overriding the Docker Image in <code>.cluster-ci</code></h2>
 <p>If your project requires a different base environment, or a specific pre-built image (e.g. for a specific version of a framework), you can override the Docker settings directly in the <code>.cluster-ci</code> file at the root of your repository.</p>

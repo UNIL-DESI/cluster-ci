@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/tasks/client_script/">
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/administration/">
       
       
+        <link rel="prev" href="../support/">
+      
+      
+        <link rel="next" href="../../index_architecture/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Client Installation Script - Cluster-CI</title>
+        <title>Administration - Cluster-CI</title>
       
     
     
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#client-installation-script" class="md-skip">
+        <a href="#cluster-administration-and-resilience-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Client Installation Script
+              Administration
             
           </span>
         </div>
@@ -226,11 +230,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../user/onboarding/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../onboarding/" class="md-tabs__link">
           
   
   
@@ -326,26 +332,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -363,7 +374,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -381,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/onboarding/" class="md-nav__link">
+      <a href="../onboarding/" class="md-nav__link">
         
   
   
@@ -409,7 +420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/client/" class="md-nav__link">
+      <a href="../client/" class="md-nav__link">
         
   
   
@@ -437,7 +448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/dvc/" class="md-nav__link">
+      <a href="../dvc/" class="md-nav__link">
         
   
   
@@ -465,7 +476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/containers/" class="md-nav__link">
+      <a href="../containers/" class="md-nav__link">
         
   
   
@@ -493,7 +504,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/ci_queue/" class="md-nav__link">
+      <a href="../ci_queue/" class="md-nav__link">
         
   
   
@@ -521,7 +532,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/dashboard/" class="md-nav__link">
+      <a href="../dashboard/" class="md-nav__link">
         
   
   
@@ -549,7 +560,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/support/" class="md-nav__link">
+      <a href="../support/" class="md-nav__link">
         
   
   
@@ -574,10 +585,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../user/administration/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -593,6 +631,165 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-runnermanager-and-ephemeral-execution-slots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. RunnerManager and Ephemeral Execution Slots
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. RunnerManager and Ephemeral Execution Slots">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#threaded-slots-and-staggered-delay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Threaded Slots and Staggered Delay
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provisioning-atomicity-and-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provisioning Atomicity and Cleanup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cancellation-loop-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancellation Loop Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-system-prerequisites-and-hardware-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. System Prerequisites and Hardware Watchdog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. System Prerequisites and Hardware Watchdog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passwordless-sudoers-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passwordless Sudoers Policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#systemd-hardware-recovery-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd Hardware Recovery Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-maintenance-mode-and-infrastructure-resilience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Maintenance Mode and Infrastructure Resilience
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Maintenance Mode and Infrastructure Resilience">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-management-and-api-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        State Management and API Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#job-suspension-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Job Suspension Behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#critical-infrastructure-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical Infrastructure Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -887,35 +1084,141 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-context-discussion-narrative" class="md-nav__link">
+  <a href="#1-runnermanager-and-ephemeral-execution-slots" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Context &amp; Discussion (Narrative)
+        1. RunnerManager and Ephemeral Execution Slots
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. RunnerManager and Ephemeral Execution Slots">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#threaded-slots-and-staggered-delay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Threaded Slots and Staggered Delay
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#2-affected-files" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#provisioning-atomicity-and-cleanup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Affected Files
+        Provisioning Atomicity and Cleanup
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#3-objectives-definition-of-done" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#cancellation-loop-watchdog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Objectives (Definition of Done)
+        Cancellation Loop Watchdog
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-system-prerequisites-and-hardware-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. System Prerequisites and Hardware Watchdog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. System Prerequisites and Hardware Watchdog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passwordless-sudoers-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passwordless Sudoers Policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#systemd-hardware-recovery-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd Hardware Recovery Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-maintenance-mode-and-infrastructure-resilience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Maintenance Mode and Infrastructure Resilience
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Maintenance Mode and Infrastructure Resilience">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-management-and-api-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        State Management and API Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#job-suspension-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Job Suspension Behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#critical-infrastructure-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical Infrastructure Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -936,25 +1239,60 @@
 
 
 
-<h1 id="client-installation-script">Client Installation Script</h1>
-<h2 id="1-context-discussion-narrative">1. Context &amp; Discussion (Narrative)</h2>
-<blockquote>
-<p><em>Handover</em>: Developer experience (or rather "agent experience") must be impeccable. To simplify the integration of the new Cluster CI across multiple existing research projects, we decided to provide an express (minimalist) installer.</p>
-</blockquote>
-<p>This client script will be executed in research repositories (those Joules works on) via <code>curl -sSL ... | bash</code>. It must auto-generate the <code>.github/workflows/</code> directory and files containing a standard <code>.github/workflows/execute_on_ubuntu.yml</code> workflow calibrated to target the self-hosted tags of our new test machine.</p>
-<h2 id="2-affected-files">2. Affected Files</h2>
+<h1 id="cluster-administration-and-resilience-guide">Cluster Administration and Resilience Guide</h1>
+<p>This guide details the system administration tasks, architecture resilience features, and configuration requirements for managing the Cluster-CI infrastructure.</p>
+<hr />
+<h2 id="1-runnermanager-and-ephemeral-execution-slots">1. RunnerManager and Ephemeral Execution Slots</h2>
+<p>The GitHub Actions self-hosted runners are managed dynamically by the <code>RunnerManager</code> service (<code>src/scheduler/runner_manager.py</code>). This component coordinates standard execution slots alongside an exclusive administrative slot.</p>
+<h3 id="threaded-slots-and-staggered-delay">Threaded Slots and Staggered Delay</h3>
+<p>The manager initiates a configured number of standard runner slots (<code>num_slots</code>) and one specialized <code>admin</code> runner slot. To prevent API rate-limiting and file lock collisions when registering multiple runners simultaneously, the startup of standard slots is staggered:
+* Each slot experiences a staggered startup delay of <code>slot_id * 2</code> seconds before executing <code>./config.sh</code>.</p>
+<h3 id="provisioning-atomicity-and-cleanup">Provisioning Atomicity and Cleanup</h3>
 <ul>
-<li><code>install.sh</code> (at the root of the cluster-ci repository)</li>
-<li><code>templates/execute_on_ubuntu.yml</code> (template for the distributed CI workflow)</li>
+<li><strong>Atomic Isolation</strong>: When provisioning a runner folder, the manager copies the runner binaries from <code>runners/template</code> to a temporary directory before renaming it to the final slot destination atomically.</li>
+<li><strong>Configuration Reset</strong>: Before launching the runner process, the manager forcefully cleans up stale state files (such as <code>.runner</code>, <code>.credentials</code>, etc.) to prevent "already configured" errors.</li>
 </ul>
-<h2 id="3-objectives-definition-of-done">3. Objectives (Definition of Done)</h2>
+<h3 id="cancellation-loop-watchdog">Cancellation Loop Watchdog</h3>
+<p>Standard runners operate with the <code>--ephemeral</code> flag, processing exactly one job before exiting. To prevent runners from hanging indefinitely during cancellation cycles, the manager runs an active watchdog:
+1. It scans the runner's diagnostic logs (<code>_diag/Runner_*.log</code>) every 10 seconds.
+2. If it detects continuous job cancellation requests (specifically, 8 or more cancellation request lines in the last 15 lines of the log) OR if the registration becomes unauthorized, it increments a <code>cancellation_spam_count</code>.
+3. Once the counter reaches 3, the manager kills the process (<code>process.kill()</code>) and instantly provisions a fresh runner slot to restore service.</p>
+<hr />
+<h2 id="2-system-prerequisites-and-hardware-watchdog">2. System Prerequisites and Hardware Watchdog</h2>
+<p>For worker nodes to run reliably under heavy GPU training workloads on Grace Blackwell (GB10) architectures, low-level OS configurations must be properly set.</p>
+<h3 id="passwordless-sudoers-policy">Passwordless Sudoers Policy</h3>
+<p>The system relies on a dedicated sudoers drop-in configuration at <code>/etc/sudoers.d/cluster-ci</code>:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-worker-agent, /usr/bin/dmesg, /usr/bin/journalctl
+</span></code></pre></div>
+This enables the unprivileged cluster agent user to restart systemd services and read system telemetry logs without interactive password prompts.</p>
+<h3 id="systemd-hardware-recovery-watchdog">Systemd Hardware Recovery Watchdog</h3>
+<p>NVIDIA Grace Blackwell architectures can suffer from kernel panics or physical freezes when CUDA drivers crash under extreme memory allocation conditions. To prevent physical server hangs, systemd's hardware watchdog interface is configured in <code>/etc/systemd/system.conf</code>:
+* <code>RuntimeWatchdogSec=30</code>: Directs systemd to ping the hardware watchdog device (e.g., <code>/dev/watchdog</code>) every 30 seconds. If the kernel freezes and systemd fails to "pet" the watchdog, the motherboard's hardware controller triggers a hard reboot of the machine.
+* <code>RebootWatchdogSec=60</code>: Configures a 60-second watchdog timer during reboot sequences to recover from hangs at shutdown.</p>
+<hr />
+<h2 id="3-maintenance-mode-and-infrastructure-resilience">3. Maintenance Mode and Infrastructure Resilience</h2>
+<p>The headnode scheduler API provides a Maintenance Mode to allow administrators to perform upgrades or hardware maintenance without losing queued jobs.</p>
+<h3 id="state-management-and-api-control">State Management and API Control</h3>
 <ul>
-<li>A distributed and robust <code>install.sh</code> file.</li>
-<li>The script detects the git root and silently injects the <code>.github/workflows/</code> folder.</li>
-<li>The injected <code>execute_on_ubuntu.yml</code> payload is a valid, ready-to-use GitHub Actions workflow.</li>
-<li>The injected client workflow is configured to listen for "Push" or "Pull Request" events, use the "self-hosted" runner tag, and call the orchestration layer (which will be pre-deployed on said runner).</li>
-<li>Log instructions informing Joules of what to do next if the installation succeeds or fails.</li>
+<li><strong>In-Memory Variable</strong>: The active maintenance state is stored in an in-memory global variable (<code>MAINTENANCE_MODE = False</code>).</li>
+<li><strong>Endpoints</strong>: Maintenance mode is toggled via:</li>
+<li><code>POST /maintenance/on</code></li>
+<li><code>POST /maintenance/off</code></li>
+<li><strong>Authorization</strong>: Requests to these endpoints require Bearer token authorization using the <code>CLUSTER_TOKEN</code> environment variable.</li>
 </ul>
+<h3 id="job-suspension-behavior">Job Suspension Behavior</h3>
+<p>When maintenance mode is enabled:
+* The scheduler loop suspends worker assignments.
+* Any call to the <code>/submit_job</code> endpoint is rejected.
+* The API returns:
+  <code>503 Service Unavailable</code> with body <code>{"error": "Service Unavailable: Maintenance Mode Active"}</code>.</p>
+<p>This ensures researchers receive immediate feedback, and no new tasks enter the queue while workers are undergoing system updates.</p>
+<h3 id="critical-infrastructure-environment-variables">Critical Infrastructure Environment Variables</h3>
+<p>To ensure resilience, the scheduler and worker agents rely on several critical environment variables:
+* <code>CLUSTER_TOKEN</code>: Bearer token used for authenticating administrative actions and API communications between workers and the headnode.
+* <code>HEADNODE_URL</code>: The base URL of the headnode scheduler API (e.g., <code>http://10.0.0.1:5000</code>).
+* <code>GC_FREE_SPACE_THRESHOLD_GB</code>: Minimum free disk space in GB on the worker before tiered garbage collection is triggered (defaults to 100).
+* <code>DVC_VIEWER_TIMEOUT_MIN</code>: Idle timeout in minutes for DVC visualizer instances before they are automatically terminated (defaults to 30).</p>
 
 
 

@@ -720,6 +720,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#double-threshold-gpu-memory-guard-host-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Double-Threshold GPU Memory Guard &amp; Host Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zombie-gc-multi-dimensional-inactivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zombie GC (Multi-dimensional Inactivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dvc-git-watchdog-incremental-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DVC Git Watchdog (Incremental Backups)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -787,6 +820,34 @@
     
   
     Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
   
 
     
@@ -1245,6 +1306,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#double-threshold-gpu-memory-guard-host-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Double-Threshold GPU Memory Guard &amp; Host Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zombie-gc-multi-dimensional-inactivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zombie GC (Multi-dimensional Inactivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dvc-git-watchdog-incremental-backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DVC Git Watchdog (Incremental Backups)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1282,6 +1376,7 @@
 <hr />
 <h2 id="1-job-lifecycle-in-the-ci-queue">1. Job Lifecycle in the CI Queue</h2>
 <p>When you trigger a run using the <code>cluster-run</code> client, the job flows through the following stages:</p>
+<p><img alt="Scheduling Queue" src="../../assets/images/scheduling_queue.png" /></p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Local Client] -&gt; (Shadow Push) -&gt; [GitHub Actions Runner] -&gt; (API Submit) -&gt; [Headnode Queue]
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                                                                   |
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                                                           (Scheduler Loop)
@@ -1359,6 +1454,44 @@ If you do not specify a VRAM constraint, it defaults to 0 (allowing execution on
 <p>The worker agent runs a background loop that polls the headnode's <code>/job_status/{job_id}</code> endpoint every few seconds.
 *   If the job's state is changed to <code>cancelled</code> or <code>stopped</code> on the headnode (e.g. by a user clicking "Cancel" on the dashboard), the worker's watchdog detects it.
 *   It kills the local Docker container, stops the processes, runs JIT cleanup, and releases the VRAM/RAM allocation immediately.</p>
+<h3 id="double-threshold-gpu-memory-guard-host-watchdog">Double-Threshold GPU Memory Guard &amp; Host Watchdog</h3>
+<p>To prevent jobs from freezing the operating system or starving other tasks on unified memory platforms, <code>cluster-ci</code> implements a double-threshold memory protection system.</p>
+<ol>
+<li><strong>Process-Level CUDA Hard-Cap</strong>: The script <code>src/runner/gpu_memory_guard.py</code> is injected into the container's <code>PYTHONSTARTUP</code> environment variable. Before user code executes, it checks <code>CLUSTER_CI_VRAM_LIMIT_GB</code>. If set, it calculates the VRAM fraction and hard-caps PyTorch's memory allocation via:
+    <code>torch.cuda.set_per_process_memory_fraction(fraction, device=0)</code></li>
+<li><strong>Unified Memory (Grace Blackwell) Fallback</strong>: On unified systems (e.g. Grace Blackwell GB10), standard CUDA device queries for total memory return <code>0</code> or <code>[N/A]</code>. The guard detects this and falls back to reading system RAM from <code>/proc/meminfo</code> (<code>MemTotal:</code>), which serves as the shared CPU-GPU pool.</li>
+<li><strong>Host-Level Dual Threshold Watchdog</strong>: The host script <code>src/runner/gpu_watchdog.sh</code> monitors the running container every 2 seconds:<ul>
+<li><strong>Discrete GPU Mode</strong>: Queries <code>nvidia-smi --query-gpu=memory.used</code>.</li>
+<li><strong>Unified Memory Mode</strong>: Fallback to <code>/proc/meminfo</code> (<code>MemTotal - MemAvailable</code>).</li>
+<li><strong>Soft VRAM Threshold (User-declared)</strong>: If memory exceeds this limit, it flags a violation. If the violation persists for <code>SOFT_THRESHOLD = 2</code> consecutive checks (4 seconds grace period), the watchdog kills the container (<code>docker kill</code>).</li>
+<li><strong>Hard RAM Threshold (90% System RAM)</strong>: If memory usage exceeds 90% of total system RAM, the watchdog immediately kills the container on the very first check to protect the host OS from kernel panic/OOM lockups.</li>
+</ul>
+</li>
+</ol>
+<h3 id="zombie-gc-multi-dimensional-inactivity">Zombie GC (Multi-dimensional Inactivity)</h3>
+<p>To prevent orphaned or stuck container processes from indefinitely consuming cluster resources, <code>src/runner/gc_orchestrator.py</code> runs a <strong>Zombie Garbage Collection</strong> daemon via <code>run_zombie_gc()</code>.</p>
+<ol>
+<li><strong>Container Filtering</strong>: The GC scans for running Docker containers matching the name pattern <code>cluster-job-*</code>.</li>
+<li><strong>Multi-Dimensional Inactivity Check</strong>: For each container, it evaluates activity across three dimensions:<ul>
+<li><strong>Logs</strong>: Checks the modification timestamp (<code>st_mtime</code>) of <code>job_logs/{job_id}.log</code>. If the log file has not been modified since the last check, it counts as inactive.</li>
+<li><strong>CPU &amp; Network</strong>: Queries <code>docker stats</code> for CPU percentage and network IO bytes. If CPU usage is <code>&lt;= 0.1%</code> and network traffic is identical to the previous check, it counts as inactive.</li>
+<li><strong>GPU Utilization</strong>: Runs <code>nvidia-smi</code> to verify if the sum of GPU utilization percentages is <code>0%</code>.</li>
+</ul>
+</li>
+<li><strong>10-Minute Timeout Termination</strong>: If inactivity is detected across all three dimensions, a persistent timer is incremented in <code>zombie_registry.json</code>. If this inactivity exceeds <code>ZOMBIE_TIMEOUT_MINUTES = 10</code> minutes, the container is forcibly removed (<code>docker rm -f</code>), and any associated viewer containers or host <code>dvc-viewer</code> processes are killed.</li>
+</ol>
+<h3 id="dvc-git-watchdog-incremental-backups">DVC Git Watchdog (Incremental Backups)</h3>
+<p>The cluster implements an asynchronous watchdog (<code>src/runner/dvc_watchdog.sh</code>) to perform intermediate Git commits of metrics and plots during long-running training stages.</p>
+<ol>
+<li><strong>Lock File Monitoring</strong>: The watchdog runs as a host-level background daemon, polling the project's <code>dvc.lock</code> file every 2 seconds.</li>
+<li><strong>DVC Status Interlocking</strong>: When <code>dvc.lock</code> is modified, the script waits 2 seconds for disk writes to settle. It inspects <code>.dvc/tmp/iterative-status.json</code>. If the JSON file reports <code>running: true</code>, it defers the synchronization to prevent file locking conflicts.</li>
+<li><strong>Intermediate Commits</strong>: If no stage is actively writing, it executes <code>dvc_git_helper.py sync</code> inside the container:<ul>
+<li><strong>Staging changes</strong>: Stages <code>dvc.lock</code> if modified. It reads <code>dvc.yaml</code> to identify all metrics/plots files configured with <code>cache: false</code>.</li>
+<li><strong>Size Constraint</strong>: If a metric file is <code>&lt; 5 MiB</code> and has local modifications, it is staged via <code>git add -f &lt;path&gt;</code>. Files <code>&gt;= 5 MiB</code> are skipped to protect repository size.</li>
+<li><strong>Push Reconciliation</strong>: Commits the files under <code>cluster-ci-bot</code> (<code>bot@cluster-ci.io</code>) with <code>[skip ci]</code> tags. It then runs <code>git push origin HEAD</code>. If the push fails, it executes <code>git pull --rebase</code> to resolve remote updates, pushes again, and aborts (<code>git rebase --abort</code>) if conflicts cannot be resolved.</li>
+</ul>
+</li>
+</ol>
 <h3 id="aggressive-auto-cancellation-rules">Aggressive Auto-Cancellation Rules</h3>
 <p>To optimize cluster resources, Cluster-CI applies the following cancellation rules upon new submissions:</p>
 <p>=== "Draft Branches (<code>cluster-draft/*</code>)"

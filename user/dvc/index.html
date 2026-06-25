@@ -630,6 +630,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#emergency-garbage-collection-50-gb-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emergency Garbage Collection (50 GB Threshold)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lazy-workspace-transfer-sync_status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lazy Workspace Transfer (sync_status)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#historical-dvc-visualizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical DVC Visualizer
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -793,6 +826,34 @@
     
   
     Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
   
 
     
@@ -1217,6 +1278,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#emergency-garbage-collection-50-gb-threshold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emergency Garbage Collection (50 GB Threshold)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lazy-workspace-transfer-sync_status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lazy Workspace Transfer (sync_status)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#historical-dvc-visualizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical DVC Visualizer
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1294,6 +1388,7 @@
 <hr />
 <h2 id="1-high-level-data-flow">1. High-Level Data Flow</h2>
 <p>Cluster-CI employs a dual-channel architecture to handle experiment files. Depending on how you declare a file in <code>dvc.yaml</code>, it will take one of two paths:</p>
+<p><img alt="Data Flow Diagram" src="../../assets/images/data_flow_diagram.png" /></p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                  +--------------------------------+
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  |           dvc.yaml             |
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  +--------------------------------+
@@ -1450,6 +1545,44 @@
 </tbody>
 </table>
 <p>Active repositories currently running jobs are <strong>never</strong> targeted by the GC.</p>
+<h3 id="emergency-garbage-collection-50-gb-threshold">Emergency Garbage Collection (50 GB Threshold)</h3>
+<p>The worker node implements an automatic, destructive <strong>Emergency Garbage Collection</strong> loop within <code>src/runner/gc_orchestrator.py</code> designed to prevent disk space exhaustion.</p>
+<ol>
+<li><strong>Triggering and Panic Threshold</strong>: The emergency GC is launched via <code>run_gc()</code>. It checks the free space of the storage partition where repositories reside (derived using <code>shutil.disk_usage</code>). The panic threshold is set to a hardcoded limit of <strong>50 GB</strong> (<code>PANIC_THRESHOLD_GB = 50</code>).</li>
+<li><strong>Resource Pruning</strong>: Before deleting workspace directories, the script executes a general Docker system cleanup by calling <code>docker system prune -f</code> to reclaim space from dangling images, unused networks, and stopped containers.</li>
+<li><strong>Workspace Eviction Strategy (FIFO/LRU)</strong>: If the storage space remains below 50 GB after the Docker prune, the script parses the <code>registry.json</code> database. It filters out all projects marked as <code>status: "idle"</code>. It then sorts these idle projects chronologically by their <code>last_execution</code> timestamp, placing the least recently used (LRU) project at the front.</li>
+<li><strong>Destructive Cleanup</strong>: For each candidate project, the GC invokes <code>cleanup_level_5(project_path, project_name)</code>, which executes a recursive directory deletion via <code>shutil.rmtree(project_path)</code>. No remote backups or DVC pushes are executed during this emergency routine.</li>
+<li><strong>Termination Condition</strong>: The deletion loop stops immediately once the available disk space climbs back above the 50 GB limit. The database <code>registry.json</code> is updated, writing <code>status: "deleted"</code> and <code>size_bytes: 0</code> for all evicted projects.</li>
+</ol>
+<h3 id="lazy-workspace-transfer-sync_status">Lazy Workspace Transfer (<code>sync_status</code>)</h3>
+<p>For standard maintenance, <code>src/runner/gc_orchestrator.py</code> implements a <strong>Lazy Workspace Transfer</strong> routine through <code>run_transfer_gc()</code> to offload older workspace folders.</p>
+<ol>
+<li><strong>Threshold and Scan</strong>: Triggered when the worker's free disk space drops below <code>FREE_SPACE_THRESHOLD_GB</code> (defaults to 100 GB, configurable via the <code>GC_FREE_SPACE_THRESHOLD_GB</code> environment variable). The orchestrator identifies candidate projects marked as <code>"idle"</code>.</li>
+<li><strong>DVC Remote Verification</strong>: The worker inspects the workspace configuration at <code>.dvc/config</code>. If a remote is configured (determined by searching for the <code>remote =</code> string), the project cannot be deleted without pushing its data.</li>
+<li><strong>Headnode Query &amp; Push</strong>: The worker queries the central headnode API endpoint (<code>HEADNODE_URL/check_space</code>) to check if the remote repository has sufficient storage capacity. If the headnode is available and has enough space, the worker executes a local <code>dvc push</code> inside the project path.</li>
+<li><strong>Eviction &amp; Sync Status Update</strong>:<ul>
+<li>If the <code>dvc push</code> succeeds, the project is evicted from the worker via <code>cleanup_level_5</code> (workspace directory deleted). The project status in <code>registry.json</code> is set to <code>"deleted"</code>, its size is set to <code>0</code>, and its <code>sync_status</code> is updated to <code>"done"</code>.</li>
+<li>If the headnode is unreachable, full, or if the <code>dvc push</code> fails, the local workspace deletion is deferred. The project's <code>sync_status</code> is set to <code>"pending"</code> in the registry, ensuring it is kept locally until the next maintenance pass.</li>
+<li>If the workspace has no DVC remote configured, it is directly evicted and marked as <code>status: "deleted"</code> and <code>sync_status: "done"</code>.</li>
+</ul>
+</li>
+</ol>
+<h3 id="historical-dvc-visualizer">Historical DVC Visualizer</h3>
+<p>The historical visualizer allows researchers to view pipeline DAGs, metrics, and plots for older revisions without interfering with the active workspace. It utilizes isolated Git worktrees and cached symlinks.</p>
+<ol>
+<li><strong>Git Worktree Isolation</strong>: When a historical view request is sent to the headnode for a repository at a specific commit revision, the worker API endpoint <code>/api/worker/dvc-viewer/start</code> (in <code>src/scheduler/worker_agent.py</code>) is invoked. It creates a deterministic directory in <code>/tmp/dvc-viewer-&lt;repo&gt;-&lt;rev_short&gt;</code> and executes:
+    <code>git worktree add --detach &lt;worktree_dir&gt; &lt;target_rev&gt;</code>
+    This checks out the specified commit in an isolated directory without affecting the worker's main branch workspace.</li>
+<li><strong>Local DVC Cache Symlinking</strong>: To avoid time-consuming network pulls, the worker creates a <code>.dvc</code> folder inside the newly created worktree, symlinks the main repository's DVC cache (<code>repo_path/.dvc/cache</code> -&gt; <code>worktree_dir/.dvc/cache</code>) and copies the <code>config</code> and <code>config.local</code> configuration files. It then runs:
+    <code>dvc checkout</code>
+    This restores all heavy outputs instantly from the shared local DVC cache, without making network requests.</li>
+<li><strong>Inactivity Heartbeats</strong>: The <code>dvc-viewer</code> server (launched in <code>dvc_viewer/server.py</code>) spawns a background thread named <code>_inactivity_daemon</code>. This daemon monitors server activity. If no client requests hit the <code>/api/heartbeat</code> endpoint for 15 consecutive seconds, the server self-destructs by calling <code>os._exit(0)</code>. While the user's browser is active, it pings the proxy on the headnode every 5 seconds, which forwards the heartbeat to the worker to keep the instance alive.</li>
+<li><strong>Headnode Cleaning Task</strong>: In <code>src/scheduler/headnode_service.py</code>, a background thread <code>cleanup_inactive_viewers()</code> runs every 30 seconds:<ul>
+<li>For <strong>local</strong> viewers: if the last access exceeds <code>DVC_VIEWER_TIMEOUT_MIN</code> (defaults to 30 minutes), it terminates the process (<code>proc.terminate()</code>).</li>
+<li>For <strong>remote</strong> worker viewers: if the last access is older than 45 seconds (since the worker itself terminates after 15 seconds of inactivity), the headnode prunes the metadata registration entry.</li>
+</ul>
+</li>
+</ol>
 <hr />
 <h2 id="5-metrics-plots-metrics-plots-git-sync">5. Metrics &amp; Plots (<code>metrics</code> / <code>plots</code>) &amp; Git Sync</h2>
 <p>Metrics and plots are lightweight files used to evaluate models. They must be committed to the Git repository to keep track of performance.</p>
