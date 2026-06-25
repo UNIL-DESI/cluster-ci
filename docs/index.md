@@ -20,6 +20,7 @@ If you are a researcher or data scientist looking to run experiments on the clus
 *   **[CI Pipeline & Queue Scheduler](user/ci_queue.md)**: Deep dive into the scheduling loop, branch exclusivity, physical RAM/VRAM constraints, local data caching scores, and JIT worker sanitization (Ollama VRAM unloading).
 *   **[Monitoring Dashboard](user/dashboard.md)**: How to navigate the real-time web interface, use the foldable artifact tree with bottom-up search, browse version histories grouped by MD5 hash, and inspect Hydra configurations.
 *   **[Support & Contributions](user/support.md)**: Contains the error code lookup table (OOM 137, cancellations, worker crashes), pre-commit scanner guidelines, and GitHub issue template.
+*   **[Cluster Administration](user/administration.md)**: Guide on RunnerManager slots, system prerequisites (sudoers, systemd watchdog), and Maintenance Mode API.
 
 ### 🛠️ Developer Docs (For Platform Maintainers)
 If you are a system administrator, DevOps engineer, or developer maintaining the Cluster-CI platform, these technical specifications detail the cluster internals and microservices:
