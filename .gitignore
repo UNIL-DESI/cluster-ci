@@ -36,3 +36,6 @@ build/
 
 # Python egg-info
 *.egg-info/
+
+# Agents metadata
+.agents/
