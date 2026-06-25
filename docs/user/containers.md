@@ -8,6 +8,8 @@ Cluster-CI runs all pipeline jobs inside Docker containers to guarantee isolatio
 
 To avoid compiling heavy compute packages (like PyTorch, torchvision, or CUDA kernels) during job execution—which is slow on x86_64 and often fails on ARM64 workers—the cluster defaults to a pre-compiled, highly optimized **"Golden Image"**.
 
+![Cluster Architecture](../assets/images/cluster_architecture.png)
+
 *   **Default Image**: `nvcr.io/nvidia/pytorch:26.05-py3`
 *   **Software Stack**:
     *   **Python**: 3.12
@@ -19,6 +21,38 @@ To avoid compiling heavy compute packages (like PyTorch, torchvision, or CUDA ke
 When a job starts, the orchestrator bypasses standard virtual environments (`.venv`) and installs the dependencies listed in your `pyproject.toml` directly into the container's system Python using `uv pip install --system`. 
 
 This ensures your custom packages (like `tqdm`, `transformers`, or `pandas`) run directly on top of the pre-optimized NVIDIA PyTorch binary.
+
+### Composite Dependency Hashing
+The `src/runner/smart_install.sh` shell script implements a **Composite Dependency Hashing** mechanism to speed up container launch times by skipping redundant dependency installations.
+
+1.  **Hash Calculation**: The function `compute_deps_hash()` aggregates all files defining Python project dependencies: `pyproject.toml`, `uv.lock` (if present), `requirements.txt` (if present), and `setup.py` (if present). It computes a composite MD5 hash:
+    `md5sum $files 2>/dev/null | md5sum | cut -d' ' -f1`
+2.  **State Verification**: The resulting hash is compared against the value stored in the persistent Docker home volume at `/home/user/.cluster-ci-deps-hash`.
+3.  **Sanity Check Bypass**: If the current and cached hashes match, the script performs a quick sanity check to verify that Python packages are actually installed by looking for `.dist-info` directories in `/home/user/.local/lib/python3.*/site-packages` or `dist-packages`. If the sanity check passes, it exits with `0`, bypassing the installation entirely. If packages are missing, it deletes the hash file and triggers a full dependency install.
+
+### NGC Library Shadowing Protection
+NVIDIA NGC containers contain highly-optimized, hardware-accelerated builds of libraries (e.g. `torch`, `triton`, `vllm`, `nvidia-*`) pre-installed in system directories (such as `/usr/local/lib/python3.12/dist-packages/`).
+
+1.  **The Shadowing Problem**: When running local pip/uv installations (e.g., `pip install -e .` with local prefixes or user directories), transitive dependencies can pull standard public PyPI packages into `/home/user/.local/lib/python3.12/site-packages/`. Since Python prioritizes local paths over system paths, these generic PyPI packages shadow the optimized NGC builds, causing massive performance drops or CUDA crashes.
+2.  **Protection Mechanism**: To prevent this library shadowing, `smart_install.sh` executes a post-install hook that scans all Python site-packages and dist-packages paths under the user's home folder (`/home/user/.local/...`, `/workspace/.venv/...`, etc.) and forcibly removes (`rm -rf`) any directory matching:
+    `torch`, `torch-*`, `torchvision`, `torchvision-*`, `nvidia*`, `nvshmem*`, `triton*`, `xformers*`, and `vllm*`.
+    This ensures the Python runtime always falls back to the vendor-optimized system libraries provided in the NGC container.
+
+### vLLM NVSHMEM Stub Symlinking
+When compiling or launching `vLLM` in multi-GPU clusters, the build searches for the NVSHMEM communication library (`libnvshmem.so`).
+
+1.  **Single-GPU Worker Absence**: On single-GPU worker nodes, the NVSHMEM runtime is typically absent, which causes vLLM startup to fail with library loading errors.
+2.  **Stub Symlink Fix**: During the dependency setup phase, `smart_install.sh` uses a Python script to locate the active PyTorch library directory (`torch/lib`) and automatically symlinks the NVIDIA CUDA stub:
+    `ln -sf /usr/local/cuda/lib64/stubs/libnvshmem.so <torch_lib_path>/libnvshmem.so`
+    This provides vLLM with the required interface definitions, preventing initialization errors on single-GPU nodes.
+
+### bitsandbytes CUDA Compatibility Patch
+The `bitsandbytes` quantization package loads pre-compiled CUDA backend libraries (e.g., `libbitsandbytes_cuda120.so`).
+
+1.  **Compatibility Barrier**: When running on cutting-edge platforms like Grace Blackwell (GB10) with newer CUDA drivers (e.g., CUDA 13.2), `bitsandbytes` fails because it does not ship with a matching pre-compiled library for that major/minor version.
+2.  **Dynamic Patching**: `smart_install.sh` detects the system CUDA version via `nvcc --version` (e.g. `132` for `13.2`), and scans the `bitsandbytes` site-packages directory to locate the highest pre-compiled `.so` file available (e.g. `libbitsandbytes_cuda126.so` for `12.6`). If the host CUDA version exceeds the highest pre-compiled version and the corresponding `.so` is missing, it dynamically symlinks:
+    `ln -s libbitsandbytes_cuda126.so libbitsandbytes_cuda132.so`
+    This forces `bitsandbytes` to load and run using the latest compatible CUDA library.
 
 ---
 
