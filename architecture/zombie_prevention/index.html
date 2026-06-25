@@ -1,0 +1,1071 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Cluster-CI GPU-accelerated computing platform.">
+      
+      
+      
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/architecture/zombie_prevention/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Prévention des Processus Orphelins dvc-viewer - Cluster-CI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="light-green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#prevention-des-processus-orphelins-dvc-viewer" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Cluster-CI" class="md-header__button md-logo" aria-label="Cluster-CI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Cluster-CI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Prévention des Processus Orphelins dvc-viewer
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="light-green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="light-green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user/onboarding/" class="md-tabs__link">
+          
+  
+  
+  User Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../index_architecture/" class="md-tabs__link">
+          
+  
+  
+  Developer Docs
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Cluster-CI" class="md-nav__button md-logo" aria-label="Cluster-CI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Cluster-CI
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/client/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-Line Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/dvc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DVC & Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/ci_queue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI & Queue Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_preflight/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preflight
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_vllm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vLLM Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks & Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-contexte-problematique" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Contexte &amp; Problématique
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-solutions-appliquees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Solutions Appliquées
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Solutions Appliquées">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-suppression-de-la-dependance-de-pid-docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A. Suppression de la dépendance de PID Docker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-purge-proactive-et-globale-sur-lhote" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B. Purge proactive et globale sur l'hôte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-watchdog-dagent-worker-et-gc-hybride-psutil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C. Watchdog d'Agent Worker et GC Hybride (psutil)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-garde-fous-systemiques-avances-auto-guerison-issue-94" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Garde-fous Systémiques Avancés &amp; Auto-Guérison (Issue #94)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Garde-fous Systémiques Avancés &amp; Auto-Guérison (Issue #94)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-verrou-dinstance-unique-single-instance-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A. Verrou d'Instance Unique (Single Instance Lock)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-graceful-shutdown-signal-trap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B. Graceful Shutdown &amp; Signal Trap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-self-healing-daemon-routine-dauto-guerison-active" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C. Self-Healing Daemon (Routine d'Auto-Guérison Active)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="prevention-des-processus-orphelins-dvc-viewer">Prévention des Processus Orphelins dvc-viewer</h1>
+<p>Ce document détaille la stratégie et les mécanismes d'éradication des processus orphelins (zombies) <code>dvc-viewer</code> sur les workers du cluster.</p>
+<h2 id="1-contexte-problematique">1. Contexte &amp; Problématique</h2>
+<p>Le <code>dvc-viewer</code> est un composant interactif démarré à la demande pour chaque job DVC afin de permettre la visualisation des métriques et des résultats de recherche. Cependant, plusieurs facteurs provoquaient l'accumulation de ces processus en tâche de fond sur les workers :
+1. <strong>Partage d'espace de nommage de PID Docker fragile</strong> : L'option <code>--pid="container:${MAIN_CONTAINER_NAME}"</code> entraînait des conflits de destruction et empêchait l'arrêt propre du conteneur de viewer lorsque le conteneur principal se terminait brutalement.
+2. <strong>Filtrage de chemin pwdx inopérant</strong> : Le script de nettoyage initial utilisait <code>pwdx "$pid"</code> sur l'hôte en le comparant avec le dossier de travail interne du conteneur <code>/workspace</code>, ce qui échouait systématiquement à identifier les processus orphelins du conteneur s'exécutant sur l'hôte.
+3. <strong>Cancellations abruptes de jobs</strong> : L'utilisation de <code>psutil</code> pour tuer l'arbre de processus lors d'une annulation de job court-circuitait les gestionnaires de signaux Bash (<code>trap EXIT</code>), empêchant ainsi l'exécution des routines de nettoyage classiques.</p>
+<h2 id="2-solutions-appliquees">2. Solutions Appliquées</h2>
+<h3 id="a-suppression-de-la-dependance-de-pid-docker">A. Suppression de la dépendance de PID Docker</h3>
+<p>Nous avons retiré l'option <code>--pid="container:${MAIN_CONTAINER_NAME}"</code> lors du démarrage du conteneur <code>dvc-viewer</code>. Ce conteneur n'a besoin que d'un accès en lecture au volume partagé du workspace pour lire les métriques DVC, et non de partager l'espace de nommage PID du conteneur d'exécution. Cela permet au conteneur de viewer d'être géré et détruit de manière totalement isolée et robuste.</p>
+<h3 id="b-purge-proactive-et-globale-sur-lhote">B. Purge proactive et globale sur l'hôte</h3>
+<p>Puisqu'un worker n'exécute qu'un seul job de recherche à la fois, tout processus <code>dvc-viewer</code> résiduel détecté sur l'hôte au démarrage ou à la fin d'un job est par définition un orphelin d'une exécution précédente. 
+Nous avons remplacé la vérification restrictive <code>pwdx</code> par un balayage proactif global sur l'hôte :
+- <strong>Au démarrage du job</strong> : Nettoyage systématique de tout processus <code>dvc-viewer</code> résiduel.
+- <strong>Pendant le nettoyage Bash (<code>cleanup_job_resources</code>)</strong> : Cible explicitement le port du viewer (<code>--port $VIEWER_PORT</code>) et force le signal <code>kill -9</code> sur tout processus viewer résiduel.</p>
+<h3 id="c-watchdog-dagent-worker-et-gc-hybride-psutil">C. Watchdog d'Agent Worker et GC Hybride (<code>psutil</code>)</h3>
+<p>Pour contrer les cas où Bash est brutalement interrompu (ex: annulation via le Headnode), nous avons doté l'Agent Worker et le Zombie GC de routines actives en Python via <code>psutil</code> :
+1. <strong>Worker Agent</strong> :
+   - <code>kill_dvc_viewer_processes()</code> scanne les processus de l'hôte et élimine impérativement tout binaire ou commande contenant <code>dvc-viewer</code>.
+   - Exécuté systématiquement au démarrage de <code>execute_job</code>, dans le bloc <code>finally</code> de fin d'exécution de job (que le job soit en succès, en échec ou expiré), ainsi que dans la route de cancellation du job (<code>/cancel/&lt;job_id&gt;</code>).
+2. <strong>Zombie GC Watchdog (<code>gc_orchestrator.py</code>)</strong> :
+   - Scan et élimination active de tout processus <code>dvc-viewer</code> sur l'hôte si aucun conteneur de job n'est actif sur le worker, assurant une hygiène absolue et continue des ressources.</p>
+<h2 id="3-garde-fous-systemiques-avances-auto-guerison-issue-94">3. Garde-fous Systémiques Avancés &amp; Auto-Guérison (Issue #94)</h2>
+<p>Pour éradiquer définitivement les processus orphelins (<code>worker_agent.py</code> manuels) et les conteneurs Docker enfants qui continuent de s'exécuter indéfiniment après l'arrêt d'un job, nous avons implémenté trois garde-fous systèmes majeurs en mai 2026.</p>
+<h3 id="a-verrou-dinstance-unique-single-instance-lock">A. Verrou d'Instance Unique (Single Instance Lock)</h3>
+<p>Afin d'éviter tout conflit de sockets, de ports (ex. port 6000) et de versions entre plusieurs instances de <code>worker_agent.py</code> s'exécutant simultanément (ex: démarrage automatique par systemd et lancement manuel par un chercheur), un verrouillage exclusif physique a été mis en place :
+- <strong>Mécanisme</strong> : L'agent tente d'acquérir de manière bloquante un verrou d'écriture exclusif sur un fichier lock physique localisé dans le répertoire temporaire de l'OS (<code>/tmp/cluster-worker.lock</code> sous Linux / macOS, ou <code>TEMP/cluster-worker.lock</code> sous Windows).
+- <strong>Implémentation multi-plateforme</strong> : Utilisation du module standard <code>fcntl</code> (<code>flock</code>) pour les systèmes UNIX, et bascule transparente vers <code>msvcrt</code> pour Windows.
+- <strong>Fail-Fast</strong> : Si une autre instance de l'agent détient déjà le verrou, la nouvelle instance s'arrête instantanément avec un message d'erreur clair et descriptif dans les logs, empêchant toute interférence chaotique.</p>
+<h3 id="b-graceful-shutdown-signal-trap">B. Graceful Shutdown &amp; Signal Trap</h3>
+<p>Les redémarrages brutaux de service (via systemd ou par l'administrateur) provoquaient auparavant la déconnexion instantanée de l'agent principal, laissant les conteneurs Docker enfants (<code>cluster-job-*</code> et <code>cluster-viewer-*</code>) s'exécuter à l'infini.
+- <strong>Mécanisme</strong> : Capture et gestion propre et thread-safe des signaux système d'arrêt (<code>SIGTERM</code>, <code>SIGINT</code>, et <code>SIGHUP</code> s'il est supporté).
+- <strong>Routines de nettoyage</strong> : Dès réception d'un signal, l'agent déclenche immédiatement :
+  1. <strong>Purge des Conteneurs</strong> : Destruction forcée et immédiate de tous les conteneurs Docker associés au job en cours (<code>docker rm -f</code>).
+  2. <strong>Arrêt du Processus Local</strong> : Destruction de l'arbre complet du processus runner local (<code>psutil.Process.kill()</code>).
+  3. <strong>Notification Réseau</strong> : Envoi immédiat d'une mise à jour de statut <code>failed</code> (code de sortie <code>-15</code> correspondant au signal) au Headnode pour libérer proprement le slot en base de données.
+  4. <strong>Libération du Verrou</strong> : Libération propre du verrou physique et suppression du fichier lock.</p>
+<h3 id="c-self-healing-daemon-routine-dauto-guerison-active">C. Self-Healing Daemon (Routine d'Auto-Guérison Active)</h3>
+<p>Pour garantir une sécurité ultime sans reposer uniquement sur la bonne communication réseau de l'agent, un daemon d'auto-guérison s'exécute de façon périodique et autonome en tâche de fond sur chaque worker :
+- <strong>Fréquence</strong> : Audit complet toutes les 60 secondes.
+- <strong>Algorithme d'Auto-Guérison</strong> :
+  1. <strong>Détection</strong> : L'agent interroge l'API Docker locale pour lister tous les conteneurs actifs commençant par les préfixes <code>cluster-job-</code> et <code>cluster-viewer-</code>.
+  2. <strong>Vérification de l'activité locale</strong> : Si un conteneur correspond au job actif actuellement exécuté par le worker local, il est préservé.
+  3. <strong>Vérification Réseau (Headnode)</strong> : Pour tout autre conteneur (orphelin d'une ancienne session ou d'une interruption), l'agent appelle le Headnode (<code>/job_status/{job_id}</code>).
+     - Si le Headnode retourne un statut terminal (<code>completed</code> ou <code>failed</code>), ou un statut <code>404</code> (job supprimé ou inexistant), le conteneur local est identifié comme un <strong>zombie</strong> et est immédiatement détruit de force.
+     - Si le Headnode retourne un statut <code>pending</code> ou <code>assigned</code> mais affecté à un autre worker (<code>worker_id</code> différent), le conteneur local est également détruit de force.
+     - <strong>Fail-Safe Réseau</strong> : Si le Headnode est temporairement injoignable (coupure réseau, maintenance), aucun conteneur n'est supprimé afin d'éviter les faux positifs destructeurs.
+  4. <strong>Limite Absolue de Durée de Vie</strong> : Tout conteneur de job s'exécutant sur l'hôte depuis plus de 24 heures (mesuré via sa date de création extraite par <code>docker inspect</code>) est considéré comme expiré et est auto-détruit immédiatement de manière autonome par le worker, sans attendre d'ordre externe.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

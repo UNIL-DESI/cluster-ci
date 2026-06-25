@@ -1,0 +1,1404 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Cluster-CI GPU-accelerated computing platform.">
+      
+      
+      
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/ci_queue/">
+      
+      
+        <link rel="prev" href="../dvc/">
+      
+      
+        <link rel="next" href="../dashboard/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>CI & Queue Scheduler - Cluster-CI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="light-green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ci-pipeline-and-queue-scheduling-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Cluster-CI" class="md-header__button md-logo" aria-label="Cluster-CI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Cluster-CI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CI & Queue Scheduler
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="light-green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="light-green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../onboarding/" class="md-tabs__link">
+          
+  
+  
+  User Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../index_architecture/" class="md-tabs__link">
+          
+  
+  
+  Developer Docs
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Cluster-CI" class="md-nav__button md-logo" aria-label="Cluster-CI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Cluster-CI
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../client/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command-Line Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dvc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DVC & Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI & Queue Scheduler
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI & Queue Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-job-lifecycle-in-the-ci-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Job Lifecycle in the CI Queue
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-hard-constraints-eligibility-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Hard Constraints (Eligibility Rules)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Hard Constraints (Eligibility Rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-branch-exclusivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A. Branch Exclusivity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-physical-ram-headroom-os-reserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B. Physical RAM Headroom (OS Reserve)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-physical-vram-allocation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C. Physical VRAM Allocation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d-allowed-workers-whitelist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D. Allowed Workers Whitelist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-soft-constraints-data-locality-scheduling-scores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Soft Constraints (Data Locality &amp; Scheduling Scores)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-jit-worker-sanitization-vram-resource-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ollama-vram-purge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama VRAM Purge
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jit-host-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JIT Host Cleaning
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-security-watchdogs-auto-cancellation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Security Watchdogs &amp; Auto-Cancellation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Security Watchdogs &amp; Auto-Cancellation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#max_runtime_hours-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MAX_RUNTIME_HOURS Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-healing-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Healing Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggressive Auto-Cancellation Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support & Contributions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_preflight/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preflight
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_vllm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vLLM Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index_tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks & Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-job-lifecycle-in-the-ci-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Job Lifecycle in the CI Queue
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-hard-constraints-eligibility-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Hard Constraints (Eligibility Rules)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Hard Constraints (Eligibility Rules)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-branch-exclusivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A. Branch Exclusivity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-physical-ram-headroom-os-reserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B. Physical RAM Headroom (OS Reserve)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-physical-vram-allocation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C. Physical VRAM Allocation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d-allowed-workers-whitelist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D. Allowed Workers Whitelist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-soft-constraints-data-locality-scheduling-scores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Soft Constraints (Data Locality &amp; Scheduling Scores)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-jit-worker-sanitization-vram-resource-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ollama-vram-purge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama VRAM Purge
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jit-host-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JIT Host Cleaning
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-security-watchdogs-auto-cancellation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Security Watchdogs &amp; Auto-Cancellation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Security Watchdogs &amp; Auto-Cancellation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#max_runtime_hours-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MAX_RUNTIME_HOURS Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-healing-watchdog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Healing Watchdog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggressive Auto-Cancellation Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="ci-pipeline-and-queue-scheduling-guide">CI Pipeline and Queue Scheduling Guide</h1>
+<p>Cluster-CI orchestrates workload execution through an automated CI pipeline and a central queue scheduler. This guide explains how jobs are queued, evaluated, allocated to workers, and safely cleaned up.</p>
+<hr />
+<h2 id="1-job-lifecycle-in-the-ci-queue">1. Job Lifecycle in the CI Queue</h2>
+<p>When you trigger a run using the <code>cluster-run</code> client, the job flows through the following stages:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Local Client] -&gt; (Shadow Push) -&gt; [GitHub Actions Runner] -&gt; (API Submit) -&gt; [Headnode Queue]
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                                                                   |
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                                                           (Scheduler Loop)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                                                                   |
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>[Post-Run Sync] &lt;- (Git Push) &lt;- [Worker Job Container] &lt;- (JIT Clean) &lt;- [Worker Selected]
+</span></code></pre></div>
+<ol>
+<li><strong>Submission</strong>: The client pushes a shadow commit to GitHub. This triggers the GitHub Actions workflow, which sends an API request to the headnode's <code>/submit_job</code> endpoint containing job metadata.</li>
+<li><strong>Queue Placement</strong>: The job is stored in a database queue with a <code>pending</code> status.</li>
+<li><strong>Scheduling Evaluation</strong>: Every 5 seconds, the headnode scheduler runs an evaluation loop. It matches pending jobs against available online workers based on hard constraints and data locality scores.</li>
+<li><strong>Worker Dispatch</strong>: The selected worker downloads the job parameters, runs a series of JIT sanitization steps, starts the Docker execution container, and streams the logs.</li>
+<li><strong>Teardown &amp; Push</strong>: Once completed, the worker commits updated metrics/plots, pushes them back to Git, and releases its resources.</li>
+</ol>
+<hr />
+<h2 id="2-hard-constraints-eligibility-rules">2. Hard Constraints (Eligibility Rules)</h2>
+<p>A worker must satisfy all the following hard constraints to be eligible for a job. If no worker meets these requirements, the job remains in the queue.</p>
+<h3 id="a-branch-exclusivity">A. Branch Exclusivity</h3>
+<p>To prevent race conditions, write conflicts on the DVC remote, and Git push collisions, <strong>only one active job (either running or assigned) is allowed per repository + branch combination</strong>. </p>
+<h3 id="b-physical-ram-headroom-os-reserve">B. Physical RAM Headroom (OS Reserve)</h3>
+<p>Memory footprint evaluation is strict. A worker is eligible only if:
+$$\text{Total Worker RAM (GB)} - 8.0 \ge \text{Requested RAM (GB)}$$</p>
+<ul>
+<li><strong>The 8 GB Headroom Rule</strong>: Cluster-CI strictly reserves 8 GB of RAM for the worker's host operating system, Docker daemon, and monitoring agents. This headroom is crucial on system architectures with unified memory (like NVIDIA Grace Blackwell GB10) to prevent kernel out-of-memory (OOM) freezes.</li>
+<li><strong>Example</strong>: If a worker has 128 GB of total RAM, the maximum allocatable RAM for a single job is $128 - 8 = 120\text{ GB}$. If you request <code>REQUIRED_RAM=125GB</code> in your <code>.cluster-ci</code> file, the job will be blocked in the queue indefinitely.</li>
+</ul>
+<h3 id="c-physical-vram-allocation">C. Physical VRAM Allocation</h3>
+<p>The target worker must have a physical GPU with:
+$$\text{Worker VRAM (GB)} \ge \text{Requested VRAM (GB)}$$
+If you do not specify a VRAM constraint, it defaults to 0 (allowing execution on CPU-only nodes if available).</p>
+<h3 id="d-allowed-workers-whitelist">D. Allowed Workers Whitelist</h3>
+<p>If your <code>.cluster-ci</code> configuration specifies <code>allowed_workers</code> (a list of hostnames), the scheduler filters out any worker whose hostname is not in the whitelist. This lets you target specific GPU architectures (e.g. GB10 Blackwell vs RTX 3090).</p>
+<hr />
+<h2 id="3-soft-constraints-data-locality-scheduling-scores">3. Soft Constraints (Data Locality &amp; Scheduling Scores)</h2>
+<p>When multiple workers satisfy the hard constraints, the scheduler computes a score to select the best worker.</p>
+<ol>
+<li><strong>DVC Cache Locality Scoring</strong>:<ul>
+<li>The headnode inspects your job's <code>dvc.lock</code> and parses the list of required MD5 hashes.</li>
+<li>It queries each eligible worker's <code>/check_cache</code> endpoint.</li>
+<li>The worker counts how many of those MD5 files are already present in its local DVC cache (<code>.dvc/cache/files/md5</code>).</li>
+<li>The worker's locality score is equal to the number of cache hits. The worker with the highest score wins.</li>
+</ul>
+</li>
+<li><strong>Headnode Malus</strong>:<ul>
+<li>A penalty of <strong>-1</strong> is subtracted from the headnode's locality score.</li>
+<li>This deprioritizes scheduling jobs on the node hosting the scheduler, preserving headnode CPU cycles for API handling and database management.</li>
+</ul>
+</li>
+<li><strong>P2P Remote Injection</strong>:<ul>
+<li>If the winning worker lacks some of the dataset files, the scheduler searches for the best peer worker (holding a score &gt; 0).</li>
+<li>It injects the peer worker's <code>/fetch_artifact</code> endpoint into the executing worker's environment as <code>DVC_REMOTE_P2P_URL</code>.</li>
+<li>The worker pulls missing files directly from its neighbor at high speed over the LAN instead of pulling from Google Drive.</li>
+</ul>
+</li>
+</ol>
+<hr />
+<h2 id="4-jit-worker-sanitization-vram-resource-recovery">4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)</h2>
+<p>Before starting the Docker container for a job, the worker agent executes automated host cleaning routines:</p>
+<h3 id="ollama-vram-purge">Ollama VRAM Purge</h3>
+<p>On Blackwell GB10 workers, researchers often run local large language model (LLM) instances using Ollama. To prevent VRAM fragmentation and guarantee that 100% of the GPU memory is available to your job:
+*   The worker agent queries any active Ollama service on the default ports (11434 and 11435).
+*   It issues an unload command to the Ollama API (<code>/api/generate</code>) with <code>keep_alive: 0</code>.
+*   This immediately unloads all active LLMs from VRAM in <strong>less than 5 seconds</strong>, freeing up all VRAM before the job container starts.</p>
+<h3 id="jit-host-cleaning">JIT Host Cleaning</h3>
+<p>The agent scans the host system and forcefully terminates:
+*   Zombie or orphaned containers named <code>cluster-job-*</code> or <code>cluster-viewer-*</code>.
+*   Orphaned host processes associated with previous runs (such as residual <code>dvc-viewer</code> instances or <code>gc_orchestrator</code> tasks).
+*   Any process binding to custom ports requested by previous jobs.</p>
+<hr />
+<h2 id="5-security-watchdogs-auto-cancellation">5. Security Watchdogs &amp; Auto-Cancellation</h2>
+<h3 id="max_runtime_hours-watchdog">MAX_RUNTIME_HOURS Watchdog</h3>
+<p>Every job must specify <code>MAX_RUNTIME_HOURS</code> in its <code>.cluster-ci</code> configuration (maximum value: 24).
+*   A runtime watchdog tracks the job's duration.
+*   If the execution exceeds this limit, the worker agent kills the Docker container and stops the job.</p>
+<h3 id="self-healing-watchdog">Self-Healing Watchdog</h3>
+<p>The worker agent runs a background loop that polls the headnode's <code>/job_status/{job_id}</code> endpoint every few seconds.
+*   If the job's state is changed to <code>cancelled</code> or <code>stopped</code> on the headnode (e.g. by a user clicking "Cancel" on the dashboard), the worker's watchdog detects it.
+*   It kills the local Docker container, stops the processes, runs JIT cleanup, and releases the VRAM/RAM allocation immediately.</p>
+<h3 id="aggressive-auto-cancellation-rules">Aggressive Auto-Cancellation Rules</h3>
+<p>To optimize cluster resources, Cluster-CI applies the following cancellation rules upon new submissions:</p>
+<p>=== "Draft Branches (<code>cluster-draft/*</code>)"
+    *   <strong>Rule</strong>: <strong>One active job per researcher</strong> across the entire cluster.
+    *   <strong>Behavior</strong>: When a researcher pushes a new draft commit, the scheduler searches for <em>any</em> active job (pending or running) associated with that user's GitHub username across <strong>all repositories</strong>. All previous runs are cancelled and terminated.</p>
+<p>=== "Standard Branches (<code>main</code>, <code>feature/*</code>)"
+    *   <strong>Rule</strong>: <strong>One pending job per branch</strong>.
+    *   <strong>Behavior</strong>: When a new commit is pushed, the scheduler identifies older jobs on the <strong>same repository and same branch</strong> that are still in the <code>pending</code> queue. These pending jobs are cancelled. Jobs that have already started running are allowed to complete.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
