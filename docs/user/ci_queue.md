@@ -74,12 +74,12 @@ Before starting the Docker container for a job, the worker agent executes automa
 ### Ollama VRAM Purge
 On Blackwell GB10 workers, researchers often run local large language model (LLM) instances using Ollama. To prevent VRAM fragmentation and guarantee that 100% of the GPU memory is available to your job:
 *   The worker agent queries any active Ollama service on the default ports (11434 and 11435).
-*   It issues a unload command to the Ollama API (`/api/generate`) with `keep_alive: 0`.
+*   It issues an unload command to the Ollama API (`/api/generate`) with `keep_alive: 0`.
 *   This immediately unloads all active LLMs from VRAM in **less than 5 seconds**, freeing up all VRAM before the job container starts.
 
 ### JIT Host Cleaning
 The agent scans the host system and forcefully terminates:
-*   Zombies or orphan containers named `cluster-job-*` or `cluster-viewer-*`.
+*   Zombie or orphaned containers named `cluster-job-*` or `cluster-viewer-*`.
 *   Orphaned host processes associated with previous runs (such as residual `dvc-viewer` instances or `gc_orchestrator` tasks).
 *   Any process binding to custom ports requested by previous jobs.
 
