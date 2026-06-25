@@ -88,9 +88,9 @@ cd ~/cluster-ci
 Cluster CI is based on GitOps principles. Instead of the agent trying to maintain a continuous interactive session on the remote machine (a structural issue with the Joules Agent on long research jobs), execution is delegated to a self-hosted GitHub Actions runner installed as a `systemd` service on the machine.
 
 **Execution Flow**:
-1. **Pull Request**: Joules (the coding agent) pushes changes to a GitHub PR.
-2. **CI Trigger**: GitHub Actions hooks into the self-hosted runner.
-3. **Orchestration**: The setup script switches to an untracked local cache directory (`repositories/$ORG/$REPO_NAME`), performs a `git fetch` and a forced `git checkout` of the branch (to keep DVC state intact across branches).
+1. **Pull Request**: Joules (the coding agent) pushes changes to a GitHub branch or tag.
+2. **CI Trigger**: GitHub Actions triggers when the `cluster-run` tag is pushed to the repository (via the local `cluster-run` CLI).
+3. **Orchestration**: The setup script switches to an untracked local cache directory (`repositories/$ORG/$REPO_NAME`), performs a `git fetch` and a forced `git checkout` of the tag/branch (to keep DVC state intact across branches).
 4. **Execution**: The orchestrator detects the `.cluster-ci` file, prepares the environment via `uv sync`, and runs `uv run dvc repro` with the provided arguments.
 5. **Authentication**: The runner silently injects credentials (Google Drive) by sourcing the global cluster `.env` and `.env.secrets` files.
 6. **CI Feedback**: Joules receives native failure and success notifications via GitHub PR integration.
