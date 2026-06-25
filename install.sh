@@ -76,7 +76,7 @@ if [[ "$ROLE" == "headnode" || "$ROLE" == "worker" ]]; then
         git clone "$REPO_URL" "$INSTALL_DIR"
     else
         echo "📂 Updating repository in $INSTALL_DIR..."
-        cd "$INSTALL_DIR" && git pull && cd - > /dev/null
+        cd "$INSTALL_DIR" && git reset --hard && git clean -fd && git pull && cd - > /dev/null
     fi
 
     # 2. .env configuration (selective update)

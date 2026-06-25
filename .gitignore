@@ -33,3 +33,6 @@ build/
 
 # Cluster-CI run logs
 .cluster-ci-logs/
+
+# Python egg-info
+*.egg-info/
