@@ -3,7 +3,7 @@ set -e
 
 if [ "$#" -lt 2 ]; then
     echo "Usage: $0 <owner/repo> <branch_name>"
-    echo "Exemple: $0 hjamet/llm-as-recommender main"
+    echo "Example: $0 hjamet/llm-as-recommender main"
     exit 1
 fi
 
