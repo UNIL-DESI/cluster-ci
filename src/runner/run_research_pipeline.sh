@@ -21,6 +21,19 @@ if [ -z "$CALLER_COMMIT_SHA" ]; then
 fi
 export CALLER_COMMIT_SHA
 
+if [ "$CLI_TARGET_BRANCH" = "cluster-run" ]; then
+    echo "Detecting original draft branch for tag cluster-run in caller repository..."
+    git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" --quiet || true
+    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+    if [ -n "$DRAFT_BRANCH" ]; then
+        echo "Resolved draft branch: $DRAFT_BRANCH"
+        CLI_TARGET_BRANCH="$DRAFT_BRANCH"
+    else
+        echo "Error: Failed to resolve original draft branch for tag cluster-run. Cannot proceed." >&2
+        exit 1
+    fi
+fi
+
 # Go to cluster-ci project root
 SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
 BASE_DIR="$( cd "$( dirname "$SCRIPT_PATH" )/../.." >/dev/null 2>&1 && pwd )"
@@ -59,19 +72,6 @@ function log_error() {
 
 TARGET_REPO=${CLI_TARGET_REPO:-$TARGET_REPO}
 TARGET_BRANCH=${CLI_TARGET_BRANCH:-$TARGET_BRANCH}
-
-if [ "$TARGET_BRANCH" = "cluster-run" ]; then
-    log_info "Detecting original draft branch for tag cluster-run..."
-    git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" --quiet || true
-    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
-    if [ -n "$DRAFT_BRANCH" ]; then
-        log_info "Resolved draft branch: $DRAFT_BRANCH"
-        TARGET_BRANCH="$DRAFT_BRANCH"
-    else
-        log_error "Failed to resolve original draft branch for tag cluster-run. Cannot proceed."
-        exit 1
-    fi
-fi
 
 # Prioritize local GITHUB_PAT or GH_TOKEN from local environment files over the CLI token argument
 if [ -n "$GITHUB_PAT" ]; then
