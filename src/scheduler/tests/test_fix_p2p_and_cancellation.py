@@ -12,6 +12,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from persistence import init_db, get_db_conn
 import headnode_service
 import scheduler_loop
+if "HEADNODE_URL" not in os.environ:
+    os.environ["HEADNODE_URL"] = "http://localhost:5000"
 import worker_agent
 
 class TestFixP2PAndCancellation(unittest.TestCase):
@@ -114,13 +116,13 @@ class TestFixP2PAndCancellation(unittest.TestCase):
             cursor.execute('''
                 INSERT INTO jobs (job_id, repo, branch, username, status)
                 VALUES (?, ?, ?, ?, 'running')
-            ''', ("active-job-1", "owner/repo", "main", "henri"))
+            ''', ("active-job-1", "owner/repo", "cluster-draft/test_user", "henri"))
             conn.commit()
 
         # 2. Submit a new job on the exact same branch and user
         payload = {
             "repo": "owner/repo",
-            "branch": "main",
+            "branch": "cluster-draft/test_user",
             "username": "henri",
             "ram_required_gb": 4.0
         }
@@ -133,7 +135,7 @@ class TestFixP2PAndCancellation(unittest.TestCase):
             new_job_id = resp.json['job_id']
 
         # Verify cancel_job_cleanly was called for active-job-1
-        mock_cancel.assert_called_with("active-job-1", exit_code=-15)
+        mock_cancel.assert_called_with("active-job-1", exit_code=-15, reason=unittest.mock.ANY)
 
         # Verify new job has env_vars populated with CLUSTER_CANCELLED_RUNS
         with get_db_conn() as conn:

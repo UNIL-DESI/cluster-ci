@@ -40,8 +40,38 @@ if [ -f "$BASE_DIR/.env.secrets" ]; then
     set +a
 fi
 
+# Log utilities defined early to support logs during early setup/delegation steps.
+function log_info() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ℹ️  $1"
+}
+
+function log_warn() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ⚠️  $1"
+}
+
+function log_success() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ✅ $1"
+}
+
+function log_error() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
+}
+
 TARGET_REPO=${CLI_TARGET_REPO:-$TARGET_REPO}
 TARGET_BRANCH=${CLI_TARGET_BRANCH:-$TARGET_BRANCH}
+
+if [ "$TARGET_BRANCH" = "cluster-run" ]; then
+    log_info "Detecting original draft branch for tag cluster-run..."
+    git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" --quiet || true
+    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+    if [ -n "$DRAFT_BRANCH" ]; then
+        log_info "Resolved draft branch: $DRAFT_BRANCH"
+        TARGET_BRANCH="$DRAFT_BRANCH"
+    else
+        log_error "Failed to resolve original draft branch for tag cluster-run. Cannot proceed."
+        exit 1
+    fi
+fi
 
 # Prioritize local GITHUB_PAT or GH_TOKEN from local environment files over the CLI token argument
 if [ -n "$GITHUB_PAT" ]; then
@@ -127,25 +157,6 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
 fi
 
 REPO_WORK_DIR="repositories/$TARGET_REPO"
-
-# Log files are captured directly by the worker agent at the process level.
-# Avoiding global bash tee redirection prevents any buffering delays.
-
-function log_info() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ℹ️  $1"
-}
-
-function log_warn() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ⚠️  $1"
-}
-
-function log_success() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ✅ $1"
-}
-
-function log_error() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
-}
 
 # Graceful kill with timeout fallback to SIGKILL
 _kill_with_timeout() {
