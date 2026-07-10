@@ -2,6 +2,39 @@
 
 Cet index répertorie l'ensemble des tâches de conception, de développement et de maintenance de la Roadmap du projet.
 
+---
+
+## Support & Contribution Rules
+
+The Cluster-CI system is designed, implemented, and maintained by **hjamet**. If you encounter bugs, performance bottlenecks, or want to suggest new features, you are encouraged to open a GitHub Issue.
+
+### The Golden Rule of the Roadmap
+To keep the project roadmap structured and aligned with development targets:
+> ⚠️ **"No GitHub Issue = No line in the Roadmap"**
+
+Before adding any task to the Roadmap section of the project's README, a corresponding GitHub Issue must be created on the repository.
+
+### Mandatory GitHub Issue Template
+Every issue must follow this structure:
+```markdown
+# [Task Title]
+
+## 1. Contexte & Discussion (Narratif)
+- Detailed summary of why we need this feature or how the bug occurs.
+- Decision history.
+
+## 2. Fichiers Concernés
+- List of files to modify or inspect (e.g. `src/scheduler/worker_agent.py`).
+
+## 3. Objectifs (Definition of Done)
+- High-level deliverables.
+- Focus on end results, not implementation plans or pseudo-code.
+```
+
+---
+
+## Task Index
+
 | Titre de la note | Courte Description | Dernière modif | Tag |
 |------------------|-------------------|----------------|-----|
 | [Client Script](tasks/client_script.md) | Script d'installation automatique côté client et intégration du CLI | 2026-05-19 | `Up to date` |

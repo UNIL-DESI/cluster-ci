@@ -1,39 +1,10 @@
-# Support, Error Resolution, and Contributions
+# Support & Troubleshooting
 
-This section provides troubleshooting guidelines for runtime errors, explains the Git pre-flight check system, and describes how to request support or contribute new features.
-
----
-
-## 1. Support & Contribution Rules
-
-The Cluster-CI system is designed, implemented, and maintained by **hjamet**. If you encounter bugs, performance bottlenecks, or want to suggest new features, you are encouraged to open a GitHub Issue.
-
-### The Golden Rule of the Roadmap
-To keep the project roadmap structured and aligned with development targets:
-> ⚠️ **"No GitHub Issue = No line in the Roadmap"**
-
-Before adding any task to the Roadmap section of the project's README, a corresponding GitHub Issue must be created on the repository.
-
-### Mandatory GitHub Issue Template
-Every issue must follow this structure:
-```markdown
-# [Task Title]
-
-## 1. Contexte & Discussion (Narratif)
-- Detailed summary of why we need this feature or how the bug occurs.
-- Decision history.
-
-## 2. Fichiers Concernés
-- List of files to modify or inspect (e.g. `src/scheduler/worker_agent.py`).
-
-## 3. Objectifs (Definition of Done)
-- High-level deliverables.
-- Focus on end results, not implementation plans or pseudo-code.
-```
+This section provides troubleshooting guidelines for runtime errors and explains the Git pre-flight check system.
 
 ---
 
-## 2. Error Resolution Reference Table
+## 1. Error Resolution Reference Table
 
 When a job fails, the CLI client and Web Dashboard display an exit code. Use the table below to diagnose and resolve common failures:
 
@@ -46,7 +17,7 @@ When a job fails, the CLI client and Web Dashboard display an exit code. Use the
 
 ---
 
-## 3. Local Git Pre-Commit Scanner (Pre-Flight Checks)
+## 2. Local Git Pre-Commit Scanner (Pre-Flight Checks)
 
 To prevent broken environments or incompatible dependencies from reaching the cluster workers, the client installation injects a pre-commit hook (`.git/hooks/pre-commit`) that runs `.cluster-ci-tools/validate_pyproject.py` locally.
 

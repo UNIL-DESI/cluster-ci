@@ -99,5 +99,5 @@ with open("artifacts/random_table.csv", "w", newline="") as f:
         writer.writerow([epoch, loss, accuracy])
 
 print("✅ Research pipeline completed successfully! Artifacts written to artifacts/")
-# Force DVC rerun: 2
+# Force DVC rerun: 4
 

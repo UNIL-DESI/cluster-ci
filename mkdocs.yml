@@ -35,8 +35,10 @@ nav:
       - Docker Containers: user/containers.md
       - CI & Queue Scheduler: user/ci_queue.md
       - Monitoring Dashboard: user/dashboard.md
-      - Support & Contributions: user/support.md
-      - Administration: user/administration.md
+      - Support & Troubleshooting: user/support.md
+  - Platform Administration:
+      - System Administration: admin/administration.md
+      - Infrastructure Internals: admin/infrastructure_internals.md
   - Developer Docs:
       - Architecture: index_architecture.md
       - Dashboard: index_dashboard.md

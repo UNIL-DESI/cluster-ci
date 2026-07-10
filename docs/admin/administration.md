@@ -68,3 +68,50 @@ To ensure resilience, the scheduler and worker agents rely on several critical e
 * `HEADNODE_URL`: The base URL of the headnode scheduler API (e.g., `http://10.0.0.1:5000`).
 * `GC_FREE_SPACE_THRESHOLD_GB`: Minimum free disk space in GB on the worker before tiered garbage collection is triggered (defaults to 100).
 * `DVC_VIEWER_TIMEOUT_MIN`: Idle timeout in minutes for DVC visualizer instances before they are automatically terminated (defaults to 30).
+
+---
+
+## 4. CI SSH Configuration
+
+The GitHub Actions orchestrator needs access to the physical cluster headnode to submit jobs on behalf of researchers.
+
+1.  The project administrator configures a dedicated SSH private key as a GitHub Repository Secret named `CLUSTER_SSH_PRIVATE_KEY`.
+2.  This key matches the public key authorized on the cluster's headnode, allowing the GHA runner to execute `submit_job.py` and communicate with `/api/jobs` endpoint securely.
+
+---
+
+## 5. Passwordless Inter-Worker SSH (RSA Headless Setup)
+
+To facilitate distributed computing and peer-to-peer (P2P) artifact sharing, the cluster workers require passwordless SSH communication between each other.
+
+*   **Key Generation**: During worker provisioning, a standard RSA key pair without a passphrase is created:
+    ```bash
+    ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+    ```
+*   **Authorization Distribution**: The public key (`~/.ssh/id_rsa.pub`) of each worker must be appended to the `~/.ssh/authorized_keys` file of all other workers in the cluster.
+*   **Host Key Verification**: To prevent interactive prompts blocking automated jobs, add the hostkeys or configure `StrictHostKeyChecking accept-new` in the worker configuration:
+    ```text
+    Host 10.0.0.*
+        StrictHostKeyChecking accept-new
+        IdentityFile ~/.ssh/id_rsa
+    ```
+
+---
+
+## 6. Google Drive Authorization for DVC Storage
+
+Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC artifact caching. The credentials must be pre-authorized on each worker host so that headless Docker containers can pull/push artifacts without interactive OAuth prompts.
+
+### Standard Headless Authorization Process:
+
+1.  **Generate Credentials Locally**:
+    On a machine with a web browser, initialize the Google Drive authentication flow:
+    ```bash
+    uv run dvc remote modify my_gdrive_remote auth gdrive
+    ```
+2.  **Perform OAuth Authentication**:
+    DVC will display a link. Open this URL in your web browser, log in with your authorized institutional Google account, and grant the required permissions.
+3.  **Retrieve Token**:
+    Copy the authorization code from the browser and paste it back into the terminal. This creates a local token cache file containing the refresh token.
+4.  **Deploy Credentials on Workers**:
+    The resulting token must be deployed on each worker host via the `.env` / `.env.secrets` configuration files. The worker agents automatically mount these credentials at runtime, ensuring DVC commands (`dvc pull`, `dvc push`) run with full permissions inside containers.
