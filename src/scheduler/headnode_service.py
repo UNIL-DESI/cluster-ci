@@ -331,7 +331,8 @@ def submit_job():
 
     # Cancel identified jobs cleanly outside the active insertion transaction to prevent SQLite locks
     if jobs_to_cancel:
-        app.logger.info(f"📋 [AUTO-CANCEL] Cancelling {len(jobs_to_cancel)} job(s): {', '.join(f'{jid} ({cancel_reasons.get(jid, '?')})' for jid in jobs_to_cancel)}")
+        cancel_details = ', '.join(f"{jid} ({cancel_reasons.get(jid, '?')})" for jid in jobs_to_cancel)
+        app.logger.info(f"📋 [AUTO-CANCEL] Cancelling {len(jobs_to_cancel)} job(s): {cancel_details}")
     else:
         app.logger.info(f"📋 [AUTO-CANCEL] No jobs to cancel")
     for j_id in jobs_to_cancel:
