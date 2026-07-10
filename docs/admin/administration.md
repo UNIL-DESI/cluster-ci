@@ -115,3 +115,11 @@ Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC a
     Copy the authorization code from the browser and paste it back into the terminal. This creates a local token cache file containing the refresh token.
 4.  **Deploy Credentials on Workers**:
     The resulting token must be deployed on each worker host via the `.env` / `.env.secrets` configuration files. The worker agents automatically mount these credentials at runtime, ensuring DVC commands (`dvc pull`, `dvc push`) run with full permissions inside containers.
+
+---
+
+## 7. Scheduling Queue and Job Dispatch Flow
+
+Below is the schema outlining how jobs enter the execution queue, how placement constraints are evaluated by the scheduler, and how workers are allocated to execution slots.
+
+![Scheduling Queue](../assets/images/scheduling_queue.png)

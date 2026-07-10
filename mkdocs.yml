@@ -35,6 +35,7 @@ nav:
       - Docker Containers: user/containers.md
       - CI & Queue Scheduler: user/ci_queue.md
       - Monitoring Dashboard: user/dashboard.md
+      - Configuration Reference: user/configuration.md
       - Support & Troubleshooting: user/support.md
   - Platform Administration:
       - System Administration: admin/administration.md
@@ -50,6 +51,8 @@ nav:
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
@@ -57,4 +60,6 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - tables

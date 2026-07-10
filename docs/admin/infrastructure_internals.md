@@ -4,6 +4,14 @@ This document provides detailed technical documentation on the internal mechanis
 
 ---
 
+## Architecture Overview
+
+Below is the high-level technical architecture of the Cluster-CI platform showing the interaction between the headnode, the workers, GitHub Actions, and the remote storages.
+
+![Cluster Architecture](../assets/images/cluster_architecture.png)
+
+---
+
 ## 1. Garbage Collection
 
 The cluster implements a multi-tiered garbage collection system to manage disk space on worker nodes. The primary orchestrator is `src/runner/gc_orchestrator.py`.
@@ -135,3 +143,11 @@ The cluster implements an asynchronous watchdog (`src/runner/dvc_watchdog.sh`) t
     *   **Staging changes**: Stages `dvc.lock` if modified. It reads `dvc.yaml` to identify all metrics/plots files configured with `cache: false`.
     *   **Size Constraint**: If a metric file is `< 5 MiB` and has local modifications, it is staged via `git add -f <path>`. Files `>= 5 MiB` are skipped to protect repository size.
     *   **Push Reconciliation**: Commits the files under `cluster-ci-bot` (`bot@cluster-ci.io`) with `[skip ci]` tags. It then runs `git push origin HEAD`. If the push fails, it executes `git pull --rebase` to resolve remote updates, pushes again, and aborts (`git rebase --abort`) if conflicts cannot be resolved.
+
+---
+
+## 5. Data Flow and Code-to-Artifact Lifecycle
+
+The diagram below details the data flow, showing how repositories are checked out, how DVC caches are symlinked and synchronized, and how outputs are pushed back to remote storage.
+
+![Data Flow Diagram](../assets/images/data_flow_diagram.png)

@@ -4,6 +4,19 @@ The Cluster-CI Web Dashboard provides real-time monitoring and visualization of 
 
 ---
 
+## Accessing the Dashboard
+
+The dashboard is available at:
+
+**🔗 [http://130.223.73.209:5000/](http://130.223.73.209:5000/)**
+
+!!! warning "VPN Required"
+    The dashboard is hosted on the cluster's head node, which is only accessible from the **UNIL internal network**. You must be connected to the **VPN UNIL** before opening the link. If the page does not load, verify your VPN connection.
+
+No login is required — the dashboard is read-only and accessible to all members of the UNIL-DESI organization.
+
+---
+
 ## 1. Live Infrastructure & Job Monitoring
 
 The main dashboard view is divided into three monitoring panels:

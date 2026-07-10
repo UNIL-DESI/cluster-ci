@@ -70,4 +70,42 @@ Google Drive authentication is managed automatically and silently by the cluster
 
 ---
 
-Once you have completed this onboarding, you are ready to install the client-side CLI and run your first job. Proceed to the **[Command-Line Client Guide](client.md)**.
+## 5. Configure Your Project
+
+Before running your first job, you need to set up two files at the root of your repository:
+
+### `.cluster-ci` — Hardware & Runtime Settings
+
+This file was created automatically by the install script. It controls how much RAM, VRAM, and time your job can use. Open it and adjust the values to match your needs:
+
+```ini
+REQUIRED_RAM=2GB
+REQUIRED_VRAM=24GB
+MAX_RUNTIME_HOURS=4
+```
+
+→ See the **[Configuration Reference](configuration.md)** for a complete list of all available parameters.
+
+### `dvc.yaml` — Experiment Pipeline
+
+Define the steps of your experiment in a `dvc.yaml` file. The cluster executes these steps automatically:
+
+```yaml
+stages:
+  train:
+    cmd: python3 src/train.py --epochs 10
+    deps:
+      - src/train.py
+    outs:
+      - models/model.pt
+    metrics:
+      - reports/eval.json: {cache: false}
+    plots:
+      - reports/loss.png: {cache: false}
+```
+
+→ See the **[DVC & Storage Guide](dvc.md)** for detailed instructions.
+
+---
+
+Once you have completed this onboarding, you are ready to run your first job. Proceed to the **[Command-Line Client Guide](client.md)**.

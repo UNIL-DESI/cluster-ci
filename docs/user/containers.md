@@ -1,45 +1,34 @@
 # Docker Containers & Compute Environments
 
-Cluster-CI runs all pipeline jobs inside Docker containers to guarantee isolation, reproducibility, and JIT environment cleanup. This guide details how the container runtime is configured, what pre-installed environments are available, and how to customize them for heavy training libraries like **Unsloth** or specific **PyTorch** versions.
+All pipeline jobs run inside Docker containers to guarantee isolation and reproducibility. This guide explains the default environment, how to customize it, and special considerations for heavy ML libraries.
 
 ---
 
-## 1. The "Golden Image" (NVIDIA NGC PyTorch)
+## 1. Default Environment (NVIDIA NGC PyTorch)
 
-To avoid compiling heavy compute packages (like PyTorch, torchvision, or CUDA kernels) during job execution—which is slow on x86_64 and often fails on ARM64 workers—the cluster defaults to a pre-compiled, highly optimized **"Golden Image"**.
-
-![Cluster Architecture](../assets/images/cluster_architecture.png)
+The cluster provides a pre-compiled, GPU-optimized base image so you don't need to compile PyTorch or CUDA from source:
 
 *   **Default Image**: `nvcr.io/nvidia/pytorch:26.05-py3`
-*   **Software Stack**:
-    *   **Python**: 3.12
-    *   **PyTorch**: 2.12+ (NVIDIA build)
-    *   **CUDA**: 13.2
-    *   **Libraries**: Includes NVIDIA TensorRT, cuDNN, NCCL, and optimized mathematical libraries out of the box.
+*   **Python**: 3.12
+*   **PyTorch**: 2.12+ (NVIDIA optimized build)
+*   **CUDA**: 13.2
+*   **Included**: TensorRT, cuDNN, NCCL, and optimized mathematical libraries.
 
-### Dynamic Dependency Injection
-When a job starts, the orchestrator bypasses standard virtual environments (`.venv`) and installs the dependencies listed in your `pyproject.toml` directly into the container's system Python using `uv pip install --system`. 
+### How Your Dependencies Are Installed
+When a job starts, the cluster installs the packages from your `pyproject.toml` directly into the container using `uv pip install --system`. This ensures your custom packages run on top of the pre-optimized NVIDIA PyTorch binary.
 
-This ensures your custom packages (like `tqdm`, `transformers`, or `pandas`) run directly on top of the pre-optimized NVIDIA PyTorch binary.
+To speed up repeated runs, the cluster **caches your installed packages**. If your dependency files (`pyproject.toml`, `uv.lock`, `requirements.txt`) haven't changed since the last run, the installation step is skipped entirely.
 
-### Composite Dependency Hashing
-The `src/runner/smart_install.sh` shell script implements a **Composite Dependency Hashing** mechanism to speed up container launch times by skipping redundant dependency installations.
-
-1.  **Hash Calculation**: The function `compute_deps_hash()` aggregates all files defining Python project dependencies: `pyproject.toml`, `uv.lock` (if present), `requirements.txt` (if present), and `setup.py` (if present). It computes a composite MD5 hash:
-    `md5sum $files 2>/dev/null | md5sum | cut -d' ' -f1`
-2.  **State Verification**: The resulting hash is compared against the value stored in the persistent Docker home volume at `/home/user/.cluster-ci-deps-hash`.
-3.  **Sanity Check Bypass**: If the current and cached hashes match, the script performs a quick sanity check to verify that Python packages are actually installed by looking for `.dist-info` directories in `/home/user/.local/lib/python3.*/site-packages` or `dist-packages`. If the sanity check passes, it exits with `0`, bypassing the installation entirely. If packages are missing, it deletes the hash file and triggers a full dependency install.
-
-!!! note "Internal Details"
-    The container runtime also includes protective mechanisms (NGC Library Shadowing Protection, vLLM NVSHMEM Stub Symlinking, bitsandbytes CUDA Compatibility Patch) that run transparently. For technical details, see the [Infrastructure Internals](../admin/infrastructure_internals.md#3-container-hardening) documentation.
+??? note "Internal Details"
+    The container runtime includes protective mechanisms (NGC Library Shadowing Protection, vLLM NVSHMEM Stub Symlinking, bitsandbytes CUDA Compatibility Patch) that run transparently. Dependency caching uses a composite MD5 hash of your dependency files. For technical details, see the [Infrastructure Internals](../admin/infrastructure_internals.md#3-container-hardening) documentation.
 
 ---
 
-## 2. Overriding the Docker Image in `.cluster-ci`
+## 2. Overriding the Docker Image
 
-If your project requires a different base environment, or a specific pre-built image (e.g. for a specific version of a framework), you can override the Docker settings directly in the `.cluster-ci` file at the root of your repository.
+If your project requires a different base environment, you can override the Docker settings in your [`.cluster-ci` configuration file](configuration.md).
 
-The platform is **architecture-aware** and allows both global and per-architecture overrides:
+The platform supports both **global** and **per-architecture** overrides:
 
 ```ini
 # Global overrides (applies to both AMD64 and ARM64 workers)
@@ -50,32 +39,23 @@ DOCKER_FLAGS=--env-file=custom.env
 # Architecture-specific overrides (takes priority on matching workers)
 DOCKER_IMAGE_ARM64=nvcr.io/nvidia/pytorch:26.05-py3
 DOCKER_IMAGE_AMD64=my-custom-registry/my-project-image-amd64:latest
-
-DOCKER_PLATFORM_ARM64=linux/arm64
-DOCKER_PLATFORM_AMD64=linux/amd64
-
-DOCKER_FLAGS_ARM64=--cap-add=SYS_NICE
-DOCKER_FLAGS_AMD64=--shm-size=16g
 ```
-
-### Supported Parameters
 
 | Parameter | Description |
 | :--- | :--- |
 | `DOCKER_IMAGE` / `_ARM64` / `_AMD64` | The Docker image tag to pull and run. |
-| `DOCKER_PLATFORM` / `_ARM64` / `_AMD64` | Injects the `--platform` flag (e.g. `linux/arm64` or `linux/amd64`). |
-| `DOCKER_FLAGS` / `_ARM64` / `_AMD64` | Arbitrary flags passed directly to `docker run` (e.g., capability flags, custom mounts). |
+| `DOCKER_PLATFORM` / `_ARM64` / `_AMD64` | The `--platform` flag (e.g. `linux/arm64`). |
+| `DOCKER_FLAGS` / `_ARM64` / `_AMD64` | Arbitrary flags passed directly to `docker run`. |
+
+→ See the [Configuration Reference](configuration.md) for the full parameter list.
 
 ---
 
 ## 3. Unsloth & LLM Fine-Tuning Setup
 
-[Unsloth](https://github.com/unslothai/unsloth) is a popular library for accelerating LLM fine-tuning (up to 2x faster, 70% less memory). However, it has strict installation requirements: it must match specific versions of PyTorch, Triton, and CUDA, and compiling it from source on ARM64 workers (Blackwell) can be difficult.
+[Unsloth](https://github.com/unslothai/unsloth) accelerates LLM fine-tuning (up to 2x faster, 70% less memory) but has strict installation requirements. We recommend using a **custom pre-built Docker image** rather than installing it at runtime.
 
-### Recommended Approach
-To use Unsloth on the cluster, we recommend using a **custom pre-built Docker image** rather than installing it JIT via `pyproject.toml`.
-
-1.  **Build a custom Docker image** inheriting from the NVIDIA PyTorch NGC container:
+1.  **Build a custom image** inheriting from the NVIDIA PyTorch container:
     ```dockerfile
     FROM nvcr.io/nvidia/pytorch:26.05-py3
 
@@ -84,7 +64,7 @@ To use Unsloth on the cluster, we recommend using a **custom pre-built Docker im
     RUN pip install --no-cache-dir --no-deps xformers "trl<0.9.0" peft accelerate datasets
     ```
 2.  **Push the image** to your registry (e.g. GitHub Container Registry).
-3.  **Configure `.cluster-ci`** in your repository to use this custom image:
+3.  **Configure `.cluster-ci`** to use it:
     ```ini
     REQUIRED_RAM=24GB
     REQUIRED_VRAM=24GB
@@ -94,12 +74,8 @@ To use Unsloth on the cluster, we recommend using a **custom pre-built Docker im
 
 ---
 
-## 4. Shared Memory & Data Loader Optimizations
+## 4. Shared Memory & Data Loader Settings
 
-PyTorch `DataLoader` workers use shared memory (`/dev/shm`) to pass tensors between processes. By default, Docker allocates only **64 MB** of shared memory, which causes PyTorch to crash with a bus error (`SIGBUS`) when using `num_workers > 0`.
+PyTorch `DataLoader` workers use shared memory (`/dev/shm`) to pass tensors between processes. By default, Docker allocates only 64 MB, which causes crashes with `num_workers > 0`.
 
-### Platform Defaults
-To solve this, Cluster-CI **automatically injects** the following configurations for all containers:
-*   `--ipc=host`: This mounts the host's IPC namespace inside the container.
-*   This grants the container access to **50% of the host physical memory** as shared memory `/dev/shm`.
-*   **Note**: Legacy `.cluster-ci` options like `SHARED_MEMORY` are obsolete and ignored, as `--ipc=host` solves this issue natively and safely.
+**The cluster handles this automatically** by injecting `--ipc=host` for all containers, giving your job access to 50% of the host's physical memory as shared memory. No configuration is needed on your part.
