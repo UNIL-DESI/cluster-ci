@@ -254,6 +254,26 @@
     
     
       <li class="md-tabs__item">
+        <a href="admin/administration/" class="md-tabs__link">
+          
+  
+  
+  Platform Administration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
         <a href="index_architecture/" class="md-tabs__link">
           
   
@@ -382,6 +402,17 @@
     <span class="md-ellipsis">
       
         🔬 User Guides (For Researchers)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#platform-administration-for-system-administrators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚙️ Platform Administration (For System Administrators)
       
     </span>
   </a>
@@ -657,35 +688,7 @@
   <span class="md-ellipsis">
     
   
-    Support & Contributions
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="user/administration/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Administration
+    Support & Troubleshooting
   
 
     
@@ -736,7 +739,7 @@
   <span class="md-ellipsis">
     
   
-    Developer Docs
+    Platform Administration
   
 
     
@@ -749,6 +752,121 @@
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Platform Administration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="admin/administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Administration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="admin/infrastructure_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1011,6 +1129,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#platform-administration-for-system-administrators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚙️ Platform Administration (For System Administrators)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#developer-docs-for-platform-maintainers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1059,21 +1188,26 @@
 <p>The core philosophy of Cluster-CI is to bridge the gap between local development environments and physical high-performance computing (HPC) nodes. By combining standard Git workflows, <strong>Data Version Control (DVC)</strong>, and an intelligent HTTP-based Peer-to-Peer (P2P) artifact distribution network, researchers can submit jobs directly from their local terminal, monitor them in real-time via a web dashboard, and receive results automatically.</p>
 <hr />
 <h2 id="documentation-structure">Documentation Structure</h2>
-<p>The documentation is split into two primary tracks, depending on your role and objectives:</p>
+<p>The documentation is organized into three tracks, depending on your role and objectives:</p>
 <h3 id="user-guides-for-researchers">🔬 User Guides (For Researchers)</h3>
 <p>If you are a researcher or data scientist looking to run experiments on the cluster, start here. These guides cover client-side setup, job submission, data tracking, and monitoring:</p>
 <ul>
-<li><strong><a href="user/onboarding/">Onboarding Guide</a></strong>: Learn how to join the GitHub organization, configure SSH keys for secure access, set up inter-worker passwordless SSH, and authenticate Google Drive for DVC storage.</li>
+<li><strong><a href="user/onboarding/">Onboarding Guide</a></strong>: Learn how to join the GitHub organization, set up your SSH key, install the CLI client, configure GitHub Secrets, and submit your first job.</li>
 <li><strong><a href="user/client/">Command-Line Client (<code>cluster-run</code>)</a></strong>: Guide on installing the client environment, understanding the "Shadow Commit" mechanism, streaming execution logs in real-time, recovering orphaned jobs, and avoiding line-ending corruption.</li>
 <li><strong><a href="user/dvc/">DVC &amp; Storage Management</a></strong>: Master the crucial distinction between heavy cached outputs (<code>outs</code>/<code>deps</code> via P2P HTTP CAS) and lightweight tracked parameters (<code>metrics</code>/<code>plots</code> via Git Sync).</li>
 <li><strong><a href="user/containers/">Docker Containers &amp; Environments</a></strong>: Details about the default PyTorch base image, customizing docker run flags, and configuring fine-tuning environments like Unsloth.</li>
 <li><strong><a href="user/ci_queue/">CI Pipeline &amp; Queue Scheduler</a></strong>: Deep dive into the scheduling loop, branch exclusivity, physical RAM/VRAM constraints, local data caching scores, and JIT worker sanitization (Ollama VRAM unloading).</li>
 <li><strong><a href="user/dashboard/">Monitoring Dashboard</a></strong>: How to navigate the real-time web interface, use the foldable artifact tree with bottom-up search, browse version histories grouped by MD5 hash, and inspect Hydra configurations.</li>
-<li><strong><a href="user/support/">Support &amp; Contributions</a></strong>: Contains the error code lookup table (OOM 137, cancellations, worker crashes), pre-commit scanner guidelines, and GitHub issue template.</li>
-<li><strong><a href="user/administration/">Cluster Administration</a></strong>: Guide on RunnerManager slots, system prerequisites (sudoers, systemd watchdog), and Maintenance Mode API.</li>
+<li><strong><a href="user/support/">Support &amp; Troubleshooting</a></strong>: Contains the error code lookup table (OOM 137, cancellations, worker crashes) and pre-commit scanner guidelines.</li>
+</ul>
+<h3 id="platform-administration-for-system-administrators">⚙️ Platform Administration (For System Administrators)</h3>
+<p>If you are a system administrator responsible for maintaining the cluster infrastructure:</p>
+<ul>
+<li><strong><a href="admin/administration/">System Administration</a></strong>: Guide on RunnerManager slots, system prerequisites (sudoers, systemd watchdog), Maintenance Mode API, CI SSH configuration, inter-worker SSH provisioning, and Google Drive authorization.</li>
+<li><strong><a href="admin/infrastructure_internals/">Infrastructure Internals</a></strong>: Technical documentation on the garbage collection algorithm, historical DVC visualizer, container hardening mechanisms, and runtime watchdogs.</li>
 </ul>
 <h3 id="developer-docs-for-platform-maintainers">🛠️ Developer Docs (For Platform Maintainers)</h3>
-<p>If you are a system administrator, DevOps engineer, or developer maintaining the Cluster-CI platform, these technical specifications detail the cluster internals and microservices:</p>
+<p>If you are a DevOps engineer or developer maintaining the Cluster-CI platform, these technical specifications detail the cluster internals and microservices:</p>
 <ul>
 <li><strong>Architecture &amp; Executions</strong>: Detailed documentation on the <a href="architecture/docker_arm_strategy/">Docker ARM64 Execution Strategy</a>, <a href="architecture/resilient_logging/">Resilient Logging Systems</a>, and <a href="architecture/zombie_prevention/">Zombie Process Prevention</a>.</li>
 <li><strong>Scheduling &amp; Resource Management</strong>: In-depth explanations of the <a href="scheduler/deployment_and_reconciliation_protocol/">Deployment and Reconciliation Protocol</a>, <a href="scheduler/physical_resource_reconciliation/">Physical Resource Reconciliation</a>, and <a href="scheduler/resilience_and_chaos_testing/">Resilience &amp; Chaos Testing</a>.</li>
@@ -1084,7 +1218,7 @@
 <h2 id="quick-start-for-researchers">Quick Start for Researchers</h2>
 <p>To get your environment up and running in less than 5 minutes:</p>
 <ol>
-<li>Configure your GitHub SSH credentials by reading the <strong><a href="user/onboarding/">Onboarding Guide</a></strong>.</li>
+<li>Join the GitHub organization and configure your SSH key by reading the <strong><a href="user/onboarding/">Onboarding Guide</a></strong>.</li>
 <li>Install the unified CLI client in your local repository by following the <strong><a href="user/client/">Client Installation Guide</a></strong>:
     <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </span></code></pre></div></li>

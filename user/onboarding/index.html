@@ -256,6 +256,26 @@
     
     
       <li class="md-tabs__item">
+        <a href="../../admin/administration/" class="md-tabs__link">
+          
+  
+  
+  Platform Administration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
         <a href="../../index_architecture/" class="md-tabs__link">
           
   
@@ -452,10 +472,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-joining-the-github-organization-project-cloning" class="md-nav__link">
+  <a href="#1-joining-the-github-organization-creating-your-research-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Joining the GitHub Organization &amp; Project Cloning
+        1. Joining the GitHub Organization &amp; Creating Your Research Repository
       
     </span>
   </a>
@@ -463,22 +483,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-configuring-ssh-access-keys" class="md-nav__link">
+  <a href="#2-configuring-your-personal-ssh-key" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Configuring SSH Access &amp; Keys
+        2. Configuring Your Personal SSH Key
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Configuring SSH Access &amp; Keys">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-github-repository-secrets-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. GitHub Repository Secrets (Environment Variables)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. GitHub Repository Secrets (Environment Variables)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-personal-ssh-key-configuration" class="md-nav__link">
+  <a href="#how-to-add-a-secret" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Personal SSH Key Configuration
+        How to Add a Secret
       
     </span>
   </a>
@@ -486,21 +517,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b-ci-ssh-configuration" class="md-nav__link">
+  <a href="#how-secrets-are-injected" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. CI SSH Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#c-passwordless-inter-worker-ssh-rsa-headless-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        C. Passwordless Inter-Worker SSH (RSA Headless Setup)
+        How Secrets Are Injected
       
     </span>
   </a>
@@ -513,30 +533,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-google-drive-authorization-for-silent-dvc-storage" class="md-nav__link">
+  <a href="#4-google-drive-no-configuration-needed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Google Drive Authorization for Silent DVC Storage
+        4. Google Drive — No Configuration Needed
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="3. Google Drive Authorization for Silent DVC Storage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#standard-headless-authorization-process" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Standard Headless Authorization Process:
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -703,35 +706,7 @@
   <span class="md-ellipsis">
     
   
-    Support & Contributions
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../administration/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Administration
+    Support & Troubleshooting
   
 
     
@@ -782,7 +757,7 @@
   <span class="md-ellipsis">
     
   
-    Developer Docs
+    Platform Administration
   
 
     
@@ -795,6 +770,121 @@
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Platform Administration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/administration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Administration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/infrastructure_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Docs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1034,10 +1124,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-joining-the-github-organization-project-cloning" class="md-nav__link">
+  <a href="#1-joining-the-github-organization-creating-your-research-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Joining the GitHub Organization &amp; Project Cloning
+        1. Joining the GitHub Organization &amp; Creating Your Research Repository
       
     </span>
   </a>
@@ -1045,22 +1135,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-configuring-ssh-access-keys" class="md-nav__link">
+  <a href="#2-configuring-your-personal-ssh-key" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Configuring SSH Access &amp; Keys
+        2. Configuring Your Personal SSH Key
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Configuring SSH Access &amp; Keys">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-github-repository-secrets-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. GitHub Repository Secrets (Environment Variables)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. GitHub Repository Secrets (Environment Variables)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-personal-ssh-key-configuration" class="md-nav__link">
+  <a href="#how-to-add-a-secret" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Personal SSH Key Configuration
+        How to Add a Secret
       
     </span>
   </a>
@@ -1068,21 +1169,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b-ci-ssh-configuration" class="md-nav__link">
+  <a href="#how-secrets-are-injected" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. CI SSH Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#c-passwordless-inter-worker-ssh-rsa-headless-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        C. Passwordless Inter-Worker SSH (RSA Headless Setup)
+        How Secrets Are Injected
       
     </span>
   </a>
@@ -1095,30 +1185,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-google-drive-authorization-for-silent-dvc-storage" class="md-nav__link">
+  <a href="#4-google-drive-no-configuration-needed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Google Drive Authorization for Silent DVC Storage
+        4. Google Drive — No Configuration Needed
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="3. Google Drive Authorization for Silent DVC Storage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#standard-headless-authorization-process" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Standard Headless Authorization Process:
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1140,59 +1213,55 @@
 
 
 <h1 id="researcher-onboarding-guide">Researcher Onboarding Guide</h1>
-<p>Welcome to the Cluster-CI platform. This guide walks you through the step-by-step onboarding process to set up your credentials, configure secure communications, and authenticate data storage backends.</p>
+<p>Welcome to the Cluster-CI platform. This guide walks you through the step-by-step onboarding process to set up your credentials, install the CLI client, and configure your repository for running experiments on the cluster.</p>
 <hr />
-<h2 id="1-joining-the-github-organization-project-cloning">1. Joining the GitHub Organization &amp; Project Cloning</h2>
+<h2 id="1-joining-the-github-organization-creating-your-research-repository">1. Joining the GitHub Organization &amp; Creating Your Research Repository</h2>
 <p>Cluster-CI leverages GitHub for authentication, access control, and GitOps job scheduling.</p>
 <ol>
 <li><strong>Request Organization Membership</strong>: Contact your administrator (hjamet) to receive an invitation to the <strong>UNIL-DESI</strong> GitHub organization.</li>
 <li><strong>Accept the Invitation</strong>: Check your email or visit <a href="https://github.com/UNIL-DESI">github.com/UNIL-DESI</a> to accept the invitation.</li>
-<li><strong>Clone the Repository</strong>: Once added, clone the main cluster repository to your local machine:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>git@github.com:UNIL-DESI/cluster-ci.git
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>cluster-ci
-</span></code></pre></div></li>
-</ol>
-<hr />
-<h2 id="2-configuring-ssh-access-keys">2. Configuring SSH Access &amp; Keys</h2>
-<p>Secure Shell (SSH) is used for secure communications between your local client, the GitHub Actions runners, and the physical cluster nodes.</p>
-<h3 id="a-personal-ssh-key-configuration">A. Personal SSH Key Configuration</h3>
-<p>To push code and interact with the repository, ensure your public SSH key is registered under your personal GitHub settings:
-1.  Generate a secure key pair if you do not have one:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ed25519<span class="w"> </span>-C<span class="w"> </span><span class="s2">&quot;your_email@example.com&quot;</span>
-</span></code></pre></div>
-2.  Add your public key (<code>~/.ssh/id_ed25519.pub</code>) to your GitHub account: <strong>Settings -&gt; SSH and GPG keys -&gt; New SSH Key</strong>.</p>
-<h3 id="b-ci-ssh-configuration">B. CI SSH Configuration</h3>
-<p>The GitHub Actions orchestrator needs access to the physical cluster headnode to submit jobs on your behalf.
-1.  The project administrator configures a dedicated SSH private key as a GitHub Repository Secret named <code>CLUSTER_SSH_PRIVATE_KEY</code>.
-2.  This key matches the public key authorized on the cluster's headnode, allowing the GHA runner to execute <code>submit_job.py</code> and communicate with <code>/api/jobs</code> endpoint securely.</p>
-<h3 id="c-passwordless-inter-worker-ssh-rsa-headless-setup">C. Passwordless Inter-Worker SSH (RSA Headless Setup)</h3>
-<p>To facilitate distributed computing and peer-to-peer (P2P) artifact sharing, the cluster workers require passwordless SSH communication between each other.
-*   <strong>Key Generation</strong>: During worker provisioning, a standard RSA key pair without a passphrase is created:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>rsa<span class="w"> </span>-b<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/id_rsa<span class="w"> </span>-N<span class="w"> </span><span class="s2">&quot;&quot;</span>
-</span></code></pre></div>
-*   <strong>Authorization Distribution</strong>: The public key (<code>~/.ssh/id_rsa.pub</code>) of each worker must be appended to the <code>~/.ssh/authorized_keys</code> file of all other workers in the cluster.
-*   <strong>Host Key Verification</strong>: To prevent interactive prompts blocking automated jobs, add the hostkeys or configure <code>StrictHostKeyChecking accept-new</code> in the worker configuration:
-    <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Host 10.0.0.*
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    StrictHostKeyChecking accept-new
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    IdentityFile ~/.ssh/id_rsa
+<li><strong>Create Your Research Repository</strong>: Create a <strong>new repository</strong> on the UNIL-DESI organization for your research project (or clone your own existing research repo locally).</li>
+<li>
+<p><strong>Install the Cluster-CI Client</strong>: Open your terminal at the root of your local repository and run the install script:</p>
+<p>=== "Linux / macOS"
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </span></code></pre></div></p>
-<hr />
-<h2 id="3-google-drive-authorization-for-silent-dvc-storage">3. Google Drive Authorization for Silent DVC Storage</h2>
-<p>Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC artifact caching. To allow automated, non-interactive (headless) executions on the cluster to pull/push artifacts, Google Drive API authentication must be authorized.</p>
-<p>Since cluster runs execute in headless Docker containers, <strong>interactive OAuth logins (<code>gdrive</code> browser prompts) are prohibited at runtime</strong>. The credentials must be pre-authorized.</p>
-<h3 id="standard-headless-authorization-process">Standard Headless Authorization Process:</h3>
-<ol>
-<li><strong>Generate Credentials Locally</strong>:
-    On your local machine, initialize the Google Drive authentication flow:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>dvc<span class="w"> </span>remote<span class="w"> </span>modify<span class="w"> </span>my_gdrive_remote<span class="w"> </span>auth<span class="w"> </span>gdrive
-</span></code></pre></div></li>
-<li><strong>Perform OAuth Authentication</strong>:
-    DVC will display a link. Open this URL in your web browser, log in with your authorized institutional Google account, and grant the required permissions.</li>
-<li><strong>Retrieve Token</strong>:
-    Copy the authorization code from the browser and paste it back into your local terminal. This creates a local token cache file containing the refresh token.</li>
-<li><strong>Silent Credentials Injection on Workers</strong>:
-    The cluster worker agents automatically mount the pre-authorized organization token or fetch the secret token injected from the repository secrets (<code>GDRIVE_CREDENTIALS_DATA</code>) at runtime. This configures the file <code>~/.config/dvc/providers/gdrive/...</code> silently, ensuring DVC commands (<code>dvc pull</code>, <code>dvc push</code>) run with full permissions without requiring user interaction.</li>
+<p>=== "Windows"
+    Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</span></code></pre></div></p>
+<p>This script injects the GitHub Actions workflow (<code>.github/workflows/cluster-ci.yml</code>), the <code>.cluster-ci</code> configuration file, the pre-commit hook, and the <code>cluster-run</code> CLI into your repository.</p>
+</li>
 </ol>
+<hr />
+<h2 id="2-configuring-your-personal-ssh-key">2. Configuring Your Personal SSH Key</h2>
+<p>To push code and interact with your repository on GitHub, ensure your public SSH key is registered under your personal GitHub settings:</p>
+<ol>
+<li>Generate a secure key pair if you do not have one:
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ed25519<span class="w"> </span>-C<span class="w"> </span><span class="s2">&quot;your_email@example.com&quot;</span>
+</span></code></pre></div></li>
+<li>Add your public key (<code>~/.ssh/id_ed25519.pub</code>) to your GitHub account: <strong>Settings -&gt; SSH and GPG keys -&gt; New SSH Key</strong>.</li>
+</ol>
+<hr />
+<h2 id="3-github-repository-secrets-environment-variables">3. GitHub Repository Secrets (Environment Variables)</h2>
+<p>If your pipeline needs external credentials (e.g. HuggingFace tokens, GCP service account keys, API tokens), you can securely inject them as environment variables via <strong>GitHub Repository Secrets</strong>.</p>
+<h3 id="how-to-add-a-secret">How to Add a Secret</h3>
+<ol>
+<li>Go to your research repository on GitHub.</li>
+<li>Navigate to <strong>Settings → Secrets and variables → Actions</strong>.</li>
+<li>Click <strong>New repository secret</strong>.</li>
+<li>Enter a name (e.g. <code>HF_TOKEN</code>, <code>GCP_CREDENTIALS</code>, <code>WANDB_API_KEY</code>) and paste the secret value.</li>
+</ol>
+<h3 id="how-secrets-are-injected">How Secrets Are Injected</h3>
+<p><strong>All Repository Secrets you define are automatically injected as environment variables</strong> inside the Docker container when your pipeline runs on the cluster. For example, if you create a secret named <code>HF_TOKEN</code>, your Python code can access it via:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">hf_token</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">]</span>
+</span></code></pre></div>
+<p>The injected workflow (<code>cluster-ci.yml</code>) passes all secrets to the cluster using <code>ALL_GITHUB_SECRETS: ${{ toJSON(secrets) }}</code>, and the orchestrator (<code>submit_job.py</code>) parses and injects each secret as an environment variable in the execution container. The only secret excluded from injection is <code>GITHUB_TOKEN</code>, which is automatically managed by GitHub.</p>
+<hr />
+<h2 id="4-google-drive-no-configuration-needed">4. Google Drive — No Configuration Needed</h2>
+<p>Google Drive authentication is managed automatically and silently by the cluster workers. No configuration is required on your part — the workers have pre-authorized credentials that handle all DVC push/pull operations to Google Drive transparently.</p>
+<hr />
 <p>Once you have completed this onboarding, you are ready to install the client-side CLI and run your first job. Proceed to the <strong><a href="../client/">Command-Line Client Guide</a></strong>.</p>
 
 
