@@ -681,6 +681,34 @@
   
   
     <li class="md-nav__item">
+      <a href="user/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="user/support/" class="md-nav__link">
         
   
@@ -1184,46 +1212,47 @@
 
 
 <h1 id="welcome-to-cluster-ci-documentation">Welcome to Cluster-CI Documentation</h1>
-<p>Cluster-CI is an enterprise-grade, GPU-accelerated computing cluster designed specifically for training deep learning models, running large language model (LLM) inference, and executing scientific computing pipelines. Powered by state-of-the-art <strong>NVIDIA Grace Blackwell GB10 GPUs (128GB Unified Memory)</strong> and running on <strong>Ubuntu 24.04</strong>, the cluster delivers high-performance compute resources with a GitOps-driven workflow.</p>
-<p>The core philosophy of Cluster-CI is to bridge the gap between local development environments and physical high-performance computing (HPC) nodes. By combining standard Git workflows, <strong>Data Version Control (DVC)</strong>, and an intelligent HTTP-based Peer-to-Peer (P2P) artifact distribution network, researchers can submit jobs directly from their local terminal, monitor them in real-time via a web dashboard, and receive results automatically.</p>
+<p>Cluster-CI is a GPU-accelerated computing cluster designed for training deep learning models, running LLM inference, and executing scientific computing pipelines. Powered by <strong>NVIDIA Grace Blackwell GB10 GPUs (128 GB Unified Memory)</strong> and running on <strong>Ubuntu 24.04</strong>, the cluster lets you submit jobs directly from your terminal, monitor them via a web dashboard, and receive results automatically.</p>
 <hr />
 <h2 id="documentation-structure">Documentation Structure</h2>
-<p>The documentation is organized into three tracks, depending on your role and objectives:</p>
+<p>The documentation is organized into three tracks, depending on your role:</p>
 <h3 id="user-guides-for-researchers">🔬 User Guides (For Researchers)</h3>
-<p>If you are a researcher or data scientist looking to run experiments on the cluster, start here. These guides cover client-side setup, job submission, data tracking, and monitoring:</p>
+<p>If you are a researcher looking to run experiments on the cluster, start here:</p>
 <ul>
-<li><strong><a href="user/onboarding/">Onboarding Guide</a></strong>: Learn how to join the GitHub organization, set up your SSH key, install the CLI client, configure GitHub Secrets, and submit your first job.</li>
-<li><strong><a href="user/client/">Command-Line Client (<code>cluster-run</code>)</a></strong>: Guide on installing the client environment, understanding the "Shadow Commit" mechanism, streaming execution logs in real-time, recovering orphaned jobs, and avoiding line-ending corruption.</li>
-<li><strong><a href="user/dvc/">DVC &amp; Storage Management</a></strong>: Master the crucial distinction between heavy cached outputs (<code>outs</code>/<code>deps</code> via P2P HTTP CAS) and lightweight tracked parameters (<code>metrics</code>/<code>plots</code> via Git Sync).</li>
-<li><strong><a href="user/containers/">Docker Containers &amp; Environments</a></strong>: Details about the default PyTorch base image, customizing docker run flags, and configuring fine-tuning environments like Unsloth.</li>
-<li><strong><a href="user/ci_queue/">CI Pipeline &amp; Queue Scheduler</a></strong>: Deep dive into the scheduling loop, branch exclusivity, physical RAM/VRAM constraints, local data caching scores, and JIT worker sanitization (Ollama VRAM unloading).</li>
-<li><strong><a href="user/dashboard/">Monitoring Dashboard</a></strong>: How to navigate the real-time web interface, use the foldable artifact tree with bottom-up search, browse version histories grouped by MD5 hash, and inspect Hydra configurations.</li>
-<li><strong><a href="user/support/">Support &amp; Troubleshooting</a></strong>: Contains the error code lookup table (OOM 137, cancellations, worker crashes) and pre-commit scanner guidelines.</li>
+<li><strong><a href="user/onboarding/">Onboarding Guide</a></strong>: Join the GitHub organization, set up your SSH key, install the CLI client, and configure your repository.</li>
+<li><strong><a href="user/client/">Command-Line Client (<code>cluster-run</code>)</a></strong>: Install the CLI, submit jobs, stream logs in real-time, and retrieve results.</li>
+<li><strong><a href="user/dvc/">DVC &amp; Storage Guide</a></strong>: Learn how to define your experiment pipeline in <code>dvc.yaml</code> and how results are synced back to you.</li>
+<li><strong><a href="user/containers/">Docker Containers &amp; Environments</a></strong>: Understand the default PyTorch environment, customize Docker images, and set up libraries like Unsloth.</li>
+<li><strong><a href="user/ci_queue/">CI Pipeline &amp; Queue Scheduler</a></strong>: How jobs are queued, scheduled across workers, and cancelled automatically.</li>
+<li><strong><a href="user/dashboard/">Monitoring Dashboard</a></strong>: Navigate the real-time web dashboard to monitor jobs, browse artifacts, and inspect experiment results.</li>
+<li><strong><a href="user/configuration/">Configuration Reference (<code>.cluster-ci</code>)</a></strong>: Complete reference for all hardware, runtime, and Docker parameters.</li>
+<li><strong><a href="user/support/">Support &amp; Troubleshooting</a></strong>: Error code lookup table and pre-commit scanner guidelines.</li>
 </ul>
 <h3 id="platform-administration-for-system-administrators">⚙️ Platform Administration (For System Administrators)</h3>
 <p>If you are a system administrator responsible for maintaining the cluster infrastructure:</p>
 <ul>
-<li><strong><a href="admin/administration/">System Administration</a></strong>: Guide on RunnerManager slots, system prerequisites (sudoers, systemd watchdog), Maintenance Mode API, CI SSH configuration, inter-worker SSH provisioning, and Google Drive authorization.</li>
-<li><strong><a href="admin/infrastructure_internals/">Infrastructure Internals</a></strong>: Technical documentation on the garbage collection algorithm, historical DVC visualizer, container hardening mechanisms, and runtime watchdogs.</li>
+<li><strong><a href="admin/administration/">System Administration</a></strong>: RunnerManager slots, prerequisites, Maintenance Mode, SSH configuration, and Google Drive authorization.</li>
+<li><strong><a href="admin/infrastructure_internals/">Infrastructure Internals</a></strong>: Garbage collection, container hardening, data locality scoring, P2P transfers, and runtime watchdogs.</li>
 </ul>
 <h3 id="developer-docs-for-platform-maintainers">🛠️ Developer Docs (For Platform Maintainers)</h3>
-<p>If you are a DevOps engineer or developer maintaining the Cluster-CI platform, these technical specifications detail the cluster internals and microservices:</p>
+<p>If you are a developer maintaining the Cluster-CI platform, these specifications detail the cluster internals:</p>
 <ul>
-<li><strong>Architecture &amp; Executions</strong>: Detailed documentation on the <a href="architecture/docker_arm_strategy/">Docker ARM64 Execution Strategy</a>, <a href="architecture/resilient_logging/">Resilient Logging Systems</a>, and <a href="architecture/zombie_prevention/">Zombie Process Prevention</a>.</li>
-<li><strong>Scheduling &amp; Resource Management</strong>: In-depth explanations of the <a href="scheduler/deployment_and_reconciliation_protocol/">Deployment and Reconciliation Protocol</a>, <a href="scheduler/physical_resource_reconciliation/">Physical Resource Reconciliation</a>, and <a href="scheduler/resilience_and_chaos_testing/">Resilience &amp; Chaos Testing</a>.</li>
-<li><strong>Security &amp; Compliance</strong>: <a href="security/risk_analysis/">Security Threat Modeling &amp; Risk Analysis</a> for the multi-tenant cluster environment.</li>
-<li><strong>Internals &amp; Tasks</strong>: Step-by-step developer guides on <a href="tasks/client_script/">Client Script internals</a>, <a href="tasks/concurrency_management/">Concurrency Management</a>, <a href="tasks/deploy_local_cluster/">Local Cluster Deployment</a>, <a href="tasks/dvc_auth/">DVC Auth</a>, and more.</li>
+<li><strong>Architecture &amp; Executions</strong>: <a href="architecture/docker_arm_strategy/">Docker ARM64 Strategy</a>, <a href="architecture/resilient_logging/">Resilient Logging</a>, <a href="architecture/zombie_prevention/">Zombie Prevention</a>.</li>
+<li><strong>Scheduling &amp; Resources</strong>: <a href="scheduler/deployment_and_reconciliation_protocol/">Deployment Protocol</a>, <a href="scheduler/physical_resource_reconciliation/">Resource Reconciliation</a>, <a href="scheduler/resilience_and_chaos_testing/">Chaos Testing</a>.</li>
+<li><strong>Security</strong>: <a href="security/risk_analysis/">Threat Modeling &amp; Risk Analysis</a>.</li>
+<li><strong>Internals &amp; Tasks</strong>: <a href="tasks/client_script/">Client Script</a>, <a href="tasks/concurrency_management/">Concurrency</a>, <a href="tasks/deploy_local_cluster/">Local Deployment</a>, <a href="tasks/dvc_auth/">DVC Auth</a>, and more.</li>
 </ul>
 <hr />
 <h2 id="quick-start-for-researchers">Quick Start for Researchers</h2>
-<p>To get your environment up and running in less than 5 minutes:</p>
+<p>Get your environment up and running in less than 5 minutes:</p>
 <ol>
-<li>Join the GitHub organization and configure your SSH key by reading the <strong><a href="user/onboarding/">Onboarding Guide</a></strong>.</li>
-<li>Install the unified CLI client in your local repository by following the <strong><a href="user/client/">Client Installation Guide</a></strong>:
+<li>Join the GitHub organization and configure your SSH key → <strong><a href="user/onboarding/">Onboarding Guide</a></strong>.</li>
+<li>Install the CLI client in your local repository:
     <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </span></code></pre></div></li>
-<li>Configure your hardware requirements in <code>.cluster-ci</code> and define your pipeline steps in <code>dvc.yaml</code>.</li>
+<li>Configure your hardware requirements in <a href="user/configuration/"><code>.cluster-ci</code></a> and define your pipeline in <a href="user/dvc/"><code>dvc.yaml</code></a>.</li>
 <li>Run <code>cluster-run</code> to start your first GPU-accelerated job!</li>
+<li>Monitor your job on the <strong><a href="user/dashboard/">Dashboard</a></strong> (requires <a href="user/dashboard/#accessing-the-dashboard">VPN UNIL</a>).</li>
 </ol>
 
 

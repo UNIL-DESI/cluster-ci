@@ -543,6 +543,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#5-configure-your-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Configure Your Project
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Configure Your Project">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cluster-ci-hardware-runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        .cluster-ci — Hardware &amp; Runtime Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dvcyaml-experiment-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dvc.yaml — Experiment Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -679,6 +718,34 @@
     
   
     Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
   
 
     
@@ -1195,6 +1262,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#5-configure-your-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Configure Your Project
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Configure Your Project">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cluster-ci-hardware-runtime-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        .cluster-ci — Hardware &amp; Runtime Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dvcyaml-experiment-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dvc.yaml — Experiment Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1223,13 +1329,19 @@
 <li><strong>Create Your Research Repository</strong>: Create a <strong>new repository</strong> on the UNIL-DESI organization for your research project (or clone your own existing research repo locally).</li>
 <li>
 <p><strong>Install the Cluster-CI Client</strong>: Open your terminal at the root of your local repository and run the install script:</p>
-<p>=== "Linux / macOS"
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Linux / macOS</label><label for="__tabbed_1_2">Windows</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </span></code></pre></div></p>
-<p>=== "Windows"
-    Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
-</span></code></pre></div></p>
+</div>
+</div>
+</div>
 <p>This script injects the GitHub Actions workflow (<code>.github/workflows/cluster-ci.yml</code>), the <code>.cluster-ci</code> configuration file, the pre-commit hook, and the <code>cluster-run</code> CLI into your repository.</p>
 </li>
 </ol>
@@ -1262,7 +1374,32 @@
 <h2 id="4-google-drive-no-configuration-needed">4. Google Drive — No Configuration Needed</h2>
 <p>Google Drive authentication is managed automatically and silently by the cluster workers. No configuration is required on your part — the workers have pre-authorized credentials that handle all DVC push/pull operations to Google Drive transparently.</p>
 <hr />
-<p>Once you have completed this onboarding, you are ready to install the client-side CLI and run your first job. Proceed to the <strong><a href="../client/">Command-Line Client Guide</a></strong>.</p>
+<h2 id="5-configure-your-project">5. Configure Your Project</h2>
+<p>Before running your first job, you need to set up two files at the root of your repository:</p>
+<h3 id="cluster-ci-hardware-runtime-settings"><code>.cluster-ci</code> — Hardware &amp; Runtime Settings</h3>
+<p>This file was created automatically by the install script. It controls how much RAM, VRAM, and time your job can use. Open it and adjust the values to match your needs:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">4</span>
+</span></code></pre></div>
+<p>→ See the <strong><a href="../configuration/">Configuration Reference</a></strong> for a complete list of all available parameters.</p>
+<h3 id="dvcyaml-experiment-pipeline"><code>dvc.yaml</code> — Experiment Pipeline</h3>
+<p>Define the steps of your experiment in a <code>dvc.yaml</code> file. The cluster executes these steps automatically:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">stages</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">train</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --epochs 10</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">deps</span><span class="p">:</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/train.py</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">outs</span><span class="p">:</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">models/model.pt</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/eval.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">plots</span><span class="p">:</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/loss.png</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
+</span></code></pre></div>
+<p>→ See the <strong><a href="../dvc/">DVC &amp; Storage Guide</a></strong> for detailed instructions.</p>
+<hr />
+<p>Once you have completed this onboarding, you are ready to run your first job. Proceed to the <strong><a href="../client/">Command-Line Client Guide</a></strong>.</p>
 
 
 

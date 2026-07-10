@@ -575,6 +575,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user/support/" class="md-nav__link">
         
   
@@ -755,6 +783,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#architecture-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-garbage-collection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -929,6 +968,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-data-flow-and-code-to-artifact-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Data Flow and Code-to-Artifact Lifecycle
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1230,6 +1280,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#architecture-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-garbage-collection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1407,6 +1468,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#5-data-flow-and-code-to-artifact-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Data Flow and Code-to-Artifact Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1426,6 +1498,10 @@
 
 <h1 id="infrastructure-internals">Infrastructure Internals</h1>
 <p>This document provides detailed technical documentation on the internal mechanisms of the Cluster-CI platform. These details are intended for <strong>platform administrators and developers</strong> who need to understand, maintain, or debug the underlying systems. Researchers do not need to read this document to use the cluster.</p>
+<hr />
+<h2 id="architecture-overview">Architecture Overview</h2>
+<p>Below is the high-level technical architecture of the Cluster-CI platform showing the interaction between the headnode, the workers, GitHub Actions, and the remote storages.</p>
+<p><img alt="Cluster Architecture" src="../../assets/images/cluster_architecture.png" /></p>
 <hr />
 <h2 id="1-garbage-collection">1. Garbage Collection</h2>
 <p>The cluster implements a multi-tiered garbage collection system to manage disk space on worker nodes. The primary orchestrator is <code>src/runner/gc_orchestrator.py</code>.</p>
@@ -1582,6 +1658,10 @@
 </ul>
 </li>
 </ol>
+<hr />
+<h2 id="5-data-flow-and-code-to-artifact-lifecycle">5. Data Flow and Code-to-Artifact Lifecycle</h2>
+<p>The diagram below details the data flow, showing how repositories are checked out, how DVC caches are symlinked and synchronized, and how outputs are pushed back to remote storage.</p>
+<p><img alt="Data Flow Diagram" src="../../assets/images/data_flow_diagram.png" /></p>
 
 
 

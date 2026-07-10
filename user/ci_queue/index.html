@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ci-pipeline-and-queue-scheduling-guide" class="md-skip">
+        <a href="#ci-pipeline-queue-scheduling-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -584,10 +584,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-job-lifecycle-in-the-ci-queue" class="md-nav__link">
+  <a href="#1-job-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Job Lifecycle in the CI Queue
+        1. Job Lifecycle
       
     </span>
   </a>
@@ -595,22 +595,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-hard-constraints-eligibility-rules" class="md-nav__link">
+  <a href="#2-placement-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Hard Constraints (Eligibility Rules)
+        2. Placement Rules
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Hard Constraints (Eligibility Rules)">
+    <nav class="md-nav" aria-label="2. Placement Rules">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-branch-exclusivity" class="md-nav__link">
+  <a href="#branch-exclusivity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Branch Exclusivity
+        Branch Exclusivity
       
     </span>
   </a>
@@ -618,10 +618,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b-physical-ram-headroom-os-reserve" class="md-nav__link">
+  <a href="#ram-constraint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. Physical RAM Headroom (OS Reserve)
+        RAM Constraint
       
     </span>
   </a>
@@ -629,10 +629,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#c-physical-vram-allocation" class="md-nav__link">
+  <a href="#gpu-vram-constraint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        C. Physical VRAM Allocation
+        GPU VRAM Constraint
       
     </span>
   </a>
@@ -640,10 +640,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#d-allowed-workers-whitelist" class="md-nav__link">
+  <a href="#worker-whitelist" class="md-nav__link">
     <span class="md-ellipsis">
       
-        D. Allowed Workers Whitelist
+        Worker Whitelist
       
     </span>
   </a>
@@ -656,10 +656,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-soft-constraints-data-locality-scheduling-scores" class="md-nav__link">
+  <a href="#3-worker-selection-data-locality" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Soft Constraints (Data Locality &amp; Scheduling Scores)
+        3. Worker Selection (Data Locality)
       
     </span>
   </a>
@@ -667,22 +667,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-jit-worker-sanitization-vram-resource-recovery" class="md-nav__link">
+  <a href="#4-runtime-limits-auto-cancellation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)
+        4. Runtime Limits &amp; Auto-Cancellation
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)">
+    <nav class="md-nav" aria-label="4. Runtime Limits &amp; Auto-Cancellation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ollama-vram-purge" class="md-nav__link">
+  <a href="#timeout-watchdog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Ollama VRAM Purge
+        Timeout Watchdog
       
     </span>
   </a>
@@ -690,38 +690,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#jit-host-cleaning" class="md-nav__link">
+  <a href="#cancellation-from-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        JIT Host Cleaning
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-security-watchdogs-auto-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Security Watchdogs &amp; Auto-Cancellation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Security Watchdogs &amp; Auto-Cancellation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#max_runtime_hours-watchdog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MAX_RUNTIME_HOURS Watchdog
+        Cancellation from the Dashboard
       
     </span>
   </a>
@@ -729,21 +701,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#self-healing-watchdog" class="md-nav__link">
+  <a href="#auto-cancellation-on-new-submissions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Self-Healing Watchdog
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Aggressive Auto-Cancellation Rules
+        Auto-Cancellation on New Submissions
       
     </span>
   </a>
@@ -779,6 +740,34 @@
     
   
     Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
   
 
     
@@ -1224,10 +1213,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-job-lifecycle-in-the-ci-queue" class="md-nav__link">
+  <a href="#1-job-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Job Lifecycle in the CI Queue
+        1. Job Lifecycle
       
     </span>
   </a>
@@ -1235,22 +1224,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-hard-constraints-eligibility-rules" class="md-nav__link">
+  <a href="#2-placement-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Hard Constraints (Eligibility Rules)
+        2. Placement Rules
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Hard Constraints (Eligibility Rules)">
+    <nav class="md-nav" aria-label="2. Placement Rules">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-branch-exclusivity" class="md-nav__link">
+  <a href="#branch-exclusivity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Branch Exclusivity
+        Branch Exclusivity
       
     </span>
   </a>
@@ -1258,10 +1247,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b-physical-ram-headroom-os-reserve" class="md-nav__link">
+  <a href="#ram-constraint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. Physical RAM Headroom (OS Reserve)
+        RAM Constraint
       
     </span>
   </a>
@@ -1269,10 +1258,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#c-physical-vram-allocation" class="md-nav__link">
+  <a href="#gpu-vram-constraint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        C. Physical VRAM Allocation
+        GPU VRAM Constraint
       
     </span>
   </a>
@@ -1280,10 +1269,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#d-allowed-workers-whitelist" class="md-nav__link">
+  <a href="#worker-whitelist" class="md-nav__link">
     <span class="md-ellipsis">
       
-        D. Allowed Workers Whitelist
+        Worker Whitelist
       
     </span>
   </a>
@@ -1296,10 +1285,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-soft-constraints-data-locality-scheduling-scores" class="md-nav__link">
+  <a href="#3-worker-selection-data-locality" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Soft Constraints (Data Locality &amp; Scheduling Scores)
+        3. Worker Selection (Data Locality)
       
     </span>
   </a>
@@ -1307,22 +1296,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-jit-worker-sanitization-vram-resource-recovery" class="md-nav__link">
+  <a href="#4-runtime-limits-auto-cancellation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)
+        4. Runtime Limits &amp; Auto-Cancellation
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)">
+    <nav class="md-nav" aria-label="4. Runtime Limits &amp; Auto-Cancellation">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ollama-vram-purge" class="md-nav__link">
+  <a href="#timeout-watchdog" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Ollama VRAM Purge
+        Timeout Watchdog
       
     </span>
   </a>
@@ -1330,38 +1319,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#jit-host-cleaning" class="md-nav__link">
+  <a href="#cancellation-from-the-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        JIT Host Cleaning
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-security-watchdogs-auto-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Security Watchdogs &amp; Auto-Cancellation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Security Watchdogs &amp; Auto-Cancellation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#max_runtime_hours-watchdog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MAX_RUNTIME_HOURS Watchdog
+        Cancellation from the Dashboard
       
     </span>
   </a>
@@ -1369,21 +1330,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#self-healing-watchdog" class="md-nav__link">
+  <a href="#auto-cancellation-on-new-submissions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Self-Healing Watchdog
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#aggressive-auto-cancellation-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Aggressive Auto-Cancellation Rules
+        Auto-Cancellation on New Submissions
       
     </span>
   </a>
@@ -1412,102 +1362,71 @@
 
 
 
-<h1 id="ci-pipeline-and-queue-scheduling-guide">CI Pipeline and Queue Scheduling Guide</h1>
-<p>Cluster-CI orchestrates workload execution through an automated CI pipeline and a central queue scheduler. This guide explains how jobs are queued, evaluated, allocated to workers, and safely cleaned up.</p>
+<h1 id="ci-pipeline-queue-scheduling-guide">CI Pipeline &amp; Queue Scheduling Guide</h1>
+<p>When you run <code>cluster-run</code>, your job enters a queue and is automatically assigned to the best available GPU worker. This guide explains how jobs are scheduled and what rules apply.</p>
 <hr />
-<h2 id="1-job-lifecycle-in-the-ci-queue">1. Job Lifecycle in the CI Queue</h2>
-<p>When you trigger a run using the <code>cluster-run</code> client, the job flows through the following stages:</p>
-<p><img alt="Scheduling Queue" src="../../assets/images/scheduling_queue.png" /></p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Local Client] -&gt; (Shadow Push) -&gt; [GitHub Actions Runner] -&gt; (API Submit) -&gt; [Headnode Queue]
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                                                                   |
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                                                           (Scheduler Loop)
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                                                                   |
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>[Post-Run Sync] &lt;- (Git Push) &lt;- [Worker Job Container] &lt;- (JIT Clean) &lt;- [Worker Selected]
-</span></code></pre></div>
+<h2 id="1-job-lifecycle">1. Job Lifecycle</h2>
+<p>When you trigger a run using <code>cluster-run</code>, your job goes through these stages:</p>
 <ol>
-<li><strong>Submission</strong>: The client pushes a shadow commit to GitHub. This triggers the GitHub Actions workflow, which sends an API request to the headnode's <code>/submit_job</code> endpoint containing job metadata.</li>
-<li><strong>Queue Placement</strong>: The job is stored in a database queue with a <code>pending</code> status.</li>
-<li><strong>Scheduling Evaluation</strong>: Every 5 seconds, the headnode scheduler runs an evaluation loop. It matches pending jobs against available online workers based on hard constraints and data locality scores.</li>
-<li><strong>Worker Dispatch</strong>: The selected worker downloads the job parameters, runs a series of JIT sanitization steps, starts the Docker execution container, and streams the logs.</li>
-<li><strong>Teardown &amp; Push</strong>: Once completed, the worker commits updated metrics/plots, pushes them back to Git, and releases its resources.</li>
+<li><strong>Submission</strong>: Your code is pushed to GitHub, which notifies the cluster.</li>
+<li><strong>Queue</strong>: The job enters a FIFO queue with a <code>pending</code> status.</li>
+<li><strong>Scheduling</strong>: Every 5 seconds, the scheduler evaluates pending jobs and matches them to available workers.</li>
+<li><strong>Execution</strong>: The selected worker prepares a Docker container, installs your dependencies, and runs your DVC pipeline.</li>
+<li><strong>Results</strong>: Metrics and plots are committed back to your Git branch; large outputs are stored in the DVC cache.</li>
 </ol>
+<p>You can monitor all these stages on the <a href="../dashboard/">Web Dashboard</a>.</p>
 <hr />
-<h2 id="2-hard-constraints-eligibility-rules">2. Hard Constraints (Eligibility Rules)</h2>
-<p>A worker must satisfy all the following hard constraints to be eligible for a job. If no worker meets these requirements, the job remains in the queue.</p>
-<h3 id="a-branch-exclusivity">A. Branch Exclusivity</h3>
-<p>To prevent race conditions, write conflicts on the DVC remote, and Git push collisions, <strong>only one active job (either running or assigned) is allowed per repository + branch combination</strong>. </p>
-<h3 id="b-physical-ram-headroom-os-reserve">B. Physical RAM Headroom (OS Reserve)</h3>
-<p>Memory footprint evaluation is strict. A worker is eligible only if:
-$$\text{Total Worker RAM (GB)} - 8.0 \ge \text{Requested RAM (GB)}$$</p>
+<h2 id="2-placement-rules">2. Placement Rules</h2>
+<p>The scheduler must find a worker that satisfies <strong>all</strong> of the following constraints. If no worker qualifies, your job stays in the queue until one becomes available.</p>
+<h3 id="branch-exclusivity">Branch Exclusivity</h3>
+<p>Only <strong>one job per repository + branch</strong> can be active at a time. This prevents Git conflicts and data corruption.</p>
+<h3 id="ram-constraint">RAM Constraint</h3>
+<p>The cluster reserves 8 GB of RAM on each worker for the operating system. A worker is eligible only if:</p>
+<blockquote>
+<p><strong>Worker Total RAM − 8 GB ≥ your <code>REQUIRED_RAM</code></strong></p>
+</blockquote>
+<p>For example, a 128 GB worker can accept jobs requesting up to 120 GB. If you request more, the job stays in the queue indefinitely.</p>
+<p>→ Set <code>REQUIRED_RAM</code> in your <a href="../configuration/"><code>.cluster-ci</code> configuration</a>.</p>
+<h3 id="gpu-vram-constraint">GPU VRAM Constraint</h3>
+<p>If you specify <code>REQUIRED_VRAM</code>, the worker must have a GPU with at least that much video memory. If omitted, the default is 0 (the job can run on CPU-only nodes).</p>
+<p>→ Set <code>REQUIRED_VRAM</code> in your <a href="../configuration/"><code>.cluster-ci</code> configuration</a>.</p>
+<h3 id="worker-whitelist">Worker Whitelist</h3>
+<p>If you specify <code>ALLOWED_WORKERS</code> in <code>.cluster-ci</code>, only workers whose hostname matches the list will be considered.</p>
+<p>→ See <a href="../configuration/">Configuration Reference</a> for details.</p>
+<hr />
+<h2 id="3-worker-selection-data-locality">3. Worker Selection (Data Locality)</h2>
+<p>When multiple workers satisfy the placement rules, the scheduler picks the one that <strong>already has your data cached locally</strong>. This avoids re-downloading large datasets and speeds up execution.</p>
+<details class="note">
+<summary>How does data locality scoring work?</summary>
+<p>The scheduler parses your <code>dvc.lock</code> file, contacts each eligible worker to check which DVC-cached files they already have, and assigns a score based on cache hits. The worker with the highest score wins. The head node receives a small penalty (-1) to keep it free for scheduling duties. If the winning worker is missing some files, they are transferred directly from a peer worker over the internal network.</p>
+</details>
+<hr />
+<h2 id="4-runtime-limits-auto-cancellation">4. Runtime Limits &amp; Auto-Cancellation</h2>
+<h3 id="timeout-watchdog">Timeout Watchdog</h3>
+<p>Every job must specify <code>MAX_RUNTIME_HOURS</code> in its <code>.cluster-ci</code> file (maximum: 24 hours). If your job exceeds this limit, it is automatically terminated.</p>
+<h3 id="cancellation-from-the-dashboard">Cancellation from the Dashboard</h3>
+<p>You can cancel a running job from the <a href="../dashboard/">Dashboard</a> by clicking the <strong>Stop</strong> button. The worker detects the cancellation within seconds and releases its resources.</p>
+<h3 id="auto-cancellation-on-new-submissions">Auto-Cancellation on New Submissions</h3>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Draft Branches (<code>cluster-draft/*</code>)</label><label for="__tabbed_1_2">Standard Branches (<code>main</code>, <code>feature/*</code>)</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
 <ul>
-<li><strong>The 8 GB Headroom Rule</strong>: Cluster-CI strictly reserves 8 GB of RAM for the worker's host operating system, Docker daemon, and monitoring agents. This headroom is crucial on system architectures with unified memory (like NVIDIA Grace Blackwell GB10) to prevent kernel out-of-memory (OOM) freezes.</li>
-<li><strong>Example</strong>: If a worker has 128 GB of total RAM, the maximum allocatable RAM for a single job is $128 - 8 = 120\text{ GB}$. If you request <code>REQUIRED_RAM=125GB</code> in your <code>.cluster-ci</code> file, the job will be blocked in the queue indefinitely.</li>
+<li><strong>Rule</strong>: Only <strong>one active job per researcher</strong> across the entire cluster.</li>
+<li>When you push a new draft run, all your previous pending or running jobs are cancelled automatically.</li>
 </ul>
-<h3 id="c-physical-vram-allocation">C. Physical VRAM Allocation</h3>
-<p>The target worker must have a physical GPU with:
-$$\text{Worker VRAM (GB)} \ge \text{Requested VRAM (GB)}$$
-If you do not specify a VRAM constraint, it defaults to 0 (allowing execution on CPU-only nodes if available).</p>
-<h3 id="d-allowed-workers-whitelist">D. Allowed Workers Whitelist</h3>
-<p>If your <code>.cluster-ci</code> configuration specifies <code>allowed_workers</code> (a list of hostnames), the scheduler filters out any worker whose hostname is not in the whitelist. This lets you target specific GPU architectures (e.g. GB10 Blackwell vs RTX 3090).</p>
-<hr />
-<h2 id="3-soft-constraints-data-locality-scheduling-scores">3. Soft Constraints (Data Locality &amp; Scheduling Scores)</h2>
-<p>When multiple workers satisfy the hard constraints, the scheduler computes a score to select the best worker.</p>
-<ol>
-<li><strong>DVC Cache Locality Scoring</strong>:<ul>
-<li>The headnode inspects your job's <code>dvc.lock</code> and parses the list of required MD5 hashes.</li>
-<li>It queries each eligible worker's <code>/check_cache</code> endpoint.</li>
-<li>The worker counts how many of those MD5 files are already present in its local DVC cache (<code>.dvc/cache/files/md5</code>).</li>
-<li>The worker's locality score is equal to the number of cache hits. The worker with the highest score wins.</li>
-</ul>
-</li>
-<li><strong>Headnode Malus</strong>:<ul>
-<li>A penalty of <strong>-1</strong> is subtracted from the headnode's locality score.</li>
-<li>This deprioritizes scheduling jobs on the node hosting the scheduler, preserving headnode CPU cycles for API handling and database management.</li>
-</ul>
-</li>
-<li><strong>P2P Remote Injection</strong>:<ul>
-<li>If the winning worker lacks some of the dataset files, the scheduler searches for the best peer worker (holding a score &gt; 0).</li>
-<li>It injects the peer worker's <code>/fetch_artifact</code> endpoint into the executing worker's environment as <code>DVC_REMOTE_P2P_URL</code>.</li>
-<li>The worker pulls missing files directly from its neighbor at high speed over the LAN instead of pulling from Google Drive.</li>
-</ul>
-</li>
-</ol>
-<hr />
-<h2 id="4-jit-worker-sanitization-vram-resource-recovery">4. JIT Worker Sanitization (VRAM &amp; Resource Recovery)</h2>
-<p>Before starting the Docker container for a job, the worker agent executes automated host cleaning routines:</p>
-<h3 id="ollama-vram-purge">Ollama VRAM Purge</h3>
-<p>On Blackwell GB10 workers, researchers often run local large language model (LLM) instances using Ollama. To prevent VRAM fragmentation and guarantee that 100% of the GPU memory is available to your job:
-*   The worker agent queries any active Ollama service on the default ports (11434 and 11435).
-*   It issues an unload command to the Ollama API (<code>/api/generate</code>) with <code>keep_alive: 0</code>.
-*   This immediately unloads all active LLMs from VRAM in <strong>less than 5 seconds</strong>, freeing up all VRAM before the job container starts.</p>
-<h3 id="jit-host-cleaning">JIT Host Cleaning</h3>
-<p>The agent scans the host system and forcefully terminates:
-*   Zombie or orphaned containers named <code>cluster-job-*</code> or <code>cluster-viewer-*</code>.
-*   Orphaned host processes associated with previous runs (such as residual <code>dvc-viewer</code> instances or <code>gc_orchestrator</code> tasks).
-*   Any process binding to custom ports requested by previous jobs.</p>
-<hr />
-<h2 id="5-security-watchdogs-auto-cancellation">5. Security Watchdogs &amp; Auto-Cancellation</h2>
-<h3 id="max_runtime_hours-watchdog">MAX_RUNTIME_HOURS Watchdog</h3>
-<p>Every job must specify <code>MAX_RUNTIME_HOURS</code> in its <code>.cluster-ci</code> configuration (maximum value: 24).
-*   A runtime watchdog tracks the job's duration.
-*   If the execution exceeds this limit, the worker agent kills the Docker container and stops the job.</p>
-<h3 id="self-healing-watchdog">Self-Healing Watchdog</h3>
-<p>The worker agent runs a background loop that polls the headnode's <code>/job_status/{job_id}</code> endpoint every few seconds.
-*   If the job's state is changed to <code>cancelled</code> or <code>stopped</code> on the headnode (e.g. by a user clicking "Cancel" on the dashboard), the worker's watchdog detects it.
-*   It kills the local Docker container, stops the processes, runs JIT cleanup, and releases the VRAM/RAM allocation immediately.</p>
-<p>The cluster also runs automatic watchdogs for GPU memory leaks, zombie processes, and intermediate DVC backups. These mechanisms are transparent to the researcher and require no configuration.</p>
-<div class="admonition note">
-<p class="admonition-title">Internal Details</p>
-<p>For technical details on the Double-Threshold GPU Memory Guard, Zombie GC, and DVC Git Watchdog, see the <a href="../../admin/infrastructure_internals/#4-runtime-watchdogs">Infrastructure Internals</a> documentation.</p>
 </div>
-<h3 id="aggressive-auto-cancellation-rules">Aggressive Auto-Cancellation Rules</h3>
-<p>To optimize cluster resources, Cluster-CI applies the following cancellation rules upon new submissions:</p>
-<p>=== "Draft Branches (<code>cluster-draft/*</code>)"
-    *   <strong>Rule</strong>: <strong>One active job per researcher</strong> across the entire cluster.
-    *   <strong>Behavior</strong>: When a researcher pushes a new draft commit, the scheduler searches for <em>any</em> active job (pending or running) associated with that user's GitHub username across <strong>all repositories</strong>. All previous runs are cancelled and terminated.</p>
-<p>=== "Standard Branches (<code>main</code>, <code>feature/*</code>)"
-    *   <strong>Rule</strong>: <strong>One pending job per branch</strong>.
-    *   <strong>Behavior</strong>: When a new commit is pushed, the scheduler identifies older jobs on the <strong>same repository and same branch</strong> that are still in the <code>pending</code> queue. These pending jobs are cancelled. Jobs that have already started running are allowed to complete.</p>
+<div class="tabbed-block">
+<ul>
+<li><strong>Rule</strong>: Only <strong>one pending job per branch</strong>.</li>
+<li>When you push a new commit, older pending jobs on the same branch are cancelled. Jobs already running are allowed to finish.</li>
+</ul>
+</div>
+</div>
+</div>
+<details class="note">
+<summary>Internal Details</summary>
+<p>The cluster also runs automatic watchdogs for GPU memory leaks, zombie processes, and intermediate DVC backups. For technical details on Ollama VRAM Purge, JIT Host Cleaning, Double-Threshold GPU Memory Guard, and DVC Git Watchdog, see the <a href="../../admin/infrastructure_internals/">Infrastructure Internals</a> documentation.</p>
+</details>
 
 
 

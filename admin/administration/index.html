@@ -575,6 +575,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user/support/" class="md-nav__link">
         
   
@@ -912,6 +940,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-scheduling-queue-and-job-dispatch-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Scheduling Queue and Job Dispatch Flow
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1429,6 +1468,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#7-scheduling-queue-and-job-dispatch-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Scheduling Queue and Job Dispatch Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1537,6 +1587,10 @@ This enables the unprivileged cluster agent user to restart systemd services and
 <li><strong>Deploy Credentials on Workers</strong>:
     The resulting token must be deployed on each worker host via the <code>.env</code> / <code>.env.secrets</code> configuration files. The worker agents automatically mount these credentials at runtime, ensuring DVC commands (<code>dvc pull</code>, <code>dvc push</code>) run with full permissions inside containers.</li>
 </ol>
+<hr />
+<h2 id="7-scheduling-queue-and-job-dispatch-flow">7. Scheduling Queue and Job Dispatch Flow</h2>
+<p>Below is the schema outlining how jobs enter the execution queue, how placement constraints are evaluated by the scheduler, and how workers are allocated to execution slots.</p>
+<p><img alt="Scheduling Queue" src="../../assets/images/scheduling_queue.png" /></p>
 
 
 

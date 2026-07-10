@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#dvc-storage-and-data-locality-guide" class="md-skip">
+        <a href="#dvc-storage-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -528,10 +528,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-high-level-data-flow" class="md-nav__link">
+  <a href="#what-is-dvc" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. High-Level Data Flow
+        What is DVC?
       
     </span>
   </a>
@@ -539,22 +539,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-defining-pipelines-in-dvcyaml" class="md-nav__link">
+  <a href="#1-defining-your-pipeline-dvcyaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Defining Pipelines in dvc.yaml
+        1. Defining Your Pipeline (dvc.yaml)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Defining Pipelines in dvc.yaml">
+    <nav class="md-nav" aria-label="1. Defining Your Pipeline (dvc.yaml)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pipeline-dag-example" class="md-nav__link">
+  <a href="#minimal-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pipeline DAG Example
+        Minimal Example
       
     </span>
   </a>
@@ -562,10 +562,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#sequential-execution-dag-topological-repro" class="md-nav__link">
+  <a href="#multi-stage-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sequential Execution (DAG Topological Repro)
+        Multi-Stage Example
       
     </span>
   </a>
@@ -578,10 +578,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-comparison-dvc-cas-vs-git-sync" class="md-nav__link">
+  <a href="#2-what-you-must-declare" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Comparison: DVC CAS vs. Git Sync
+        2. What You Must Declare
       
     </span>
   </a>
@@ -589,22 +589,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-large-artifacts-outs-deps-p2p-data-plane" class="md-nav__link">
+  <a href="#3-how-results-are-synchronized" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Large Artifacts (outs / deps) &amp; P2P Data Plane
+        3. How Results Are Synchronized
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Large Artifacts (outs / deps) &amp; P2P Data Plane">
+    <nav class="md-nav" aria-label="3. How Results Are Synchronized">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#local-cache-checking-scoring" class="md-nav__link">
+  <a href="#metrics-plots-git-automatic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Local Cache Checking (Scoring)
+        Metrics &amp; Plots → Git (automatic)
       
     </span>
   </a>
@@ -612,10 +612,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#peer-to-peer-p2p-pulling" class="md-nav__link">
+  <a href="#large-outputs-dvc-cache-on-demand" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Peer-to-Peer (P2P) Pulling
+        Large Outputs → DVC Cache (on-demand)
       
     </span>
   </a>
@@ -628,49 +628,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-metrics-plots-metrics-plots-git-sync" class="md-nav__link">
+  <a href="#4-how-to-retrieve-results-locally" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Metrics &amp; Plots (metrics / plots) &amp; Git Sync
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Metrics &amp; Plots (metrics / plots) &amp; Git Sync">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#automatic-cache-deactivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Automatic Cache Deactivation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#post-stage-commits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Post-Stage Commits
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-how-to-retrieve-results-locally" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. How to Retrieve Results Locally
+        4. How to Retrieve Results Locally
       
     </span>
   </a>
@@ -757,6 +718,34 @@
     
   
     Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
   
 
     
@@ -1202,10 +1191,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-high-level-data-flow" class="md-nav__link">
+  <a href="#what-is-dvc" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. High-Level Data Flow
+        What is DVC?
       
     </span>
   </a>
@@ -1213,22 +1202,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-defining-pipelines-in-dvcyaml" class="md-nav__link">
+  <a href="#1-defining-your-pipeline-dvcyaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Defining Pipelines in dvc.yaml
+        1. Defining Your Pipeline (dvc.yaml)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Defining Pipelines in dvc.yaml">
+    <nav class="md-nav" aria-label="1. Defining Your Pipeline (dvc.yaml)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pipeline-dag-example" class="md-nav__link">
+  <a href="#minimal-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pipeline DAG Example
+        Minimal Example
       
     </span>
   </a>
@@ -1236,10 +1225,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#sequential-execution-dag-topological-repro" class="md-nav__link">
+  <a href="#multi-stage-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sequential Execution (DAG Topological Repro)
+        Multi-Stage Example
       
     </span>
   </a>
@@ -1252,10 +1241,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-comparison-dvc-cas-vs-git-sync" class="md-nav__link">
+  <a href="#2-what-you-must-declare" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Comparison: DVC CAS vs. Git Sync
+        2. What You Must Declare
       
     </span>
   </a>
@@ -1263,22 +1252,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-large-artifacts-outs-deps-p2p-data-plane" class="md-nav__link">
+  <a href="#3-how-results-are-synchronized" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Large Artifacts (outs / deps) &amp; P2P Data Plane
+        3. How Results Are Synchronized
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Large Artifacts (outs / deps) &amp; P2P Data Plane">
+    <nav class="md-nav" aria-label="3. How Results Are Synchronized">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#local-cache-checking-scoring" class="md-nav__link">
+  <a href="#metrics-plots-git-automatic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Local Cache Checking (Scoring)
+        Metrics &amp; Plots → Git (automatic)
       
     </span>
   </a>
@@ -1286,10 +1275,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#peer-to-peer-p2p-pulling" class="md-nav__link">
+  <a href="#large-outputs-dvc-cache-on-demand" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Peer-to-Peer (P2P) Pulling
+        Large Outputs → DVC Cache (on-demand)
       
     </span>
   </a>
@@ -1302,49 +1291,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-metrics-plots-metrics-plots-git-sync" class="md-nav__link">
+  <a href="#4-how-to-retrieve-results-locally" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Metrics &amp; Plots (metrics / plots) &amp; Git Sync
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Metrics &amp; Plots (metrics / plots) &amp; Git Sync">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#automatic-cache-deactivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Automatic Cache Deactivation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#post-stage-commits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Post-Stage Commits
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-how-to-retrieve-results-locally" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. How to Retrieve Results Locally
+        4. How to Retrieve Results Locally
       
     </span>
   </a>
@@ -1368,34 +1318,35 @@
 
 
 
-<h1 id="dvc-storage-and-data-locality-guide">DVC, Storage, and Data Locality Guide</h1>
-<p>Data Version Control (DVC) is integrated into Cluster-CI to manage large datasets and models, while standard Git is reserved for code, metrics, and analytical plots. This guide explains how to define your pipelines and how data flows through the cluster.</p>
+<h1 id="dvc-storage-guide">DVC &amp; Storage Guide</h1>
+<h2 id="what-is-dvc">What is DVC?</h2>
+<p><a href="https://dvc.org/">DVC (Data Version Control)</a> is a tool that brings Git-like version control to <strong>data, models, and experiments</strong>. It lets you track large files, define reproducible pipelines, and compare experiment results — all from the command line.</p>
+<p><strong>Cluster-CI requires DVC</strong> to orchestrate your experiments. Instead of running scripts manually, you describe your pipeline steps in a <code>dvc.yaml</code> file, and the cluster executes them automatically on GPU workers.</p>
+<div class="admonition info">
+<p class="admonition-title">Why DVC is mandatory</p>
+<ul>
+<li><strong>Reproducibility</strong>: Every experiment is described as a pipeline with explicit inputs and outputs.</li>
+<li><strong>Live monitoring</strong>: The cluster reads your <code>dvc.yaml</code> to display real-time progress on the <a href="../dashboard/">Web Dashboard</a> (stage-by-stage status, metrics, and plots).</li>
+<li><strong>Automatic result sync</strong>: Metrics and plots are committed back to your Git repository after each stage, so you can track your progress without manual intervention.</li>
+</ul>
+</div>
 <hr />
-<h2 id="1-high-level-data-flow">1. High-Level Data Flow</h2>
-<p>Cluster-CI employs a dual-channel architecture to handle experiment files. Depending on how you declare a file in <code>dvc.yaml</code>, it will take one of two paths:</p>
-<p><img alt="Data Flow Diagram" src="../../assets/images/data_flow_diagram.png" /></p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                  +--------------------------------+
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  |           dvc.yaml             |
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  +--------------------------------+
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                     /                          \
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>       outs: or deps:                            metrics: or plots:
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>      (Large data, models)                      (JSON, CSV, PNG, SVGs)
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>           /                                              \
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  DVC CAS Cache (Worker)                            cache: false
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>           |                                              |
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    [P2P Transfer]                                  [Git Sync]
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  HTTP /fetch_artifact                             Immediate push by
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  between workers                                   cluster-ci-bot
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>           |                                              |
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>[gc_orchestrator.py GC]                             [Local Pull]
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a> Pushes to Google Drive                             git pull --rebase
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>   only if disk &lt; 100GB                               to local repo
+<h2 id="1-defining-your-pipeline-dvcyaml">1. Defining Your Pipeline (<code>dvc.yaml</code>)</h2>
+<p>Create a <code>dvc.yaml</code> file at the root of your repository. Each <strong>stage</strong> defines a command to run, its dependencies, and its outputs.</p>
+<h3 id="minimal-example">Minimal Example</h3>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">stages</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">train</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --epochs 10</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">deps</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/train.py</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">outs</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">models/model.pt</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/eval.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">plots</span><span class="p">:</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/loss.png</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
 </span></code></pre></div>
-<hr />
-<h2 id="2-defining-pipelines-in-dvcyaml">2. Defining Pipelines in <code>dvc.yaml</code></h2>
-<p>To run experiments on the cluster, you must define a pipeline using a <code>dvc.yaml</code> file at the root of your repository. </p>
-<h3 id="pipeline-dag-example">Pipeline DAG Example</h3>
-<p>The following pipeline processes a raw dataset and trains a neural network model:
+<h3 id="multi-stage-example">Multi-Stage Example</h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">stages</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">process_dataset</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/preprocess.py --input data/raw.csv --output data/clean.csv</span>
@@ -1406,7 +1357,7 @@
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">data/clean.csv</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="nt">train</span><span class="p">:</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --input data/clean.csv --model models/model.pt --metrics reports/eval.json --plot reports/loss.png</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --input data/clean.csv --model models/model.pt</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="nt">deps</span><span class="p">:</span>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/train.py</span>
 </span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">data/clean.csv</span>
@@ -1416,108 +1367,99 @@
 </span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/eval.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
 </span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span><span class="nt">plots</span><span class="p">:</span>
 </span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/loss.png</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
-</span></code></pre></div></p>
-<h3 id="sequential-execution-dag-topological-repro">Sequential Execution (DAG Topological Repro)</h3>
-<p>Cluster-CI does not run a simple <code>dvc repro</code>. To optimize executions and provide real-time updates:
-1.  The runner executes <code>dvc_iterative_repro.py</code>, which parses your pipeline and builds the execution Directed Acyclic Graph (DAG) using <code>dvc dag --dot</code>.
-2.  It calculates a topological sort of the stages.
-3.  It runs each stage individually using <code>dvc repro &lt;stage_name&gt; -s</code> (<code>--single-item</code>). The <code>-s</code> flag prevents DVC from verifying or rebuilding upstream dependencies, because they have already been processed in the correct topological order.
-4.  At the start of each stage, it updates <code>.dvc/tmp/iterative-status.json</code> so that the Web Dashboard can display live stage-by-stage status.</p>
+</span></code></pre></div>
+<p>The cluster automatically determines the execution order based on stage dependencies.</p>
+<div class="admonition warning">
+<p class="admonition-title">Declare metrics and plots with <code>{cache: false}</code></p>
+<p>All files listed under <code>metrics:</code> and <code>plots:</code> <strong>must</strong> be declared with <code>{cache: false}</code>. This tells DVC to track them through Git (not the DVC cache), so the cluster can commit them automatically after each stage. If you forget, the platform enforces it anyway — but it's best practice to declare it explicitly.</p>
+</div>
 <hr />
-<h2 id="3-comparison-dvc-cas-vs-git-sync">3. Comparison: DVC CAS vs. Git Sync</h2>
-<p>Understanding the difference between these two tracks is crucial to prevent jobs from failing or bloating your repository.</p>
+<h2 id="2-what-you-must-declare">2. What You Must Declare</h2>
+<p>Here's a quick reference for declaring files in your <code>dvc.yaml</code>:</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: left;">Feature</th>
-<th style="text-align: left;">Large Artifacts (<code>outs</code> / <code>deps</code>)</th>
-<th style="text-align: left;">Small Analytical Data (<code>metrics</code> / <code>plots</code>)</th>
+<th style="text-align: left;">Declaration</th>
+<th style="text-align: left;">Use for</th>
+<th style="text-align: left;">Synced via</th>
+<th style="text-align: left;">Size limit</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;"><strong>Typical Files</strong></td>
-<td style="text-align: left;">Datasets, features, weights (<code>.pt</code>, <code>.safetensors</code>, <code>.h5</code>)</td>
-<td style="text-align: left;">Training curves, performance JSONs, PNG graphs</td>
+<td style="text-align: left;"><code>deps:</code></td>
+<td style="text-align: left;">Source code, input data</td>
+<td style="text-align: left;">— (inputs only)</td>
+<td style="text-align: left;">—</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Storage Backend</strong></td>
-<td style="text-align: left;">Worker Local Disk Cache (Content Addressable Storage)</td>
-<td style="text-align: left;">Remote Git Repository (<code>origin</code> branch)</td>
+<td style="text-align: left;"><code>outs:</code></td>
+<td style="text-align: left;">Large outputs: models, datasets, features</td>
+<td style="text-align: left;">DVC cache (peer-to-peer between workers)</td>
+<td style="text-align: left;">Several GB</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Transport Protocol</strong></td>
-<td style="text-align: left;">Peer-to-Peer HTTP transfers (<code>/fetch_artifact</code> on port 6000)</td>
-<td style="text-align: left;">Git push/pull over HTTPS/SSH</td>
+<td style="text-align: left;"><code>metrics:</code></td>
+<td style="text-align: left;">JSON/YAML evaluation files</td>
+<td style="text-align: left;">Git (auto-committed by the cluster)</td>
+<td style="text-align: left;">&lt; 5 MB</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Synchronization</strong></td>
-<td style="text-align: left;">Pulled on-demand by workers during scheduling</td>
-<td style="text-align: left;">Committed immediately after <strong>each stage</strong> completes</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong>Size Limit</strong></td>
-<td style="text-align: left;">Up to several gigabytes (subject to worker disk space)</td>
-<td style="text-align: left;"><strong>Strictly &lt; 5 Megabytes</strong></td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong>Auto-Cleanup</strong></td>
-<td style="text-align: left;">Garbage collected by <code>gc_orchestrator.py</code> when disk &lt; 100GB</td>
-<td style="text-align: left;">Retained permanently in Git history</td>
+<td style="text-align: left;"><code>plots:</code></td>
+<td style="text-align: left;">PNG, CSV, SVG charts and tables</td>
+<td style="text-align: left;">Git (auto-committed by the cluster)</td>
+<td style="text-align: left;">&lt; 5 MB</td>
 </tr>
 </tbody>
 </table>
-<hr />
-<h2 id="4-large-artifacts-outs-deps-p2p-data-plane">4. Large Artifacts (<code>outs</code> / <code>deps</code>) &amp; P2P Data Plane</h2>
-<p>When you declare a file in <code>outs:</code>, it is stored in the local DVC cache of the worker that executed the job. It is <strong>not</strong> immediately pushed to Google Drive, which saves external network bandwidth.</p>
-<h3 id="local-cache-checking-scoring">Local Cache Checking (Scoring)</h3>
-<p>When a new job is submitted:
-1.  The headnode parses the repository's <code>dvc.lock</code> and extracts all expected DVC MD5 hashes.
-2.  It contacts all online workers via their <code>/check_cache</code> endpoint, checking which worker already has these files in their local directory.
-3.  The scheduler awards the job to the worker with the highest number of cache hits (data locality scheduling).</p>
-<h3 id="peer-to-peer-p2p-pulling">Peer-to-Peer (P2P) Pulling</h3>
-<p>If the winning worker lacks some of the dependencies, but another worker possesses them:
-1.  The scheduler identifies the best peer worker.
-2.  It injects a <code>DVC_REMOTE_P2P_URL</code> environment variable containing the peer worker's <code>/fetch_artifact</code> address.
-3.  The executing worker adds a temporary DVC remote:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dvc<span class="w"> </span>remote<span class="w"> </span>add<span class="w"> </span>-f<span class="w"> </span>peer_remote<span class="w"> </span>http://&lt;peer_worker_ip&gt;:6000/fetch_artifact/
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>dvc<span class="w"> </span>pull<span class="w"> </span>--allow-missing<span class="w"> </span>-r<span class="w"> </span>peer_remote
-</span></code></pre></div>
-4.  This transfers files directly over the internal high-speed network.</p>
-<div class="admonition note">
-<p class="admonition-title">Internal Details</p>
-<p>For technical details on the garbage collection algorithm (5-level progressive purge, emergency GC, lazy workspace transfer) and the historical DVC visualizer, see the <a href="../../admin/infrastructure_internals/">Infrastructure Internals</a> documentation.</p>
+<div class="admonition tip">
+<p class="admonition-title">Best practice</p>
+<p>Declare at least <strong>one metric and one plot per stage</strong> so you can monitor progress on the <a href="../dashboard/">Dashboard</a>.</p>
 </div>
 <hr />
-<h2 id="5-metrics-plots-metrics-plots-git-sync">5. Metrics &amp; Plots (<code>metrics</code> / <code>plots</code>) &amp; Git Sync</h2>
-<p>Metrics and plots are lightweight files used to evaluate models. They must be committed to the Git repository to keep track of performance.</p>
-<h3 id="automatic-cache-deactivation">Automatic Cache Deactivation</h3>
-<p>The runner automatically runs <code>dvc_git_helper.py inject</code> before the pipeline starts. This script parses <code>dvc.yaml</code> and forces <code>'cache': false</code> on all declared metrics and plots. Even if you forget to write <code>{cache: false}</code>, the platform enforces it automatically.</p>
-<h3 id="post-stage-commits">Post-Stage Commits</h3>
-<p>Immediately after <strong>each</strong> pipeline stage completes (or if a stage <strong>fails</strong> to preserve logs and crash states):
-1.  The runner scans the files listed in <code>metrics</code> and <code>plots</code>.
-2.  <strong>Size Guard</strong>:
-    - If a file is <strong>under 5 MB</strong>, it stages it using <code>git add -f &lt;path&gt;</code> (which bypasses any <code>.gitignore</code> rules).
-    - If a file is <strong>5 MB or larger</strong>, the runner ignores it, does not push it, and prints a warning:
-      <code>⚠️ WARNING: File &lt;path&gt; exceeds the 5 MB limit. It will not be synchronized.</code>
-3.  It commits the staged files with the author name <code>cluster-ci-bot</code> (<code>bot@cluster-ci.io</code>) and the commit message directive <code>[skip ci]</code>.
-4.  It pushes the commit to your branch. If the push fails because another job pushed changes first, the runner executes <code>git pull --rebase origin HEAD</code> to merge the changes automatically and then pushes.</p>
-<hr />
-<h2 id="6-how-to-retrieve-results-locally">6. How to Retrieve Results Locally</h2>
-<p>Because the cluster runner automatically pushes commits to your branch during execution, your local Git history will become outdated.</p>
-<p>To retrieve DVC locks, metrics, and plots:
-1.  Open your terminal in your local repository.
-2.  Run a rebase pull to download the commits generated by <code>cluster-ci-bot</code>:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
-</span></code></pre></div>
-3.  If you have local modifications, stash them first:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>git<span class="w"> </span>stash
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>git<span class="w"> </span>stash<span class="w"> </span>pop
-</span></code></pre></div>
-4.  To pull heavy outputs (e.g. models) that were stored in the DVC cache (if you are on the same worker or after GC pushed to Google Drive):
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>dvc<span class="w"> </span>pull
+<h2 id="3-how-results-are-synchronized">3. How Results Are Synchronized</h2>
+<p>After your pipeline runs on the cluster, results flow back to you through two channels:</p>
+<h3 id="metrics-plots-git-automatic">Metrics &amp; Plots → Git (automatic)</h3>
+<p>After <strong>each stage</strong> completes (or fails), the cluster:</p>
+<ol>
+<li>Scans files listed under <code>metrics:</code> and <code>plots:</code> in your <code>dvc.yaml</code>.</li>
+<li>Commits files under 5 MB to your branch with the author <code>cluster-ci-bot</code>.</li>
+<li>Pushes the commit automatically.</li>
+</ol>
+<p>You can retrieve them locally with:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
 </span></code></pre></div></p>
+<h3 id="large-outputs-dvc-cache-on-demand">Large Outputs → DVC Cache (on-demand)</h3>
+<p>Files declared as <code>outs:</code> (models, datasets) are stored in the DVC cache on the worker that ran your job. They are <strong>not</strong> pushed to Git.</p>
+<p>To retrieve them locally (after Google Drive backup or when connected to the cluster network):
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dvc<span class="w"> </span>pull
+</span></code></pre></div></p>
+<hr />
+<h2 id="4-how-to-retrieve-results-locally">4. How to Retrieve Results Locally</h2>
+<p>After a cluster run completes:</p>
+<ol>
+<li>
+<p>Pull the Git-tracked results (metrics, plots, DVC locks):
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
+</span></code></pre></div></p>
+</li>
+<li>
+<p>If you have local modifications, stash them first:
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>git<span class="w"> </span>stash
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>git<span class="w"> </span>stash<span class="w"> </span>pop
+</span></code></pre></div></p>
+</li>
+<li>
+<p>To pull large outputs (models, datasets) from the DVC cache:
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>dvc<span class="w"> </span>pull
+</span></code></pre></div></p>
+</li>
+</ol>
+<details class="note">
+<summary>How does data move between workers?</summary>
+<p>When a job is scheduled, the cluster checks which worker already has your data cached locally and prioritizes that worker. If the data is on a different worker, it transfers files directly over the internal network (peer-to-peer) instead of downloading from Google Drive. This is automatic and requires no configuration on your part. For technical details, see <a href="../../admin/infrastructure_internals/">Infrastructure Internals</a>.</p>
+</details>
 
 
 

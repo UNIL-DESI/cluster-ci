@@ -550,10 +550,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-the-shadow-commit-mechanism" class="md-nav__link">
+  <a href="#2-how-cluster-run-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. The "Shadow Commit" Mechanism
+        2. How cluster-run Works
       
     </span>
   </a>
@@ -644,15 +644,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-safety-features-fault-tolerance" class="md-nav__link">
+  <a href="#5-safety-features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Safety Features &amp; Fault Tolerance
+        5. Safety Features
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="5. Safety Features &amp; Fault Tolerance">
+    <nav class="md-nav" aria-label="5. Safety Features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -667,10 +667,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#line-ending-protection-gitattributes" class="md-nav__link">
+  <a href="#line-ending-protection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Line-Ending Protection (.gitattributes)
+        Line-Ending Protection
       
     </span>
   </a>
@@ -678,32 +678,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#smart-cwd-redirection" class="md-nav__link">
+  <a href="#pre-commit-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Smart CWD Redirection
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#common-base-post-run-sync-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common-Base Post-Run Sync Validation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interactive-pre-commit-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Pre-commit Validation
+        Pre-commit Validation
       
     </span>
   </a>
@@ -823,6 +801,34 @@
     
   
     Monitoring Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
   
 
     
@@ -1318,10 +1324,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-the-shadow-commit-mechanism" class="md-nav__link">
+  <a href="#2-how-cluster-run-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. The "Shadow Commit" Mechanism
+        2. How cluster-run Works
       
     </span>
   </a>
@@ -1412,15 +1418,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-safety-features-fault-tolerance" class="md-nav__link">
+  <a href="#5-safety-features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Safety Features &amp; Fault Tolerance
+        5. Safety Features
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="5. Safety Features &amp; Fault Tolerance">
+    <nav class="md-nav" aria-label="5. Safety Features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1435,10 +1441,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#line-ending-protection-gitattributes" class="md-nav__link">
+  <a href="#line-ending-protection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Line-Ending Protection (.gitattributes)
+        Line-Ending Protection
       
     </span>
   </a>
@@ -1446,32 +1452,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#smart-cwd-redirection" class="md-nav__link">
+  <a href="#pre-commit-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Smart CWD Redirection
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#common-base-post-run-sync-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common-Base Post-Run Sync Validation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interactive-pre-commit-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Pre-commit Validation
+        Pre-commit Validation
       
     </span>
   </a>
@@ -1501,10 +1485,9 @@
 
 
 <h1 id="command-line-client-execution-guide">Command-Line Client &amp; Execution Guide</h1>
-<p>The <code>cluster-run</code> CLI is the central tool for submitting and monitoring computing jobs on Cluster-CI. This guide details how to install the client environment and how to utilize the command-line interface.</p>
+<p>The <code>cluster-run</code> CLI is the central tool for submitting and monitoring computing jobs on Cluster-CI. This guide details how to install the client and how to use it.</p>
 <hr />
 <h2 id="1-client-installation">1. Client Installation</h2>
-<p>The installation process configures your local Git repository to communicate with the cluster orchestrator.</p>
 <h3 id="prerequisites">Prerequisites</h3>
 <p>Before running the installer, ensure you have:
 *   A local Git repository hosting your project.
@@ -1513,142 +1496,103 @@
 *   <strong>Astral <code>uv</code></strong> package manager installed (the installer will attempt to fetch it automatically if missing).</p>
 <h3 id="installation-command">Installation Command</h3>
 <p>Open your terminal at the root of your local repository and run:</p>
-<p>=== "Linux / macOS"
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Linux / macOS</label><label for="__tabbed_1_2">Windows</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </span></code></pre></div></p>
-<p>=== "Windows"
-    Windows users must run the installation command inside a <strong>Git Bash</strong> terminal:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
-</span></code></pre></div></p>
+</div>
+</div>
+</div>
 <h3 id="what-the-installation-script-does">What the Installation Script Does</h3>
 <ol>
 <li><strong>Validation</strong>: Verifies your local Git repository and detects a working Python interpreter.</li>
-<li><strong>Dependencies Setup</strong>: Ensures <code>gh</code> and <code>uv</code> are available. It installs <code>tomlkit</code> locally to support parsing configuration files.</li>
-<li><strong>Workflow Injections</strong>: Injects <code>.github/workflows/cluster-ci.yml</code> which handles the cluster's remote execution steps.</li>
-<li><strong>Repository Settings</strong>: Creates the <code>.cluster-ci</code> configuration file template if missing, and updates <code>.gitignore</code> to ignore internal logs.</li>
-<li><strong>Pre-flight Scanner Hook</strong>: Installs a Git pre-commit hook (<code>.git/hooks/pre-commit</code>) running the dependency validation suite (<code>validate_pyproject.py</code>) before allowing commits.</li>
+<li><strong>Dependencies Setup</strong>: Ensures <code>gh</code> and <code>uv</code> are available.</li>
+<li><strong>Workflow Injection</strong>: Injects <code>.github/workflows/cluster-ci.yml</code> for remote execution.</li>
+<li><strong>Repository Settings</strong>: Creates the <a href="../configuration/"><code>.cluster-ci</code> configuration file</a> and updates <code>.gitignore</code>.</li>
+<li><strong>Pre-flight Scanner Hook</strong>: Installs a Git pre-commit hook that validates your <code>pyproject.toml</code> before each commit.</li>
 <li><strong>CLI Installation</strong>:<ul>
-<li>Installs <code>cluster_run.py</code> to <code>$HOME/.local/bin/cluster-run</code>.</li>
-<li><strong>Windows Wrapper</strong>: Creates <code>cluster-run.cmd</code> inside the target directory so you can invoke <code>cluster-run</code> directly from <strong>PowerShell</strong> or <strong>CMD</strong>.</li>
-<li><strong>PATH Configuration</strong>: Appends the binary path to your shell configuration (<code>.bashrc</code> / <code>.zshrc</code>) or Windows User Environment Variables.</li>
+<li>Installs <code>cluster-run</code> to <code>$HOME/.local/bin/</code>.</li>
+<li><strong>Windows</strong>: Creates <code>cluster-run.cmd</code> so you can invoke <code>cluster-run</code> from PowerShell or CMD.</li>
+<li>Appends the binary path to your shell configuration (<code>.bashrc</code> / <code>.zshrc</code>) or Windows environment variables.</li>
 </ul>
 </li>
 </ol>
 <p><em>After installing, restart your terminal or run <code>source ~/.bashrc</code> (or equivalent) to reload your PATH.</em></p>
 <hr />
-<h2 id="2-the-shadow-commit-mechanism">2. The "Shadow Commit" Mechanism</h2>
-<p>To run experiments without polluting your workspace or Git history, <code>cluster-run</code> utilizes a <strong>Shadow Commit</strong> architecture:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[Local Workspace] ---(cluster-run)---&gt; [Temporary GIT_INDEX_FILE]
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                                                      |
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>                                           Create detached commit
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                                           (Modified + Untracked files)
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                                                      |
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>                                           Force-push to branch:
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>                                     refs/heads/cluster-draft/&lt;username&gt;
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>                                                      |
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>                                           Push tag: cluster-run
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>                                                      |
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>                                            [Triggers GHA Workflow]
-</span></code></pre></div>
-<ul>
-<li><strong>Zero Pollution</strong>: It isolates your workspace's Git index using a temporary index file (<code>GIT_INDEX_FILE</code>). Your local working tree and branch status remain completely untouched.</li>
-<li><strong>File Scope</strong>: The shadow commit packages all modified, deleted, and untracked files in your repository, ensuring the remote worker runs the exact code currently in your editor.</li>
-<li><strong>Git Reference</strong>: The commit is pushed to a remote branch named <code>refs/heads/cluster-draft/&lt;github_username&gt;</code>.</li>
-<li><strong>Trigger</strong>: A git tag named <code>cluster-run</code> is updated on the remote repository, triggering the GitHub Actions workflow.</li>
-</ul>
+<h2 id="2-how-cluster-run-works">2. How <code>cluster-run</code> Works</h2>
+<p>When you run <code>cluster-run</code>, the CLI:</p>
+<ol>
+<li><strong>Packages your code</strong> — Creates a temporary "shadow commit" containing all your modified and untracked files, without touching your local branch or Git history.</li>
+<li><strong>Pushes to GitHub</strong> — The shadow commit is pushed to a remote branch (<code>cluster-draft/&lt;username&gt;</code>), triggering the CI pipeline.</li>
+<li><strong>Streams logs</strong> — You see real-time output from the cluster worker directly in your terminal.</li>
+<li><strong>Pulls results</strong> — When the job completes, metrics and plots are automatically synced back to your local workspace.</li>
+</ol>
+<p>Your local working tree and branch status remain <strong>completely untouched</strong> throughout this process.</p>
 <hr />
 <h2 id="3-real-time-log-streaming">3. Real-Time Log Streaming</h2>
-<p>Cluster-CI streams terminal logs from the executing Docker container back to your local client terminal in real-time.</p>
-<ol>
-<li><strong>Primary Channel (<code>ppng.io</code>)</strong>: The worker pipes output directly to the pub/sub service <code>ppng.io/cluster-ci-log-&lt;commit_sha&gt;</code>. The <code>cluster-run</code> client subscribes to this stream for ultra-low latency.</li>
-<li><strong>Fallback Mode (<code>gh run view</code>)</strong>: If <code>ppng.io</code> is unreachable or blocked by firewalls, the client falls back to polling the GitHub Actions API via <code>gh run view --log</code>. This fallback features higher latency but guarantees you receive the logs.</li>
-<li><strong>Noise Filtering</strong>: The client filters out system telemetry, SSH handshake noise, and Tmux status lines.</li>
-<li><strong>Tqdm Handling</strong>: The client processes carriage returns (<code>\r</code>) so that progress bars update in-place without generating thousands of lines of log spam. The full logs saved to disk only contain the final 100% completion lines.</li>
-<li><strong>Local Log Directory</strong>: Logs are duplicated to <code>.cluster-ci-logs/cluster-ci-run-&lt;timestamp&gt;.log</code>. The CLI automatically keeps only the 5 most recent files to conserve disk space.</li>
-</ol>
+<p>Cluster-CI streams logs from the executing container back to your terminal in real-time.</p>
+<ul>
+<li><strong>Primary channel</strong>: Low-latency streaming via <code>ppng.io</code>.</li>
+<li><strong>Fallback</strong>: If <code>ppng.io</code> is unreachable, the client polls the GitHub Actions API (<code>gh run view --log</code>).</li>
+<li><strong>Progress bars</strong>: <code>tqdm</code> progress bars update in-place without generating log spam.</li>
+<li><strong>Local copies</strong>: Logs are saved to <code>.cluster-ci-logs/</code> (last 5 runs kept automatically).</li>
+</ul>
 <hr />
 <h2 id="4-command-reference">4. Command Reference</h2>
 <h3 id="cluster-run-default-execution"><code>cluster-run</code> (Default Execution)</h3>
 <p>Triggers a shadow run of your workspace.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cluster-run
 </span></code></pre></div>
-*   Performs pre-flight checks, verifies <code>.gitattributes</code>, packages the shadow commit, and pushes to the cluster.
+*   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster.
 *   Streams logs in real-time.
-*   <strong>Post-Run Sync</strong>: Automatically pulls back the updated DVC locks, metrics, and plots from the remote branch to your local workspace upon successful completion.</p>
+*   Automatically pulls back updated metrics and plots on completion.</p>
 <h3 id="cluster-run-list"><code>cluster-run list</code></h3>
 <p>List recent runs.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>list
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run<span class="w"> </span>list
 </span></code></pre></div>
-*   Queries GitHub Actions for recent "Cluster-CI Execution" runs.
 *   Displays the run ID, status (Completed, In-Progress, Queued), and completion time.</p>
 <h3 id="cluster-run-view"><code>cluster-run view</code></h3>
 <p>View logs for a run.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
 </span></code></pre></div>
-*   If <code>&lt;run_id&gt;</code> is omitted, it automatically targets your last triggered run.
-*   Streams the log output of the target job (either live or historical).</p>
+*   If <code>&lt;run_id&gt;</code> is omitted, it targets your last triggered run.</p>
 <h3 id="cluster-run-cancel"><code>cluster-run cancel</code></h3>
 <p>Terminate a running job.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
 </span></code></pre></div>
 *   If <code>&lt;run_id&gt;</code> is omitted, it targets your latest active run.
-*   Sends an API request (<code>POST /api/jobs/&lt;job_id&gt;/stop</code>) to the headnode scheduler to kill the executing container on the worker and release resources.
-*   Cancels the associated GitHub Actions run and cleans up the local <code>.cluster-ci-run.json</code> tracking file.</p>
+*   Sends a cancellation request to the cluster and cleans up local tracking files.</p>
 <h3 id="cluster-run-sync"><code>cluster-run sync</code></h3>
 <p>Manually synchronize remote results.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>sync
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>sync
 </span></code></pre></div>
-*   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote <code>cluster-draft/&lt;username&gt;</code> branch and applies them to your local directory.
+*   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote branch and applies them to your local directory.
 *   Useful if log streaming was interrupted or if you want to pull results from an older run.</p>
 <hr />
-<h2 id="5-safety-features-fault-tolerance">5. Safety Features &amp; Fault Tolerance</h2>
+<h2 id="5-safety-features">5. Safety Features</h2>
 <h3 id="orphaned-run-recovery">Orphaned Run Recovery</h3>
-<p>If your local terminal crashes or you force-kill <code>cluster-run</code> (e.g. via <code>kill -9</code>), the active job continues executing on the cluster, consuming GPU resources.
-*   To prevent resource leaks, <code>cluster-run</code> writes metadata (PID and Run ID) to a local <code>.cluster-ci-run.json</code> file.
-*   The next time you invoke <strong>any</strong> <code>cluster-run</code> command, the CLI inspects this file.
-*   If it detects the local PID is dead but the run is still marked active, it identifies the run as "orphaned".
-*   It immediately sends a termination request to the scheduler, reclaiming cluster RAM and VRAM automatically.</p>
-<h3 id="line-ending-protection-gitattributes">Line-Ending Protection (<code>.gitattributes</code>)</h3>
-<p>When sharing code between Windows client machines and Linux worker machines, line-ending translation (converting LF to CRLF) can corrupt binary files (such as PyTorch models <code>.pt</code> or pickle archives <code>.pkl</code>) during DVC/Git synchronization.
-*   The <code>cluster-run</code> client automatically inspects the repository's <code>.gitattributes</code> file.
-*   If missing, it configures rules to ensure binary extensions are strictly treated as <code>binary</code> and raw text files are normalized properly:
-    <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>*.pt binary
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>*.pkl binary
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>*.png binary
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>*.jpg binary
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>*.gif binary
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>*.csv text eol=lf
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>*.yaml text eol=lf
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>*.json text eol=lf
-</span></code></pre></div>
-This prevents Git from modifying the internal bytes of your files, avoiding model loading failures on the cluster workers.</p>
-<h3 id="smart-cwd-redirection">Smart CWD Redirection</h3>
-<p>The <code>cluster-run</code> client executable (defined in <code>src/cluster/cluster_run.py</code>) redirects the current working directory (CWD) to allow execution from outside the target repository.</p>
-<ol>
-<li><strong>Repository Validation</strong>: Upon startup, the client checks if the CWD contains a <code>.cluster-ci</code> configuration file.</li>
-<li><strong>Fallback Database Scan</strong>: If the file is missing, the client searches for a local <code>db.json</code> database associated with the <code>antigravity-apk</code> server (at <code>C:\Users\hjamet\Documents\code\antigravity-apk\server\db.json</code> or <code>~\Documents\code\antigravity-apk\server\db.json</code>).</li>
-<li><strong>Project Resolution</strong>: It parses the <code>projects</code> array in <code>db.json</code>. For each project path, it checks for a <code>.cluster-ci</code> file.</li>
-<li><strong>Automatic Redirect</strong>: If a matching project is found, it updates the process directory via <code>os.chdir(proj_path)</code> and prints:
-    <code>[CWD Redirect] Redirecting cluster-run to Cluster-CI project: &lt;path&gt;</code>
-    If no project matches, it aborts execution with an error.</li>
-</ol>
-<h3 id="common-base-post-run-sync-validation">Common-Base Post-Run Sync Validation</h3>
-<p>During post-job execution, <code>cluster-run</code> fetches metrics, plots, and metadata from the cluster's temporary draft branch (<code>origin/cluster-draft/&lt;user&gt;</code>) via <code>fetch_cluster_results()</code>.</p>
-<ol>
-<li><strong>The Overwrite Risk</strong>: If a user cancels a run before the shadow push completes, the draft branch HEAD will point to a previous run. Performing a simple diff and checkout against this stale ref would treat local uncommitted code changes as modifications to revert, wiping out the developer's work.</li>
-<li><strong>Common-Base Ancestorship Check</strong>: To prevent this, the client checks out files only after validating that the local shadow commit (<code>base_ref</code>) is an ancestor of the remote branch HEAD (<code>remote_sha</code>):
-    <code>git merge-base --is-ancestor &lt;local_shadow_sha&gt; origin/&lt;draft_branch&gt;</code></li>
-<li><strong>Checkout Filter</strong>: If the check returns non-zero (meaning they do not share our local commit as an ancestor), the sync is aborted with the message <code>"Run was cancelled before push completed. No new results to sync."</code>. If it succeeds, the client diffs the commits (<code>git diff --diff-filter=AM</code>) and checks out the updated metrics, plots, and <code>dvc.lock</code> files.</li>
-</ol>
-<h3 id="interactive-pre-commit-validation">Interactive Pre-commit Validation</h3>
-<p>The script <code>src/runner/validate_pyproject.py</code> acts as a pre-commit check to validate package requirements.</p>
-<ol>
-<li><strong>Python Version Compatibility</strong>: It uses <code>tomlkit</code> to parse <code>pyproject.toml</code>. It verifies that <code>project.requires-python</code> does not exclude Python 3.12 (e.g. <code>&lt;3.11</code>). In interactive mode, it prompts the user to auto-correct it to <code>"&gt;=3.12"</code>.</li>
-<li><strong>Torch Pinning Relaxation</strong>: Strict dependency pinning (e.g., <code>torch==2.1.2</code>) conflicts with custom optimized CUDA builds pre-installed in the cluster's NGC container. The script identifies these pins and, in interactive mode, prompts the user to relax them (e.g. <code>torch&gt;=2.0</code>, <code>torchvision&gt;=0.15</code>).</li>
-<li><strong>ARM64 Resolution Simulation</strong>: It fetches the central constraints file <code>cluster_constraints.txt</code> from GitHub. To prevent false positives, it excludes packages declared as direct project dependencies. It then runs:
-    <code>uv pip compile --python-platform aarch64-unknown-linux-gnu --python 3.12 -c &lt;filtered_constraints&gt; pyproject.toml</code>
-    This simulates dependency resolution for the ARM64 platform before code is pushed to the cluster.</li>
-</ol>
+<p>If your terminal crashes or you force-kill <code>cluster-run</code>, the active job continues on the cluster. The next time you run any <code>cluster-run</code> command, the CLI detects the orphaned run and automatically sends a termination request, freeing cluster resources.</p>
+<h3 id="line-ending-protection">Line-Ending Protection</h3>
+<p>When sharing code between Windows and Linux, line-ending differences can corrupt binary files (models, images). The <code>cluster-run</code> CLI automatically configures <code>.gitattributes</code> to prevent this:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>*.pt binary
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>*.pkl binary
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>*.png binary
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>*.csv text eol=lf
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>*.yaml text eol=lf
+</span></code></pre></div></p>
+<h3 id="pre-commit-validation">Pre-commit Validation</h3>
+<p>The installation injects a Git pre-commit hook that validates your <code>pyproject.toml</code> before each commit:</p>
+<ul>
+<li><strong>Python version</strong>: Ensures <code>requires-python</code> accepts Python 3.12 (the cluster's runtime version).</li>
+<li><strong>PyTorch pinning</strong>: Blocks strict version pins (<code>torch==2.1.2</code>) that conflict with the cluster's pre-installed CUDA-optimized PyTorch. Use <code>torch&gt;=2.0</code> or leave unpinned.</li>
+<li><strong>ARM64 compatibility</strong>: Simulates dependency resolution for the cluster's ARM64 architecture to catch build failures early.</li>
+</ul>
 
 
 

@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/dashboard/explorer_premium/">
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/configuration/">
       
       
+        <link rel="prev" href="../dashboard/">
+      
+      
+        <link rel="next" href="../support/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Explorateur d'Artefacts Premium & Navigation Bidirectionnelle - Cluster-CI</title>
+        <title>Configuration Reference - Cluster-CI</title>
       
     
     
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#explorateur-dartefacts-premium-navigation-bidirectionnelle" class="md-skip">
+        <a href="#configuration-reference-cluster-ci" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Explorateur d'Artefacts Premium &amp; Navigation Bidirectionnelle
+              Configuration Reference
             
           </span>
         </div>
@@ -226,11 +230,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../user/onboarding/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../onboarding/" class="md-tabs__link">
           
   
   
@@ -346,26 +352,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -383,7 +394,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -401,7 +412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/onboarding/" class="md-nav__link">
+      <a href="../onboarding/" class="md-nav__link">
         
   
   
@@ -429,7 +440,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/client/" class="md-nav__link">
+      <a href="../client/" class="md-nav__link">
         
   
   
@@ -457,7 +468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/dvc/" class="md-nav__link">
+      <a href="../dvc/" class="md-nav__link">
         
   
   
@@ -485,7 +496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/containers/" class="md-nav__link">
+      <a href="../containers/" class="md-nav__link">
         
   
   
@@ -513,7 +524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/ci_queue/" class="md-nav__link">
+      <a href="../ci_queue/" class="md-nav__link">
         
   
   
@@ -541,7 +552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/dashboard/" class="md-nav__link">
+      <a href="../dashboard/" class="md-nav__link">
         
   
   
@@ -566,10 +577,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../user/configuration/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -585,6 +623,120 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameter Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parameter Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#essential-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Essential Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-application-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web Application Support
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docker-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Overrides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#default-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default Template
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -597,7 +749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../user/support/" class="md-nav__link">
+      <a href="../support/" class="md-nav__link">
         
   
   
@@ -1022,10 +1174,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-contexte-objectifs" class="md-nav__link">
+  <a href="#file-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Contexte &amp; Objectifs
+        File Format
       
     </span>
   </a>
@@ -1033,22 +1185,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-architecture-technique-apis" class="md-nav__link">
+  <a href="#parameter-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Architecture Technique &amp; APIs
+        Parameter Reference
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Architecture Technique &amp; APIs">
+    <nav class="md-nav" aria-label="Parameter Reference">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-liste-des-artefacts-recents-apiprojectsrepoartifactslatest" class="md-nav__link">
+  <a href="#essential-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Liste des Artefacts Récents (/api/projects/&lt;repo&gt;/artifacts/latest)
+        Essential Parameters
       
     </span>
   </a>
@@ -1056,10 +1208,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b-historique-physique-dun-artefact-apiprojectsrepoartifacthistory" class="md-nav__link">
+  <a href="#execution-control" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. Historique Physique d'un Artefact (/api/projects/&lt;repo&gt;/artifact/history)
+        Execution Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-application-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web Application Support
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docker-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Overrides
       
     </span>
   </a>
@@ -1072,63 +1246,24 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-implementation-frontend-dashboardhtml" class="md-nav__link">
+  <a href="#complete-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Implémentation Frontend (dashboard.html)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Implémentation Frontend (dashboard.html)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#a-design-system-premium" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A. Design System Premium
+        Complete Example
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#b-onglets-de-navigation-projet" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#default-template" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. Onglets de Navigation Projet
+        Default Template
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#c-arborescence-pliable-filtrage-bottom-up" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        C. Arborescence Pliable &amp; Filtrage Bottom-Up
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#d-visualiseur-de-versions-physiques-uniques" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        D. Visualiseur de Versions Physiques Uniques
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1149,60 +1284,174 @@
 
 
 
-<h1 id="explorateur-dartefacts-premium-navigation-bidirectionnelle">Explorateur d'Artefacts Premium &amp; Navigation Bidirectionnelle</h1>
-<p>Cette note technique décrit l'implémentation de la refonte premium du Dashboard de Cluster-CI, introduisant la navigation bidirectionnelle inversée (de l'artefact vers les runs) et l'explorateur d'artefacts interactif.</p>
+<h1 id="configuration-reference-cluster-ci">Configuration Reference (<code>.cluster-ci</code>)</h1>
+<p>The <code>.cluster-ci</code> file at the root of your repository controls how your job is scheduled and executed on the cluster. It is created automatically by the <a href="../onboarding/">install script</a>, but you should customize it for each project.</p>
 <hr />
-<h2 id="1-contexte-objectifs">1. Contexte &amp; Objectifs</h2>
-<p>L'interface initiale de Cluster-CI était principalement orientée "Runs" : pour accéder à un fichier, l'utilisateur devait obligatoirement trouver la run spécifique qui l'avait généré, puis explorer son arborescence de fichiers.
-Cette approche était peu intuitive pour les chercheurs souhaitant :
-- Accéder directement aux versions les plus récentes de leurs modèles ou jeux de données (les artefacts).
-- Naviguer chronologiquement dans l'historique physique d'un artefact spécifique pour comparer des versions.
-- Identifier précisément quelle exécution (run) a produit une version particulière de cet artefact.</p>
-<p><strong>La refonte apporte :</strong>
-1. Un <strong>Design Premium</strong> basé sur un thème clair moderne et épuré, des ombres douces et la typographie Google Font <strong>Inter</strong> (et <strong>Fira Code</strong> pour le code/logs).
-2. Un <strong>Explorateur d'Artefacts transversaux</strong> affichant l'arborescence complète pliable et interactive du dernier commit réussi.
-3. Une <strong>Navigation Bidirectionnelle (Artefact ➔ Runs)</strong> permettant de consulter l'historique d'un fichier DVC, de basculer d'une version physique à une autre et d'accéder instantanément à la run correspondante.</p>
+<h2 id="file-format">File Format</h2>
+<p>The file uses a simple <code>KEY=VALUE</code> format (one parameter per line). Lines starting with <code>#</code> are comments.</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Hardware requirements</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">16GB</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">6</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Optional: restrict to specific workers</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Optional: run only specific DVC stages</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="na">STAGES</span><span class="o">=</span><span class="s">train</span>
+</span></code></pre></div>
 <hr />
-<h2 id="2-architecture-technique-apis">2. Architecture Technique &amp; APIs</h2>
-<p>Pour soutenir cette nouvelle navigation, deux routes clés ont été implémentées dans le backend Flask du Headnode (<code>headnode_service.py</code>) :</p>
-<h3 id="a-liste-des-artefacts-recents-apiprojectsrepoartifactslatest">A. Liste des Artefacts Récents (<code>/api/projects/&lt;repo&gt;/artifacts/latest</code>)</h3>
-<p>Cette route liste de manière récursive tous les fichiers DVC produits dans le dernier run <code>completed</code> réussi.
-- <strong>Fonctionnement</strong> : 
-  1. Le scheduler interroge la base de données SQLite pour trouver la dernière run réussie (<code>status = 'completed'</code> et <code>commit_hash IS NOT NULL</code>).
-  2. Il utilise l'utilitaire DVC local ou distant pour lister récursivement les fichiers : <code>dvc list &lt;source&gt; --rev &lt;commit_hash&gt; --dvc-only --recursive --json</code>.
-  3. Le résultat JSON brut est renvoyé au frontend.</p>
-<h3 id="b-historique-physique-dun-artefact-apiprojectsrepoartifacthistory">B. Historique Physique d'un Artefact (<code>/api/projects/&lt;repo&gt;/artifact/history</code>)</h3>
-<p>Cette route extrait l'historique de toutes les versions d'un fichier DVC spécifique à travers l'historique des commits associés aux runs réussies.
-- <strong>Optimisation Git/DVC</strong> : Au lieu d'appeler le lourd outil <code>dvc list</code> sur l'ensemble de l'historique (ce qui prendrait plusieurs secondes par version), le backend inspecte directement le fichier <code>.dvc</code> correspondant ou le fichier <code>dvc.lock</code> dans l'historique Git via <code>git show &lt;commit_hash&gt;:&lt;file_path&gt;.dvc</code>.
-- <strong>Parsing YAML ultra-résistant</strong> : L'extraction s'appuie sur une double stratégie :
-  1. Tentative de parsing YAML propre via <code>PyYAML</code>.
-  2. Fallback automatique via un parseur regex ligne par ligne en cas de fichier mal formé ou de syntaxe DVC fluctuante.
-- <strong>Résultat</strong> : Un tableau contenant l'historique des commits associés aux hashes MD5 uniques du fichier, les tailles, dates, branches et messages de commits.</p>
+<h2 id="parameter-reference">Parameter Reference</h2>
+<h3 id="essential-parameters">Essential Parameters</h3>
+<p>These parameters control resource allocation and job timeout. Every <code>.cluster-ci</code> file should include them.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Required</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>MAX_RUNTIME_HOURS</code></td>
+<td style="text-align: left;"><strong>Yes</strong></td>
+<td style="text-align: left;">—</td>
+<td style="text-align: left;">Maximum allowed runtime in hours (1–24). The job is automatically killed if it exceeds this limit.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>REQUIRED_RAM</code></td>
+<td style="text-align: left;">No</td>
+<td style="text-align: left;"><code>2GB</code></td>
+<td style="text-align: left;">Minimum physical RAM required on the worker. The cluster reserves 8 GB per worker for the OS, so a 128 GB worker can accept up to 120 GB.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>REQUIRED_VRAM</code></td>
+<td style="text-align: left;">No</td>
+<td style="text-align: left;"><code>0GB</code></td>
+<td style="text-align: left;">Minimum GPU VRAM required. Set to <code>0GB</code> (or omit) to allow execution on CPU-only nodes.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Set realistic values</p>
+<p>If you request more RAM or VRAM than any worker can provide, your job will stay in the queue indefinitely. Check the <a href="../dashboard/">Dashboard</a> to see available worker capacities.</p>
+</div>
+<h3 id="execution-control">Execution Control</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>STAGES</code></td>
+<td style="text-align: left;"><em>(empty — runs full pipeline)</em></td>
+<td style="text-align: left;">Comma-separated list of DVC stage names to execute. If empty or set to <code>all</code>, the cluster runs <code>dvc repro</code> (the full pipeline). To run a subset, specify the <strong>last stage</strong> you want — DVC will automatically run all its upstream dependencies.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ALLOWED_WORKERS</code></td>
+<td style="text-align: left;"><em>(empty — all workers eligible)</em></td>
+<td style="text-align: left;">Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="web-application-support">Web Application Support</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>EXPOSED_PORT</code></td>
+<td style="text-align: left;"><em>(none)</em></td>
+<td style="text-align: left;">Port number to expose from the container to the host network (e.g. <code>8501</code> for Streamlit, <code>7860</code> for Gradio, <code>6006</code> for TensorBoard). The port must be ≥ 1024 and not 5000 or 6000 (reserved by the cluster). When set, the cluster maps this port so your web app is accessible from the <a href="../dashboard/">Dashboard</a>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>CUSTOM_WEB_APP</code></td>
+<td style="text-align: left;"><code>false</code></td>
+<td style="text-align: left;">Set to <code>true</code> if your pipeline runs a custom web application (Gradio, Streamlit, etc.) instead of the default DVC-Viewer. When enabled, the cluster skips launching the built-in DVC-Viewer and routes traffic directly to your app on the <code>EXPOSED_PORT</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example — Exposing a Gradio app:</strong>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">16GB</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">4</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="na">EXPOSED_PORT</span><span class="o">=</span><span class="s">7860</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="na">CUSTOM_WEB_APP</span><span class="o">=</span><span class="s">true</span>
+</span></code></pre></div></p>
+<p>Your Gradio app will then be accessible from the Dashboard while the job is running.</p>
+<h3 id="docker-overrides">Docker Overrides</h3>
+<p>These parameters let you customize the Docker image and runtime settings. See the <a href="../containers/">Docker Containers Guide</a> for detailed usage.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Parameter</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>DOCKER_IMAGE</code></td>
+<td style="text-align: left;"><code>nvcr.io/nvidia/pytorch:26.05-py3</code></td>
+<td style="text-align: left;">Docker image to use for the job container.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>DOCKER_PLATFORM</code></td>
+<td style="text-align: left;"><em>(auto-detected)</em></td>
+<td style="text-align: left;">Docker platform flag (e.g. <code>linux/arm64</code>, <code>linux/amd64</code>).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>DOCKER_FLAGS</code></td>
+<td style="text-align: left;"><em>(none)</em></td>
+<td style="text-align: left;">Extra flags passed directly to <code>docker run</code> (e.g. <code>--cap-add=SYS_NICE</code>, <code>--shm-size=16g</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>All three parameters support <strong>architecture-specific variants</strong> by appending <code>_ARM64</code> or <code>_AMD64</code>:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="na">DOCKER_IMAGE_ARM64</span><span class="o">=</span><span class="s">nvcr.io/nvidia/pytorch:26.05-py3</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="na">DOCKER_IMAGE_AMD64</span><span class="o">=</span><span class="s">my-registry/my-image-amd64:latest</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="na">DOCKER_FLAGS_ARM64</span><span class="o">=</span><span class="s">--cap-add=SYS_NICE</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="na">DOCKER_FLAGS_AMD64</span><span class="o">=</span><span class="s">--shm-size=16g</span>
+</span></code></pre></div>
+<p>Architecture-specific values take priority over the global value on matching workers.</p>
 <hr />
-<h2 id="3-implementation-frontend-dashboardhtml">3. Implémentation Frontend (dashboard.html)</h2>
-<h3 id="a-design-system-premium">A. Design System Premium</h3>
-<ul>
-<li><strong>Variables CSS</strong> : Définition d'un thème à base de tons ardoises (<code>#f8fafc</code>, <code>#e2e8f0</code>, <code>#0f172a</code>), un bleu saphir moderne pour les interactions primaires (<code>#2563eb</code>), un vert émeraude pour les succès et un ambre pour les dossiers.</li>
-<li><strong>Typographie</strong> : Chargement asynchrone des polices <strong>Inter</strong> pour les textes, et <strong>Fira Code</strong> pour les blocs monospécifiques, améliorant drastiquement le rendu visuel.</li>
-<li><strong>Animations</strong> : Transitions CSS douces au survol (<code>cubic-bezier</code>), effets d'élévation sur les cartes de projets et d'artefacts.</li>
-</ul>
-<h3 id="b-onglets-de-navigation-projet">B. Onglets de Navigation Projet</h3>
-<p>Lors du clic sur un projet, l'affichage se divise en deux onglets élégants :
-1. <strong>Runs &amp; Logs</strong> : L'historique traditionnel avec logs segmentés, couleurs d'état, lazy loading, et gestion du stop-job.
-2. <strong>Artefacts Actuels</strong> : La vue transversale des fichiers DVC récents.</p>
-<h3 id="c-arborescence-pliable-filtrage-bottom-up">C. Arborescence Pliable &amp; Filtrage Bottom-Up</h3>
-<ul>
-<li><strong>Reconstruction d'arbre</strong> : Les artefacts étant renvoyés sous forme de liste de chemins à plat (ex: <code>data/models/weights.pt</code>), le frontend reconstruit dynamiquement en JavaScript un arbre imbriqué de dossiers et de fichiers (<code>buildTreeFromPaths</code>).</li>
-<li><strong>Pliage interactif</strong> : Clic sur un dossier pour le replier/déplier avec mise à jour des chevrons.</li>
-<li><strong>Filtrage Intelligent</strong> : Un champ de recherche instantané filtre les fichiers à la saisie. Si un fichier correspond, ses dossiers parents sont automatiquement dépliés et affichés, tandis que les dossiers ne contenant aucun résultat sont masqués (filtrage bottom-up récursif).</li>
-</ul>
-<h3 id="d-visualiseur-de-versions-physiques-uniques">D. Visualiseur de Versions Physiques Uniques</h3>
-<p>Lors du clic sur un artefact dans l'arbre :
-1. Un modal d'aperçu moderne s'ouvre (gérant les images, fichiers CSV tabulés et fichiers textes tronqués à 100 lignes pour des raisons de performance).
-2. L'historique physique de l'artefact est récupéré et <strong>regroupé par hash MD5 unique</strong> afin d'éliminer les doublons physiques (les runs ayant tourné sans modifier l'artefact n'apparaissent pas comme de nouvelles versions physiques).
-3. Un sélecteur dynamique en Français liste ces versions uniques chronologiquement avec leur date, taille et commit.
-4. Des boutons directionnels "Plus ancienne" / "Plus récente" permettent une navigation rapide et fluide.
-5. Un bouton <strong>"Consulter le Run"</strong> permet de fermer instantanément la prévisualisation et d'ouvrir directement le modal de logs segmentés de l'exécution ayant produit cette version physique de l'artefact.</p>
+<h2 id="complete-example">Complete Example</h2>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># ── Resource Requirements ──</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">12</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># ── Execution Control ──</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="na">STAGES</span><span class="o">=</span><span class="s">train</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># ── Docker (optional) ──</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/my-org/my-custom-image:latest</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># ── Web Application (optional) ──</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="c1"># EXPOSED_PORT=7860</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1"># CUSTOM_WEB_APP=true</span>
+</span></code></pre></div>
+<hr />
+<h2 id="default-template">Default Template</h2>
+<p>When you run the install script, the following minimal template is created:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">0GB</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">1</span>
+</span></code></pre></div>
+<p>Adjust these values to match your project's needs before running <code>cluster-run</code>.</p>
 
 
 
