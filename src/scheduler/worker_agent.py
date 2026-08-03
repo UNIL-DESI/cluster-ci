@@ -629,6 +629,13 @@ def execute_job(job):
                 pass
             log_file.flush()
             update_job_status(job_id, 'failed', 137, commit_hash=commit_hash)
+        elif exit_code == 255:
+            error_msg = f"❌ [CLUSTER CRITICAL FAILURE] Execution process aborted unexpectedly (Exit code 255).\n"
+            sys.stderr.write(error_msg)
+            sys.stderr.flush()
+            log_file.write(error_msg)
+            log_file.flush()
+            update_job_status(job_id, 'failed', 255, commit_hash=commit_hash)
         elif exit_code == 0:
             update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash)
         elif exit_code < 0:

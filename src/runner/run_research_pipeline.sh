@@ -860,19 +860,25 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     elif [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
         EXEC_RET=137
         log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
+    elif [ $EXEC_RET -eq 255 ]; then
+        log_error "❌ Critical Failure: Execution process aborted unexpectedly (Exit code: 255)."
     else
         log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
     fi
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
 
 echo "=========================================================================="
-log_success "CLUSTER-CI: GitOps execution completed successfully."
+if [ -z "$EXEC_RET" ] || [ "$EXEC_RET" -eq 0 ]; then
+    log_success "CLUSTER-CI: GitOps execution completed successfully."
+else
+    log_error "CLUSTER-CI: GitOps execution failed with exit code $EXEC_RET."
+fi
 echo "=========================================================================="
 
 echo "===STAGE:sync:END==="
@@ -893,12 +899,19 @@ if [ -n "$GITHUB_STEP_SUMMARY" ]; then
     timeout 30 docker_exec "dvc plots diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No plot changes or error." >> "$GITHUB_STEP_SUMMARY"
 fi
 
-if [ $EXEC_RET -ne 0 ]; then
+if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     if [ $EXEC_RET -eq 137 ]; then
         # Already logged above (RAM or VRAM OOM), just exit
         true
+    elif [ $EXEC_RET -eq 255 ]; then
+        log_error "❌ Critical Failure: Execution process aborted unexpectedly (Exit code: 255)."
     else
         log_error "Exiting with error code $EXEC_RET due to previous failure."
     fi
+    sync 2>/dev/null || true
+    sleep 1
     exit $EXEC_RET
 fi
+
+sync 2>/dev/null || true
+sleep 1
