@@ -246,35 +246,74 @@ def submit_job():
     env_vars = data.get('env_vars') # Dictionary of secrets
     job_id = str(uuid.uuid4())
 
+    is_local_raw = data.get('is_local', False)
+    if isinstance(is_local_raw, str):
+        is_local = is_local_raw.lower() in ('true', '1')
+    else:
+        is_local = bool(is_local_raw)
+    local_repo_path = data.get('local_repo_path')
+
+    # Validation when is_local=True (Fail-Fast)
+    if is_local:
+        if not local_repo_path or not isinstance(local_repo_path, str):
+            err_msg = "is_local is True but local_repo_path is missing or invalid"
+            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
+            return jsonify({"error": err_msg}), 400
+        if not os.path.exists(local_repo_path) or not os.path.isdir(local_repo_path):
+            err_msg = f"local_repo_path does not exist or is not a directory: '{local_repo_path}'"
+            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
+            return jsonify({"error": err_msg}), 400
+        cluster_ci_path = os.path.join(local_repo_path, ".cluster-ci")
+        if not os.path.exists(cluster_ci_path):
+            err_msg = f"local_repo_path '{local_repo_path}' does not contain .cluster-ci file"
+            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
+            return jsonify({"error": err_msg}), 400
+
+        # Auto-restrict execution to Headnode if allowed_workers is not provided
+        if not allowed_workers:
+            headnode_hostname = socket.gethostname()
+            allowed_workers = [headnode_hostname]
+            app.logger.info(f"📍 [SUBMIT_JOB] Local job submission: auto-restricting execution to Headnode hostname '{headnode_hostname}'")
+
     # Metadata extraction (Pre-flight check)
     required_hashes = []
-    repo_url = f"https://github.com/{repo}.git"
-    
-    # Prioritize token from submit_job (gh_token) over local GITHUB_PAT
-    pat = gh_token or os.environ.get("GITHUB_PAT")
-    
-    if pat:
-        repo_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
-
-    tmp_dir = tempfile.mkdtemp()
-    try:
-        # Shallow clone to get dvc.lock
-        subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
-                       check=True, capture_output=True, timeout=30)
-        # Checkout dvc.lock
-        res = subprocess.run(["git", "checkout", "origin/" + branch, "--", "dvc.lock"],
-                             cwd=tmp_dir, capture_output=True, timeout=10)
-        if res.returncode == 0:
-            lock_path = os.path.join(tmp_dir, "dvc.lock")
-            if os.path.exists(lock_path):
-                with open(lock_path, 'r') as f:
+    if is_local:
+        lock_path = os.path.join(local_repo_path, "dvc.lock")
+        if os.path.exists(lock_path):
+            try:
+                with open(lock_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    # Extract MD5 hashes
                     required_hashes = list(set(re.findall(r'md5:\s*([a-f0-9]{32})', content)))
-    except Exception as e:
-        app.logger.error(f"Metadata extraction failed for {repo}@{branch}: {e}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+                app.logger.info(f"📦 [SUBMIT_JOB] Extracted {len(required_hashes)} DVC hashes directly from local {lock_path}")
+            except Exception as e:
+                app.logger.error(f"❌ Metadata extraction from local dvc.lock failed at {lock_path}: {e}")
+        else:
+            app.logger.warning(f"⚠️ No dvc.lock found in local_repo_path '{local_repo_path}'. Continuing without pre-flight DVC hashes.")
+    else:
+        repo_url = f"https://github.com/{repo}.git"
+        pat = gh_token or os.environ.get("GITHUB_PAT")
+        if pat:
+            repo_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            # Shallow clone to get dvc.lock
+            subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
+                           check=True, capture_output=True, timeout=30)
+            # Checkout dvc.lock
+            res = subprocess.run(["git", "checkout", "origin/" + branch, "--", "dvc.lock"],
+                                 cwd=tmp_dir, capture_output=True, timeout=10)
+            if res.returncode == 0:
+                lock_path = os.path.join(tmp_dir, "dvc.lock")
+                if os.path.exists(lock_path):
+                    with open(lock_path, 'r') as f:
+                        content = f.read()
+                        # Extract MD5 hashes
+                        required_hashes = list(set(re.findall(r'md5:\s*([a-f0-9]{32})', content)))
+        except Exception as e:
+            app.logger.error(f"Metadata extraction failed for {repo}@{branch}: {e}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     username = data.get('username')
     commit_hash = data.get('commit_hash')
@@ -351,9 +390,9 @@ def submit_job():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None))
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, is_local, local_repo_path, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_repo_path))
         conn.commit()
 
     return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes)})
@@ -516,7 +555,7 @@ def clean_ghosts():
     ghost_candidate_jobs = []
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND gh_run_id IS NOT NULL")
+        cursor.execute("SELECT job_id, repo, gh_run_id, is_local FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND (is_local IS NULL OR is_local = 0) AND gh_run_id IS NOT NULL")
         ghost_candidate_jobs = [dict(row) for row in cursor.fetchall()]
         
     cleaned = 0
@@ -525,6 +564,8 @@ def clean_ghosts():
     headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
     
     for job in ghost_candidate_jobs:
+        if job.get('is_local') == 1 or not job.get('gh_run_id'):
+            continue
         url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
         try:
             resp = requests.get(url, headers=headers, timeout=5)

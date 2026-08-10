@@ -187,18 +187,32 @@ echo "==========================================================================
 echo "===STAGE:setup:BEGIN==="
 
 # 1. Creation / switch to repositories/
-log_info "[Step 1/3] Initializing local cache..."
-mkdir -p "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
-cd "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
+log_info "[Step 1/3] Initializing workspace..."
 
-# Extract just the final repo name for the folder (e.g., llm-as-recommender)
-REPO_BASENAME=$(basename "$TARGET_REPO")
-
-if [ -n "$GH_TOKEN" ]; then
-    # Silent https authentication for GitHub Actions
-    REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+if [ "$IS_LOCAL" = "1" ]; then
+    if [ -z "$LOCAL_REPO_PATH" ] || [ ! -d "$LOCAL_REPO_PATH" ]; then
+        log_error "IS_LOCAL=1 but LOCAL_REPO_PATH '$LOCAL_REPO_PATH' does not exist or is not specified."
+        exit 1
+    fi
+    MIRROR_DIR="$BASE_DIR/repositories/_local_${SAFE_JOB_ID}"
+    log_info "Local execution mode (IS_LOCAL=1): Creating execution mirror workspace in $MIRROR_DIR from $LOCAL_REPO_PATH..."
+    rm -rf "$MIRROR_DIR"
+    mkdir -p "$MIRROR_DIR"
+    cp -a "$LOCAL_REPO_PATH/." "$MIRROR_DIR/"
+    cd "$MIRROR_DIR"
 else
-    REPO_URL="https://github.com/${TARGET_REPO}.git"
+    mkdir -p "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
+    cd "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
+
+    # Extract just the final repo name for the folder (e.g., llm-as-recommender)
+    REPO_BASENAME=$(basename "$TARGET_REPO")
+
+    if [ -n "$GH_TOKEN" ]; then
+        # Silent https authentication for GitHub Actions
+        REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
+    else
+        REPO_URL="https://github.com/${TARGET_REPO}.git"
+    fi
 fi
 
 # 1.5 JIT Garbage Collection & Metadata update
@@ -246,9 +260,18 @@ function cleanup_job_resources() {
     # Kill pipeline siblings (gpu_watchdog.sh survives when only tee PID is killed)
     pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
     pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
-    python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
+    if [ "$IS_LOCAL" = "1" ]; then
+        python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "${MIRROR_DIR:-$BASE_DIR/repositories/_local_${SAFE_JOB_ID}}" 2>/dev/null || true
+    else
+        python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO" 2>/dev/null || true
+    fi
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
+
+    if [ "$IS_LOCAL" = "1" ] && [ -n "$MIRROR_DIR" ] && [ -d "$MIRROR_DIR" ]; then
+        log_info "Cleaning up local execution mirror workspace $MIRROR_DIR..."
+        rm -rf "$MIRROR_DIR" 2>/dev/null || true
+    fi
 }
 # Trap EXIT, SIGINT, and SIGTERM to ensure cleanup
 trap cleanup_job_resources EXIT SIGINT SIGTERM
@@ -267,82 +290,89 @@ for pid in $(pgrep -f "dvc-viewer" || true); do
     kill -9 "$pid" 2>/dev/null || true
 done
 
-if [ ! -d "$REPO_BASENAME/.git" ]; then
-    log_info "[Step 2.1/3] First repository fetch. Cloning in progress..."
-    git clone "$REPO_URL" "$REPO_BASENAME"
+if [ "$IS_LOCAL" = "1" ]; then
+    log_info "[Step 2.1/3] IS_LOCAL=1: Bypassing git clone / git fetch from GitHub."
+    if git rev-parse HEAD &>/dev/null; then
+        git rev-parse HEAD > .cluster-ci-commit
+    else
+        echo "local-headnode-run" > .cluster-ci-commit
+    fi
+    log_success "Local mirror workspace ready at $(pwd)."
 else
-    log_info "[Step 2.1/3] Existing repository found. Updating..."
-fi
+    if [ ! -d "$REPO_BASENAME/.git" ]; then
+        log_info "[Step 2.1/3] First repository fetch. Cloning in progress..."
+        git clone "$REPO_URL" "$REPO_BASENAME"
+    else
+        log_info "[Step 2.1/3] Existing repository found. Updating..."
+    fi
 
-cd "$REPO_BASENAME"
+    cd "$REPO_BASENAME"
 
-# Force remote URL in case it changed (ephemeral token)
-git remote set-url origin "$REPO_URL"
+    # Force remote URL in case it changed (ephemeral token)
+    git remote set-url origin "$REPO_URL"
 
-# Force fetching latest references (explicitly specify branch mapping to origin/branch
-# as GitHub Actions conditional fetch sometimes omits it)
-if [ "$TARGET_BRANCH" = "cluster-run" ]; then
-    log_info "Triggered by tag 'cluster-run'. Fetching tag reference and draft branches..."
-    for i in {1..5}; do
-        if git fetch origin "+refs/tags/cluster-run:refs/tags/cluster-run"; then
-            git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" || true
-            break
+    # Force fetching latest references (explicitly specify branch mapping to origin/branch
+    # as GitHub Actions conditional fetch sometimes omits it)
+    if [ "$TARGET_BRANCH" = "cluster-run" ]; then
+        log_info "Triggered by tag 'cluster-run'. Fetching tag reference and draft branches..."
+        for i in {1..5}; do
+            if git fetch origin "+refs/tags/cluster-run:refs/tags/cluster-run"; then
+                git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" || true
+                break
+            fi
+            log_warn "Failed to fetch tag cluster-run (attempt $i/5). Retrying in 5 seconds..."
+            sleep 5
+        done
+
+        # Switch and hard reset to ensure clean Git tree
+        # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
+        rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
+        log_info "Checking out tag cluster-run..."
+        git checkout -f "refs/tags/cluster-run"
+        git reset --hard "refs/tags/cluster-run"
+
+        # Detect the original draft branch associated with this commit
+        log_info "Detecting draft branch associated with tag cluster-run..."
+        # Allow git branch to output branches containing HEAD
+        DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+        if [ -n "$DRAFT_BRANCH" ]; then
+            log_info "Detected draft branch: $DRAFT_BRANCH"
+            TARGET_BRANCH="$DRAFT_BRANCH"
+            # Reset and check out the local branch tracking the remote draft branch
+            git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+            git reset --hard "origin/$TARGET_BRANCH"
+        else
+            log_warn "No draft branch containing this commit was found on origin. Running directly on detached tag cluster-run."
         fi
-        log_warn "Failed to fetch tag cluster-run (attempt $i/5). Retrying in 5 seconds..."
-        sleep 5
-    done
+    else
+        log_info "Synchronizing remote reference origin/$TARGET_BRANCH..."
+        for i in {1..5}; do
+            if git fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"; then
+                break
+            fi
+            log_warn "Failed to fetch origin/$TARGET_BRANCH (attempt $i/5). Retrying in 5 seconds..."
+            sleep 5
+        done
 
-    # Switch and hard reset to ensure clean Git tree
-    # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
-    rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
-    log_info "Checking out tag cluster-run..."
-    git checkout -f "refs/tags/cluster-run"
-    git reset --hard "refs/tags/cluster-run"
+        # Security validation: does the branch exist on remote?
+        if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+            log_error "Branch origin/$TARGET_BRANCH does not exist or was not found."
+            exit 1
+        fi
 
-    # Detect the original draft branch associated with this commit
-    log_info "Detecting draft branch associated with tag cluster-run..."
-    # Allow git branch to output branches containing HEAD
-    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
-    if [ -n "$DRAFT_BRANCH" ]; then
-        log_info "Detected draft branch: $DRAFT_BRANCH"
-        TARGET_BRANCH="$DRAFT_BRANCH"
-        # Reset and check out the local branch tracking the remote draft branch
+        # Switch and hard reset to ensure clean Git tree
+        # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
+        rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
+        log_info "Forced branch checkout and re-synchronization..."
         git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
         git reset --hard "origin/$TARGET_BRANCH"
-    else
-        log_warn "No draft branch containing this commit was found on origin. Running directly on detached tag cluster-run."
-    fi
-else
-    log_info "Synchronizing remote reference origin/$TARGET_BRANCH..."
-    for i in {1..5}; do
-        if git fetch origin "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"; then
-            break
-        fi
-        log_warn "Failed to fetch origin/$TARGET_BRANCH (attempt $i/5). Retrying in 5 seconds..."
-        sleep 5
-    done
-
-    # Security validation: does the branch exist on remote?
-    if ! git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-        log_error "Branch origin/$TARGET_BRANCH does not exist or was not found."
-        exit 1
     fi
 
-    # Switch and hard reset to ensure clean Git tree
-    # Preventive cleanup: remove stale lock files left by a killed git process (OOM, crash, etc.)
-    rm -f .git/index.lock .git/refs/heads/*.lock .git/HEAD.lock 2>/dev/null || true
-    log_info "Forced branch checkout and re-synchronization..."
-    git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
-    git reset --hard "origin/$TARGET_BRANCH"
+    # Register current commit hash for traceability
+    git rev-parse HEAD > .cluster-ci-commit
+
+    log_success "Git tree synchronized. Artifacts (.dvc/cache etc.) preserved for reuse."
 fi
-
-# Register current commit hash for traceability
-git rev-parse HEAD > .cluster-ci-commit
-
-log_success "Git tree synchronized. Artifacts (.dvc/cache etc.) preserved for reuse."
-
-# Register current commit hash for traceability
-git rev-parse HEAD > .cluster-ci-commit
 
 # 3. Launch Dockerized Execution
 log_info "[Step 3/3] Preparing Dockerized execution..."
@@ -867,8 +897,44 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     fi
 fi
 
-log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+if [ "$IS_LOCAL" = "1" ]; then
+    log_info "IS_LOCAL=1: Syncing updated metrics, plots, and dvc.lock directly back to $LOCAL_REPO_PATH..."
+    if [ -f "dvc.lock" ]; then
+        cp -f dvc.lock "$LOCAL_REPO_PATH/dvc.lock"
+        log_info "Copied dvc.lock -> $LOCAL_REPO_PATH/dvc.lock"
+    fi
+    python3 -c "
+import sys, os, shutil
+base_dir = os.environ.get('BASE_DIR', '.')
+local_repo = os.environ.get('LOCAL_REPO_PATH')
+if local_repo and os.path.isdir(local_repo):
+    sys.path.insert(0, os.path.join(base_dir, 'src/runner'))
+    try:
+        from dvc_git_helper import get_cache_false_paths
+        paths = get_cache_false_paths('dvc.yaml')
+    except Exception as err:
+        print(f'Warning loading dvc_git_helper: {err}')
+        paths = []
+    
+    for default_p in ['metrics.json', 'scores.json', 'plots']:
+        if os.path.exists(default_p) and default_p not in paths:
+            paths.append(default_p)
+
+    for p in paths:
+        if os.path.exists(p):
+            target = os.path.join(local_repo, p)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if os.path.isdir(p):
+                shutil.copytree(p, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(p, target)
+            print(f'Synced {p} -> {target}')
+" || log_warn "Failed to sync metrics/plots to LOCAL_REPO_PATH."
+    log_success "Local synchronization complete. Skipped git push origin."
+else
+    log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
+    docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+fi
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.

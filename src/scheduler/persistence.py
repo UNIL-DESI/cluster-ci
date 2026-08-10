@@ -83,6 +83,8 @@ def init_db():
             p2p_url TEXT,
             gh_token TEXT,
             custom_web_app INTEGER DEFAULT 0,
+            is_local INTEGER DEFAULT 0,
+            local_repo_path TEXT,
             FOREIGN KEY (worker_id) REFERENCES workers (worker_id)
         )
     ''')
@@ -168,6 +170,18 @@ def init_db():
     # allowed_workers migration (JSON list of hostnames to restrict job execution)
     try:
         cursor.execute('ALTER TABLE jobs ADD COLUMN allowed_workers TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    # is_local migration
+    try:
+        cursor.execute('ALTER TABLE jobs ADD COLUMN is_local INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
+    # local_repo_path migration
+    try:
+        cursor.execute('ALTER TABLE jobs ADD COLUMN local_repo_path TEXT')
     except sqlite3.OperationalError:
         pass
 

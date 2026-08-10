@@ -10,17 +10,26 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-def get_ram_requirement(repo=None, branch=None):
+def get_ram_requirement(repo=None, branch=None, is_local=False, local_repo_path=None):
     """
     Reads RAM requirement from the .cluster-ci file.
-    First tries to fetch the file from the remote repo (shallow clone),
+    First tries to fetch the file locally if is_local=True, or from the remote repo (shallow clone),
     then falls back to reading from the current working directory.
     Expected format in .cluster-ci: --ram 16 or REQUIRED_RAM=16GB
     """
     content = None
 
+    if is_local and local_repo_path:
+        ci_file = os.path.join(local_repo_path, ".cluster-ci")
+        if os.path.exists(ci_file):
+            try:
+                with open(ci_file, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+            except Exception:
+                pass
+
     # Strategy 1: Fetch .cluster-ci from the remote repo
-    if repo and branch:
+    if content is None and repo and branch and not is_local:
         import tempfile, subprocess
         tmp_dir = tempfile.mkdtemp()
         try:
@@ -71,7 +80,7 @@ def get_config_value(pattern, content, default=None, is_float=False):
         return float(val) if is_float else val
     return default
 
-def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None):
+def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None):
     """Submits a research job to the headnode scheduler."""
     if not headnode_url:
         print("Error: HEADNODE_URL is required to submit a job.")
@@ -96,29 +105,39 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
                 import subprocess
                 commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
             except Exception:
-                pass
+                commit_hash = "local-head"
     # Strategy: Fetch .cluster-ci content first to parse all requirements
     content = None
-    import tempfile, subprocess, shutil
-    tmp_dir = tempfile.mkdtemp()
-    try:
-        gh_token_inner = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
-        if gh_token_inner:
-            repo_url = f"https://x-access-token:{gh_token_inner}@github.com/{repo}.git"
-        else:
-            repo_url = f"https://github.com/{repo}.git"
-        subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
-                       check=True, capture_output=True, timeout=30)
-        subprocess.run(["git", "checkout", "HEAD", "--", ".cluster-ci"],
-                       cwd=tmp_dir, check=True, capture_output=True, timeout=10)
-        ci_file = os.path.join(tmp_dir, ".cluster-ci")
+    if is_local and local_repo_path:
+        ci_file = os.path.join(local_repo_path, ".cluster-ci")
         if os.path.exists(ci_file):
-            with open(ci_file, 'r') as f:
-                content = f.read()
-    except Exception as e:
-        print(f"⚠️ Could not fetch .cluster-ci from {repo}@{branch}: {e}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+            try:
+                with open(ci_file, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+            except Exception as e:
+                print(f"⚠️ Could not read local .cluster-ci from {ci_file}: {e}")
+
+    if content is None and not is_local:
+        import tempfile, subprocess, shutil
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            gh_token_inner = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
+            if gh_token_inner:
+                repo_url = f"https://x-access-token:{gh_token_inner}@github.com/{repo}.git"
+            else:
+                repo_url = f"https://github.com/{repo}.git"
+            subprocess.run(["git", "clone", "--depth", "1", "--branch", branch, "--no-checkout", repo_url, tmp_dir],
+                           check=True, capture_output=True, timeout=30)
+            subprocess.run(["git", "checkout", "HEAD", "--", ".cluster-ci"],
+                           cwd=tmp_dir, check=True, capture_output=True, timeout=10)
+            ci_file = os.path.join(tmp_dir, ".cluster-ci")
+            if os.path.exists(ci_file):
+                with open(ci_file, 'r') as f:
+                    content = f.read()
+        except Exception as e:
+            print(f"⚠️ Could not fetch .cluster-ci from {repo}@{branch}: {e}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if content is None and os.path.exists(".cluster-ci"):
         with open(".cluster-ci", 'r') as f:
@@ -174,6 +193,8 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
     submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
+    if is_local:
+        submit_info += f" [Local Mode: {local_repo_path}]"
     if allowed_workers:
         submit_info += f" [Allowed Workers: {', '.join(allowed_workers)}]"
     print(submit_info)
@@ -198,7 +219,9 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "gh_run_id": os.environ.get("GITHUB_RUN_ID"),
             "gh_token": gh_token,
             "env_vars": env_vars,
-            "username": os.environ.get("GITHUB_ACTOR", "unknown")
+            "username": os.environ.get("GITHUB_ACTOR", "unknown"),
+            "is_local": is_local,
+            "local_repo_path": local_repo_path,
         }, headers=headers, timeout=10)
         resp.raise_for_status()
         job_data = resp.json()
@@ -544,7 +567,9 @@ if __name__ == '__main__':
     parser.add_argument("branch", help="Target branch")
     parser.add_argument("--headnode", default=os.environ.get("HEADNODE_URL"), help="Headnode URL")
     parser.add_argument("--gh-token", default=None, help="GitHub token for cloning private repos")
-    parser.add_argument("-e", "--env", action="append", help="Environment variables to pass (KEY=VALUE)", default=[])
+    parser.add_argument("--local", action="store_true", help="Submit local directory without git clone")
+    parser.add_argument("--local-repo-path", default=None, help="Path to local repository")
+    parser.add_argument("-e", "--env", action="append", default=[], help="Environment variables (KEY=VAL)")
 
     args = parser.parse_args()
 
@@ -573,6 +598,10 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"⚠️ Failed to parse ALL_GITHUB_SECRETS: {e}")
 
-    job_id = submit_job(args.headnode, args.repo, args.branch, args.gh_token, env_vars)
+    local_repo_path = args.local_repo_path or (os.path.abspath(os.getcwd()) if args.local else None)
+    job_id = submit_job(
+        args.headnode, args.repo, args.branch, args.gh_token, env_vars,
+        is_local=args.local, local_repo_path=local_repo_path
+    )
     exit_code = wait_for_job(args.headnode, job_id, branch=args.branch)
     sys.exit(exit_code)
