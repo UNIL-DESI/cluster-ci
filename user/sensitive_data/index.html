@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/dashboard/">
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/sensitive_data/">
       
       
-        <link rel="prev" href="../ci_queue/">
+        <link rel="prev" href="../client/">
       
       
-        <link rel="next" href="../configuration/">
+        <link rel="next" href="../dvc/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Monitoring Dashboard - Cluster-CI</title>
+        <title>Sensitive Data & Local Execution - Cluster-CI</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#web-dashboard-monitoring-guide" class="md-skip">
+        <a href="#sensitive-data-local-execution-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Monitoring Dashboard
+              Sensitive Data & Local Execution
             
           </span>
         </div>
@@ -465,10 +465,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../sensitive_data/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensitive Data & Local Execution
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -484,6 +511,187 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-overview-confidentiality-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Overview &amp; Confidentiality Guarantees
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Overview &amp; Confidentiality Guarantees">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#confidentiality-guarantees-of-cluster-run-local" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confidentiality Guarantees of cluster-run --local
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-requesting-ssh-access-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Requesting SSH Access Credentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-step-by-step-local-execution-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Step-by-Step Local Execution Workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Step-by-Step Local Execution Workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-connect-to-the-headnode-via-ssh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Connect to the Headnode via SSH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-set-up-your-project-repository-on-the-headnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Set Up Your Project Repository on the Headnode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-ensure-cluster-ci-client-is-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Ensure Cluster-CI Client is Installed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-execute-cluster-run-local" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Execute cluster-run --local
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-technical-architecture-how-cluster-run-local-operates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Technical Architecture: How cluster-run --local Operates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-controlling-local-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Controlling Local Jobs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Controlling Local Jobs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#monitoring-streaming-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring &amp; Streaming Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cancelling-a-local-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelling a Local Run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-summary-comparison-standard-vs-local-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Summary Comparison: Standard vs. Local Execution
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -577,37 +785,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Monitoring Dashboard
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../dashboard/" class="md-nav__link">
         
   
   
@@ -623,142 +804,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#accessing-the-dashboard" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Accessing the Dashboard
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-live-infrastructure-job-monitoring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Live Infrastructure &amp; Job Monitoring
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="1. Live Infrastructure &amp; Job Monitoring">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#a-worker-diagnostics-node-view" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A. Worker Diagnostics Node View
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b-active-executions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B. Active Executions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#c-queue-panel-diagnosis" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        C. Queue Panel &amp; Diagnosis
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-segmented-live-logs-error-highlighting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Segmented Live Logs &amp; Error Highlighting
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-foldable-artifact-tree-bottom-up-search" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Foldable Artifact Tree &amp; Bottom-Up Search
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-unique-version-selector-md5-clustering" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Unique Version Selector (MD5 Clustering)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-file-previews-bidirectional-navigation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. File Previews &amp; Bidirectional Navigation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-hydra-configuration-inspector" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Hydra Configuration Inspector
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1224,55 +1269,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#accessing-the-dashboard" class="md-nav__link">
+  <a href="#1-overview-confidentiality-guarantees" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Accessing the Dashboard
+        1. Overview &amp; Confidentiality Guarantees
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-live-infrastructure-job-monitoring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Live Infrastructure &amp; Job Monitoring
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="1. Live Infrastructure &amp; Job Monitoring">
+    <nav class="md-nav" aria-label="1. Overview &amp; Confidentiality Guarantees">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#a-worker-diagnostics-node-view" class="md-nav__link">
+  <a href="#confidentiality-guarantees-of-cluster-run-local" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A. Worker Diagnostics Node View
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b-active-executions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B. Active Executions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#c-queue-panel-diagnosis" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        C. Queue Panel &amp; Diagnosis
+        Confidentiality Guarantees of cluster-run --local
       
     </span>
   </a>
@@ -1285,10 +1297,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-segmented-live-logs-error-highlighting" class="md-nav__link">
+  <a href="#2-requesting-ssh-access-credentials" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Segmented Live Logs &amp; Error Highlighting
+        2. Requesting SSH Access Credentials
       
     </span>
   </a>
@@ -1296,10 +1308,71 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-foldable-artifact-tree-bottom-up-search" class="md-nav__link">
+  <a href="#3-step-by-step-local-execution-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Foldable Artifact Tree &amp; Bottom-Up Search
+        3. Step-by-Step Local Execution Workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Step-by-Step Local Execution Workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-connect-to-the-headnode-via-ssh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Connect to the Headnode via SSH
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-set-up-your-project-repository-on-the-headnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Set Up Your Project Repository on the Headnode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-ensure-cluster-ci-client-is-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Ensure Cluster-CI Client is Installed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-execute-cluster-run-local" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Execute cluster-run --local
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-technical-architecture-how-cluster-run-local-operates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Technical Architecture: How cluster-run --local Operates
       
     </span>
   </a>
@@ -1307,32 +1380,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-unique-version-selector-md5-clustering" class="md-nav__link">
+  <a href="#5-controlling-local-jobs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Unique Version Selector (MD5 Clustering)
+        5. Controlling Local Jobs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Controlling Local Jobs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#monitoring-streaming-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring &amp; Streaming Logs
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#5-file-previews-bidirectional-navigation" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#cancelling-a-local-run" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. File Previews &amp; Bidirectional Navigation
+        Cancelling a Local Run
       
     </span>
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#6-hydra-configuration-inspector" class="md-nav__link">
+  <a href="#6-summary-comparison-standard-vs-local-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Hydra Configuration Inspector
+        6. Summary Comparison: Standard vs. Local Execution
       
     </span>
   </a>
@@ -1356,85 +1446,150 @@
 
 
 
-<h1 id="web-dashboard-monitoring-guide">Web Dashboard Monitoring Guide</h1>
-<p>The Cluster-CI Web Dashboard provides real-time monitoring and visualization of your computing jobs, active workers, queue status, and generated research artifacts. This guide describes the interface's features and how to use them to monitor and debug your runs.</p>
+<h1 id="sensitive-data-local-execution-guide">Sensitive Data &amp; Local Execution Guide</h1>
+<p>Cluster-CI provides a dedicated <strong>Direct Headnode Local Execution</strong> mode (<code>cluster-run --local</code>) designed specifically for researchers handling sensitive, confidential, or IP-restricted datasets that cannot be uploaded or pushed to GitHub repositories.</p>
 <hr />
-<h2 id="accessing-the-dashboard">Accessing the Dashboard</h2>
-<p>The dashboard is available at:</p>
-<p><strong>🔗 <a href="http://130.223.73.209:5000/">http://130.223.73.209:5000/</a></strong></p>
-<div class="admonition warning">
-<p class="admonition-title">VPN Required</p>
-<p>The dashboard is hosted on the cluster's head node, which is only accessible from the <strong>UNIL internal network</strong>. You must be connected to the <strong>VPN UNIL</strong> before opening the link. If the page does not load, verify your VPN connection.</p>
-</div>
-<p>No login is required — the dashboard is read-only and accessible to all members of the UNIL-DESI organization.</p>
-<hr />
-<h2 id="1-live-infrastructure-job-monitoring">1. Live Infrastructure &amp; Job Monitoring</h2>
-<p>The main dashboard view is divided into three monitoring panels:</p>
-<h3 id="a-worker-diagnostics-node-view">A. Worker Diagnostics Node View</h3>
-<p>Shows the current status of all physical workers in the cluster:
-*   <strong>Worker State</strong>: Green indicators for online workers; grey for offline nodes.
-*   <strong>Hardware Telemetry</strong>: Displays the active RAM and GPU VRAM utilization.
-*   <strong>Active Allocation</strong>: Shows which job is currently assigned to the worker.</p>
-<h3 id="b-active-executions">B. Active Executions</h3>
-<p>Tracks jobs currently running on the cluster:
-*   <strong>Job Metadata</strong>: Displays the user, repository, active branch, and elapsed time (automatically calibrated to UTC timezone offsets).
-*   <strong>Control Actions</strong>:
-    - <strong>Stop</strong>: Issues a cancellation request to terminate execution.
-    - <strong>Logs</strong>: Opens the live logging window.
-    - <strong>DVC-Viewer</strong>: Opens the live web monitor for the running pipeline's metrics.</p>
-<h3 id="c-queue-panel-diagnosis">C. Queue Panel &amp; Diagnosis</h3>
-<p>Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled immediately, the panel displays a <strong>wait reason</strong> calculated by the scheduler:
-*   <code>branch_exclusivity</code>: Blocked because another job is already running on the same repository and branch.
-*   <code>no_free_workers</code>: All workers satisfying the job's constraints are occupied.
-*   <code>insufficient_ram</code>: No free worker has enough physical RAM available to satisfy the <code>REQUIRED_RAM</code> constraint (accounting for the 8 GB OS reserve).
-*   <code>scheduling</code>: The scheduler is actively evaluating placement scores.</p>
-<hr />
-<h2 id="2-segmented-live-logs-error-highlighting">2. Segmented Live Logs &amp; Error Highlighting</h2>
-<p>Clicking the <strong>Logs</strong> button opens an interactive modal:</p>
+<h2 id="1-overview-confidentiality-guarantees">1. Overview &amp; Confidentiality Guarantees</h2>
+<p>When running standard <code>cluster-run</code>, Cluster-CI uses a "Shadow Push" mechanism to transmit workspace code to a temporary draft branch (<code>cluster-draft/&lt;username&gt;</code>) on GitHub.</p>
+<p>However, for research projects involving <strong>confidential medical records</strong>, <strong>GDPR-restricted personal data</strong>, <strong>proprietary industry datasets</strong>, or <strong>non-disclosure agreements (NDAs)</strong>, pushing code or data references to external Git remotes may violate governance rules.</p>
+<h3 id="confidentiality-guarantees-of-cluster-run-local">Confidentiality Guarantees of <code>cluster-run --local</code></h3>
 <ul>
-<li><strong>Stage-by-Stage Segmentation</strong>: The dashboard parses the log stream and separates it into distinct tabs based on execution phases (e.g. Setup, DVC stages like <code>preprocess</code> or <code>training</code>, and Git Synchronization/GC).</li>
-<li><strong>Live Status Indicator</strong>: Active tabs display a loading spinner. If the run fails, a skull emoji <code>☠️</code> appears along with the shell exit code.</li>
-<li><strong>"Last Error" Button</strong>: If a stage fails, this button highlights the last line containing the error trace. Clicking it automatically opens the failing stage's tab and scrolls directly to the error line.</li>
+<li><strong>Zero GitHub Upload</strong>: Code, scripts, configuration files, and data never leave the Headnode filesystem. No git pushes or shadow commits are created.</li>
+<li><strong>No <code>GITHUB_TOKEN</code> Required</strong>: Bypasses GitHub authentication and GitHub Actions infrastructure completely.</li>
+<li><strong>On-Premise Processing</strong>: Code ingestion, scheduling, and container execution take place 100% on the internal cluster infrastructure (<code>130.223.73.209</code>).</li>
+<li><strong>Direct Workspace Sync</strong>: Outputs, metrics, and plots write directly back to your local folder on the Headnode.</li>
 </ul>
 <hr />
-<h2 id="3-foldable-artifact-tree-bottom-up-search">3. Foldable Artifact Tree &amp; Bottom-Up Search</h2>
-<p>The <strong>Current Artifacts</strong> tab displays DVC outputs produced by successful runs in the repository.</p>
-<ul>
-<li><strong>Tree Reconstruction</strong>: A flat list of DVC-tracked paths is reconstructed client-side into a nested directory tree. You can click on directories to fold/unfold them.</li>
-<li><strong>Bottom-Up Search</strong>: Type a filename or path filter in the search bar. The tree will dynamically expand all parent directories leading to matching files, while folding and hiding non-matching directories. This allows you to find deep files instantly.</li>
-</ul>
+<h2 id="2-requesting-ssh-access-credentials">2. Requesting SSH Access Credentials</h2>
+<p>To use Direct Headnode Local Execution, researchers must have a local user account on the Headnode server.</p>
+<blockquote>
+<p>[!IMPORTANT]
+<strong>Requesting Access</strong>:
+Contact <strong>Henri Jamet</strong> (<a href="mailto:henri.jamet@unil.ch"><code>henri.jamet@unil.ch</code></a>) to request SSH access credentials for the Headnode (<code>130.223.73.209</code>).</p>
+</blockquote>
+<p>When submitting your request, please include:
+1. <strong>Full Name</strong> and <strong>UNIL Email Address</strong>.
+2. <strong>Project Name</strong> and brief description of the sensitive data requirements.
+3. Your <strong>Public SSH Key</strong> (found in <code>~/.ssh/id_ed25519.pub</code> or <code>~/.ssh/id_rsa.pub</code>).</p>
 <hr />
-<h2 id="4-unique-version-selector-md5-clustering">4. Unique Version Selector (MD5 Clustering)</h2>
-<p>Clicking a file in the artifact tree opens the file viewer, which contains a version control interface:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Selected Artifact: reports/loss.png]
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>      |
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>      v
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>[MD5 Clustering Engine] ---&gt; Groups duplicate runs with identical hashes
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>      |
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>      v
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>[Timeline Slider] ---------&gt; Browse physical changes chronologically:
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                             Version 1: MD5: a1b2... Size: 15KB (Commit 3b5f)
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                             Version 2: MD5: e9f8... Size: 18KB (Commit f9a2)
+<h2 id="3-step-by-step-local-execution-workflow">3. Step-by-Step Local Execution Workflow</h2>
+<p>Once your Headnode SSH account has been created:</p>
+<h3 id="step-1-connect-to-the-headnode-via-ssh">Step 1: Connect to the Headnode via SSH</h3>
+<p>Open your local terminal and log into the Headnode:</p>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ssh<span class="w"> </span>&lt;username&gt;@130.223.73.209
 </span></code></pre></div>
-<ul>
-<li><strong>MD5 Clustering</strong>: If you run multiple experiments that produce the exact same file (matching MD5 hash), the selector groups those runs together. This removes duplicates, letting you focus only on runs that physically changed the output.</li>
-<li><strong>Chronological Slider</strong>: Drag the slider to browse different physical versions of the file over time. The dashboard displays the creation date, file size, commit SHA, and branch for each version.</li>
-</ul>
+<em>(Replace <code>&lt;username&gt;</code> with your assigned Headnode username).</em></p>
+<h3 id="step-2-set-up-your-project-repository-on-the-headnode">Step 2: Set Up Your Project Repository on the Headnode</h3>
+<p>Copy or clone your research repository into your user home directory on the Headnode (<code>/home/&lt;username&gt;/</code>).</p>
+<p>You can copy files from your local workstation using <code>scp</code> or <code>rsync</code>:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Example: Syncing a local project folder to the Headnode</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rsync<span class="w"> </span>-avz<span class="w"> </span>--exclude<span class="w"> </span><span class="s1">&#39;.venv&#39;</span><span class="w"> </span>./my-sensitive-project<span class="w"> </span>&lt;username&gt;@130.223.73.209:/home/&lt;username&gt;/
+</span></code></pre></div></p>
+<p>Navigate to your project folder on the Headnode:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>/home/&lt;username&gt;/my-sensitive-project
+</span></code></pre></div></p>
+<h3 id="step-3-ensure-cluster-ci-client-is-installed">Step 3: Ensure Cluster-CI Client is Installed</h3>
+<p>If <code>cluster-run</code> is not yet installed on your Headnode user account, install it with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-sSL<span class="w"> </span>https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</span></code></pre></div>
+<p>Verify that the CLI is accessible:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>--help
+</span></code></pre></div></p>
+<h3 id="step-4-execute-cluster-run-local">Step 4: Execute <code>cluster-run --local</code></h3>
+<p>Submit your job using the <code>--local</code> flag:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>--local
+</span></code></pre></div>
+<p>The CLI will detect that it is operating in Direct Headnode Mode, bypass GitHub Actions, and stream execution logs directly to your SSH terminal session.</p>
 <hr />
-<h2 id="5-file-previews-bidirectional-navigation">5. File Previews &amp; Bidirectional Navigation</h2>
-<p>When selecting a file version:</p>
-<ul>
-<li><strong>Tabular View</strong>: CSV and TSV files are automatically rendered as interactive HTML tables.</li>
-<li><strong>Image Rendering</strong>: PNG, JPG, and SVG plots are rendered in the preview area.</li>
-<li><strong>Text Truncation</strong>: Text and raw log files are displayed with syntax highlighting. Large files are truncated to the first <strong>100 lines</strong> to preserve browser performance.</li>
-<li><strong>Bidirectional Navigation ("Consulter le Run")</strong>: If you are inspecting an older version of a plot or metric table and want to understand how it was generated, click the <strong>Consulter le Run</strong> button. The dashboard will close the artifact preview and open the log modal of the exact GHA execution run that wrote that physical version of the file.</li>
-</ul>
+<h2 id="4-technical-architecture-how-cluster-run-local-operates">4. Technical Architecture: How <code>cluster-run --local</code> Operates</h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>┌────────────────────────────────────────────────────────────────────────┐
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>│                        HEADNODE (130.223.73.209)                       │
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>│                                                                        │
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>│  ┌─────────────────────────┐        HTTP POST /api/jobs (is_local=True)│
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>│  │ Local Project Workspace │ ───────────────────────────────────────┐  │
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>│  │ /home/&lt;user&gt;/project    │                                        │  │
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>│  └─────────────────────────┘                                        │  │
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>│               ▲                                                     ▼  │
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>│               │ Direct Sync                      ┌─────────────────────┐│
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>│               │ (Metrics, Plots, dvc.lock)       │ Headnode Scheduler  ││
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>│               │                                  │ SQLite &amp; API        ││
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>│               └───────────────────────────────── │ (headnode_service)  ││
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>│                                                  └─────────────────────┘│
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>│                                                             │          │
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>│                                       Local Worker          │ Assign   │
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>│                                       Assignment            ▼          │
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>│                                                  ┌─────────────────────┐│
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>│                                                  │ Isolated Container  ││
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>│                                                  │ NGC PyTorch Docker  ││
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>│                                                  │ (uv run dvc repro)  ││
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>│                                                  └─────────────────────┘│
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>└────────────────────────────────────────────────────────────────────────┘
+</span></code></pre></div>
+<p>When <code>cluster-run --local</code> is invoked, the platform executes the following stages:</p>
+<ol>
+<li><strong>Local Filesystem Ingestion</strong>: The CLI scans your current working directory (<code>os.path.abspath(os.getcwd())</code>), creates a local workspace snapshot, and passes the path directly to the Headnode scheduler. No git commits or remote branch pushes take place.</li>
+<li><strong>Fail-Fast Validation</strong>: Prior to queue insertion, the Headnode API (<code>headnode_service.py</code>) validates your <code>.cluster-ci</code> parameters (<code>REQUIRED_RAM</code>, <code>REQUIRED_VRAM</code>, <code>MAX_RUNTIME_HOURS</code>). If validation fails (e.g. invalid syntax or excessive RAM request), the submission returns an immediate <code>HTTP 400 Bad Request</code> with exact diagnostic error messages.</li>
+<li><strong>Isolated Container Workspace</strong>: The job is assigned to an available worker (or local Headnode executor slot) and launched inside an isolated Docker container running the unified NGC PyTorch image (<code>nvcr.io/nvidia/pytorch:26.05-py3</code>). The container is granted access to requested GPU hardware (NVIDIA Blackwell GB10 / RTX 3090) while remaining isolated from host system files.</li>
+<li><strong>Local Metrics &amp; Plots Sync</strong>: As stages in <code>dvc.yaml</code> complete, metrics, plots, and updated lockfiles (<code>dvc.lock</code>) are synchronized directly back to your project directory on the Headnode filesystem in real-time.</li>
+<li><strong>Zero GitHub Upload</strong>: No network requests are made to GitHub's servers, guaranteeing complete isolation of sensitive code and data within the local infrastructure.</li>
+</ol>
 <hr />
-<h2 id="6-hydra-configuration-inspector">6. Hydra Configuration Inspector</h2>
-<p>If your workspace utilizes the Hydra configuration manager, the dashboard automatically detects YAML parameters files (e.g. <code>config.yaml</code>, <code>params.yaml</code>).
-*   It reads these parameters at the selected commit.
-*   It displays them on the right-hand panel of the project view as a collapsible YAML tree.
-*   You can inspect hyperparameters (e.g. learning rate, batch size) side-by-side with your plots without opening code files.</p>
+<h2 id="5-controlling-local-jobs">5. Controlling Local Jobs</h2>
+<h3 id="monitoring-streaming-logs">Monitoring &amp; Streaming Logs</h3>
+<p>By default, <code>cluster-run --local</code> streams logs directly to stdout in your SSH session. If your connection drops, log outputs are preserved in <code>.cluster-ci-logs/</code> in your project directory.</p>
+<h3 id="cancelling-a-local-run">Cancelling a Local Run</h3>
+<p>To stop an active local job and immediately release allocated GPU hardware:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>cancel
+</span></code></pre></div>
+<p>The CLI contacts the Headnode API, terminates the running Docker container, purges VRAM, and clears local run tracking states.</p>
+<hr />
+<h2 id="6-summary-comparison-standard-vs-local-execution">6. Summary Comparison: Standard vs. Local Execution</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Feature</th>
+<th style="text-align: left;">Standard <code>cluster-run</code></th>
+<th style="text-align: left;">Sensitive Data <code>cluster-run --local</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Execution Trigger</strong></td>
+<td style="text-align: left;">GitHub Actions Workflow (<code>cluster-ci.yml</code>)</td>
+<td style="text-align: left;">Headnode Local API (<code>/api/jobs</code>)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Code Transmission</strong></td>
+<td style="text-align: left;">Shadow git push to <code>cluster-draft/&lt;user&gt;</code></td>
+<td style="text-align: left;">Local Headnode path ingestion</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>GitHub Dependency</strong></td>
+<td style="text-align: left;">Required (<code>gh</code> auth &amp; repo secrets)</td>
+<td style="text-align: left;"><strong>None</strong> (100% offline / GitHub-free)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Data Boundary</strong></td>
+<td style="text-align: left;">Transits via GitHub remote repository</td>
+<td style="text-align: left;"><strong>Stays on Headnode (<code>130.223.73.209</code>)</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Log Streaming</strong></td>
+<td style="text-align: left;"><code>ppng.io</code> live stream or <code>gh run view</code></td>
+<td style="text-align: left;">Direct local HTTP socket stream</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Result Retrieval</strong></td>
+<td style="text-align: left;">Git draft branch sync back to workstation</td>
+<td style="text-align: left;">Direct filesystem write on Headnode</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Access Requirement</strong></td>
+<td style="text-align: left;">GitHub Organization membership</td>
+<td style="text-align: left;">Headnode SSH account (<code>henri.jamet@unil.ch</code>)</td>
+</tr>
+</tbody>
+</table>
 
 
 

@@ -16,14 +16,14 @@
         <link rel="prev" href="../onboarding/">
       
       
-        <link rel="next" href="../dvc/">
+        <link rel="next" href="../sensitive_data/">
       
       
         
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -595,6 +595,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cluster-run-local-direct-headnode-execution-for-sensitive-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-run --local (Direct Headnode Execution for Sensitive Data)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cluster-run-list" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -697,6 +708,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sensitive_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensitive Data & Local Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1369,6 +1408,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cluster-run-local-direct-headnode-execution-for-sensitive-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-run --local (Direct Headnode Execution for Sensitive Data)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cluster-run-list" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1546,31 +1596,40 @@
 <hr />
 <h2 id="4-command-reference">4. Command Reference</h2>
 <h3 id="cluster-run-default-execution"><code>cluster-run</code> (Default Execution)</h3>
-<p>Triggers a shadow run of your workspace.
+<p>Triggers a shadow run of your workspace via GitHub Actions.
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cluster-run
 </span></code></pre></div>
-*   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster.
+*   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster draft branch.
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.</p>
+<h3 id="cluster-run-local-direct-headnode-execution-for-sensitive-data"><code>cluster-run --local</code> (Direct Headnode Execution for Sensitive Data)</h3>
+<p>Triggers a direct local run on the Headnode without pushing to GitHub or creating shadow commits.
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run<span class="w"> </span>--local
+</span></code></pre></div>
+*   Ingests current directory directly from the Headnode local filesystem (<code>130.223.73.209</code>).
+*   Performs fail-fast validation (<code>HTTP 400</code>) before job placement.
+*   Runs inside isolated Docker container with real-time local log streaming and direct metrics sync.
+*   <strong>Zero GitHub Upload</strong>: Ideal for sensitive, confidential, or IP-restricted datasets.
+*   For setup and access requirements, see the <strong><a href="../sensitive_data/">Sensitive Data &amp; Local Execution Guide</a></strong>.</p>
 <h3 id="cluster-run-list"><code>cluster-run list</code></h3>
 <p>List recent runs.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run<span class="w"> </span>list
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>list
 </span></code></pre></div>
 *   Displays the run ID, status (Completed, In-Progress, Queued), and completion time.</p>
 <h3 id="cluster-run-view"><code>cluster-run view</code></h3>
 <p>View logs for a run.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
 </span></code></pre></div>
 *   If <code>&lt;run_id&gt;</code> is omitted, it targets your last triggered run.</p>
 <h3 id="cluster-run-cancel"><code>cluster-run cancel</code></h3>
 <p>Terminate a running job.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
 </span></code></pre></div>
 *   If <code>&lt;run_id&gt;</code> is omitted, it targets your latest active run.
 *   Sends a cancellation request to the cluster and cleans up local tracking files.</p>
 <h3 id="cluster-run-sync"><code>cluster-run sync</code></h3>
 <p>Manually synchronize remote results.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>sync
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>sync
 </span></code></pre></div>
 *   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote branch and applies them to your local directory.
 *   Useful if log streaming was interrupted or if you want to pull results from an older run.</p>
@@ -1580,11 +1639,11 @@
 <p>If your terminal crashes or you force-kill <code>cluster-run</code>, the active job continues on the cluster. The next time you run any <code>cluster-run</code> command, the CLI detects the orphaned run and automatically sends a termination request, freeing cluster resources.</p>
 <h3 id="line-ending-protection">Line-Ending Protection</h3>
 <p>When sharing code between Windows and Linux, line-ending differences can corrupt binary files (models, images). The <code>cluster-run</code> CLI automatically configures <code>.gitattributes</code> to prevent this:
-<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>*.pt binary
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>*.pkl binary
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>*.png binary
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>*.csv text eol=lf
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>*.yaml text eol=lf
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>*.pt binary
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>*.pkl binary
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>*.png binary
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>*.csv text eol=lf
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>*.yaml text eol=lf
 </span></code></pre></div></p>
 <h3 id="pre-commit-validation">Pre-commit Validation</h3>
 <p>The installation injects a Git pre-commit hook that validates your <code>pyproject.toml</code> before each commit:</p>
@@ -1651,7 +1710,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
