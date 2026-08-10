@@ -49,11 +49,15 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 | Commande | Description |
 |---|---|
 | `cluster-run` | Soumet un job et streame en temps réel et en direct les logs d'exécution ligne par ligne dans votre terminal d'origine sans perte |
+| `cluster-run --local` | Exécution directe sur Headnode pour données sensibles/confidentielles (zéro push GitHub, ingestion locale, validation HTTP 400) |
 | `cluster-run --background` | Soumet un job sans bloquer le terminal |
 | `cluster-run list` | Liste les runs récents |
 | `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
 | `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |
 | `cluster-run sync` | Rapatrie manuellement les résultats (métriques, plots, dvc.lock) depuis le cluster |
+
+> [!NOTE]
+> Pour traiter des données confidentielles ou soumises à un NDA sans aucun upload vers GitHub, consultez le guide **[Sensitive Data & Local Execution](docs/user/sensitive_data.md)**.
 
 **Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions. Les logs complets sont redirigés dans un dossier local `.cluster-ci-logs/` (automatiquement exclu via `.gitignore`), avec affichage intégral en console et duplication complète dans un fichier de logs local (avec rotation automatique conservant uniquement les 5 fichiers les plus récents). Pour éviter tout bruit visuel inutile dans la console, les fichiers d'infrastructure internes (les fichiers sous `.dvc-viewer/hashes/` et `dvc.lock`) sont rapatriés de manière totalement silencieuse, tandis que seuls les métriques et plots utilisateur sont listés explicitement à la complétion.
 

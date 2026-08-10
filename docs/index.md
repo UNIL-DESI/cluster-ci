@@ -13,6 +13,7 @@ If you are a researcher looking to run experiments on the cluster, start here:
 
 *   **[Onboarding Guide](user/onboarding.md)**: Join the GitHub organization, set up your SSH key, install the CLI client, and configure your repository.
 *   **[Command-Line Client (`cluster-run`)](user/client.md)**: Install the CLI, submit jobs, stream logs in real-time, and retrieve results.
+*   **[Sensitive Data & Local Execution](user/sensitive_data.md)**: Process confidential or IP-restricted datasets directly on the Headnode via `cluster-run --local` with zero GitHub upload.
 *   **[DVC & Storage Guide](user/dvc.md)**: Learn how to define your experiment pipeline in `dvc.yaml` and how results are synced back to you.
 *   **[Docker Containers & Environments](user/containers.md)**: Understand the default PyTorch environment, customize Docker images, and set up libraries like Unsloth.
 *   **[CI Pipeline & Queue Scheduler](user/ci_queue.md)**: How jobs are queued, scheduled across workers, and cancelled automatically.

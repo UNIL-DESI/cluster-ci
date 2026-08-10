@@ -69,13 +69,24 @@ Cluster-CI streams logs from the executing container back to your terminal in re
 ## 4. Command Reference
 
 ### `cluster-run` (Default Execution)
-Triggers a shadow run of your workspace.
+Triggers a shadow run of your workspace via GitHub Actions.
 ```bash
 cluster-run
 ```
-*   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster.
+*   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster draft branch.
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.
+
+### `cluster-run --local` (Direct Headnode Execution for Sensitive Data)
+Triggers a direct local run on the Headnode without pushing to GitHub or creating shadow commits.
+```bash
+cluster-run --local
+```
+*   Ingests current directory directly from the Headnode local filesystem (`130.223.73.209`).
+*   Performs fail-fast validation (`HTTP 400`) before job placement.
+*   Runs inside isolated Docker container with real-time local log streaming and direct metrics sync.
+*   **Zero GitHub Upload**: Ideal for sensitive, confidential, or IP-restricted datasets.
+*   For setup and access requirements, see the **[Sensitive Data & Local Execution Guide](sensitive_data.md)**.
 
 ### `cluster-run list`
 List recent runs.

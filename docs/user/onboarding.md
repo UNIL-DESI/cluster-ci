@@ -109,3 +109,6 @@ stages:
 ---
 
 Once you have completed this onboarding, you are ready to run your first job. Proceed to the **[Command-Line Client Guide](client.md)**.
+
+> [!TIP]
+> **Working with Sensitive Data?** If your dataset is confidential or cannot be uploaded to GitHub, request Headnode SSH access from Henri Jamet (`henri.jamet@unil.ch`) and refer to the **[Sensitive Data & Local Execution Guide](sensitive_data.md)**.
