@@ -287,11 +287,12 @@ def check_dependencies(is_local=False):
             print("Please install it: https://cli.github.com/", file=sys.stderr)
             sys.exit(1)
 
-    # Check if in a git repository
-    res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if res.returncode != 0 or res.stdout.strip() != "true":
-        print("❌ Error: Not in a git repository.", file=sys.stderr)
-        sys.exit(1)
+    # Check if in a git repository (only required when not in local mode)
+    if not is_local:
+        res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0 or res.stdout.strip() != "true":
+            print("❌ Error: Not in a git repository.", file=sys.stderr)
+            sys.exit(1)
 
 def check_gh_auth():
     """Ensure user is logged in to GitHub CLI."""
@@ -302,8 +303,12 @@ def check_gh_auth():
 
 def get_current_user():
     """Retrieve GitHub username."""
-    res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-    return res.stdout.strip()
+    try:
+        res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+        return res.stdout.strip()
+    except Exception:
+        import getpass
+        return getpass.getuser()
 
 def get_repo_full_name():
     """Find the GitHub repository name from remote origin URL."""
@@ -315,9 +320,12 @@ def get_repo_full_name():
         match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", url)
         if match:
             REPO_FULL_NAME = match.group(1)
+            return
     except Exception:
-        # Fallback to default
         pass
+    
+    cwd_name = os.path.basename(os.getcwd())
+    REPO_FULL_NAME = f"local/{cwd_name}"
     return REPO_FULL_NAME
 
 def save_run_state(run_id, branch, commit_sha, job_id=None, headnode_url=None, is_local=False):
