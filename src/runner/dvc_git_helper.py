@@ -255,7 +255,93 @@ def get_cache_false_paths(dvc_yaml_path):
 
     return list(paths)
 
+def _sync_metrics_http():
+    """Upload metrics/plots to headnode via HTTP (local mode)."""
+    headnode_url = os.environ.get("HEADNODE_URL")
+    job_id = os.environ.get("JOB_ID")
+    cluster_token = os.environ.get("CLUSTER_TOKEN")
+
+    if not headnode_url or not job_id:
+        log_warn("IS_LOCAL=1 but HEADNODE_URL or JOB_ID is missing in environment. Cannot sync metrics via HTTP.")
+        return
+
+    dvc_yaml_path = 'dvc.yaml'
+    paths = get_cache_false_paths(dvc_yaml_path)
+
+    files_to_upload = {}
+    # Include dvc.lock if it exists
+    if os.path.exists('dvc.lock'):
+        files_to_upload['dvc.lock'] = 'dvc.lock'
+
+    # Include metrics/plots < 5 MB
+    for path in paths:
+        if os.path.isfile(path):
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            if size_mb < 5:
+                files_to_upload[path] = path
+            else:
+                log_warn(f"Skipping {path} ({size_mb:.1f} MB > 5 MB limit)")
+
+    if not files_to_upload:
+        log_info("No metrics or dvc.lock to sync in local mode.")
+        return
+
+    import uuid
+    import urllib.request
+    import urllib.error
+
+    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+    body = bytearray()
+
+    for field_name, file_path in files_to_upload.items():
+        try:
+            with open(file_path, 'rb') as f:
+                content = f.read()
+            body.extend(f"--{boundary}\r\n".encode('utf-8'))
+            body.extend(f'Content-Disposition: form-data; name="files"; filename="{field_name}"\r\n'.encode('utf-8'))
+            body.extend(b'Content-Type: application/octet-stream\r\n\r\n')
+            body.extend(content)
+            body.extend(b'\r\n')
+        except Exception as e:
+            log_warn(f"Failed to read file '{file_path}' for HTTP sync: {e}")
+
+    body.extend(f"--{boundary}--\r\n".encode('utf-8'))
+
+    url = f"{headnode_url.rstrip('/')}/api/jobs/{job_id}/sync_results"
+    headers = {
+        'Content-Type': f'multipart/form-data; boundary={boundary}',
+        'Content-Length': str(len(body))
+    }
+    if cluster_token:
+        headers['Authorization'] = f'Bearer {cluster_token}'
+
+    req = urllib.request.Request(url, data=bytes(body), headers=headers, method='POST')
+
+    try:
+        log_info(f"Posting {len(files_to_upload)} metric/lock file(s) to {url}...")
+        with urllib.request.urlopen(req, timeout=60) as response:
+            if response.status in (200, 201):
+                log_success(f"Metrics successfully synced to headnode via HTTP (Status {response.status}).")
+            else:
+                log_warn(f"HTTP sync metrics returned unexpected status: {response.status}")
+    except urllib.error.HTTPError as e:
+        log_warn(f"HTTP error during metrics sync ({e.code}): {e.reason}")
+        try:
+            err_body = e.read().decode('utf-8', errors='ignore')
+            log_warn(f"Response body: {err_body}")
+        except Exception:
+            pass
+    except urllib.error.URLError as e:
+        log_warn(f"URL error during metrics sync: {e.reason}")
+        log_warn("Please verify HEADNODE_URL reachability from inside the execution container.")
+    except Exception as e:
+        log_warn(f"Unexpected error during HTTP metrics sync: {e}")
+
 def sync_metrics():
+    if os.environ.get("IS_LOCAL") == "1":
+        log_info("IS_LOCAL=1 detected: Redirecting metrics sync to HTTP endpoint.")
+        return _sync_metrics_http()
+
     # Check if dvc.lock has changes or is untracked
     dvc_lock_changed = False
     if os.path.exists('dvc.lock'):
