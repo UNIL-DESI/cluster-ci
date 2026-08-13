@@ -187,32 +187,18 @@ echo "==========================================================================
 echo "===STAGE:setup:BEGIN==="
 
 # 1. Creation / switch to repositories/
-log_info "[Step 1/3] Initializing workspace..."
+log_info "[Step 1/3] Initializing local cache..."
+mkdir -p "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
+cd "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
 
-if [ "$IS_LOCAL" = "1" ]; then
-    if [ -z "$LOCAL_REPO_PATH" ] || [ ! -d "$LOCAL_REPO_PATH" ]; then
-        log_error "IS_LOCAL=1 but LOCAL_REPO_PATH '$LOCAL_REPO_PATH' does not exist or is not specified."
-        exit 1
-    fi
-    MIRROR_DIR="$BASE_DIR/repositories/_local_${SAFE_JOB_ID}"
-    log_info "Local execution mode (IS_LOCAL=1): Creating execution mirror workspace in $MIRROR_DIR from $LOCAL_REPO_PATH..."
-    rm -rf "$MIRROR_DIR"
-    mkdir -p "$MIRROR_DIR"
-    cp -a "$LOCAL_REPO_PATH/." "$MIRROR_DIR/"
-    cd "$MIRROR_DIR"
+# Extract just the final repo name for the folder (e.g., llm-as-recommender)
+REPO_BASENAME=$(basename "$TARGET_REPO")
+
+if [ -n "$GH_TOKEN" ]; then
+    # Silent https authentication for GitHub Actions
+    REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
 else
-    mkdir -p "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
-    cd "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
-
-    # Extract just the final repo name for the folder (e.g., llm-as-recommender)
-    REPO_BASENAME=$(basename "$TARGET_REPO")
-
-    if [ -n "$GH_TOKEN" ]; then
-        # Silent https authentication for GitHub Actions
-        REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git"
-    else
-        REPO_URL="https://github.com/${TARGET_REPO}.git"
-    fi
+    REPO_URL="https://github.com/${TARGET_REPO}.git"
 fi
 
 # 1.5 JIT Garbage Collection & Metadata update
@@ -260,18 +246,9 @@ function cleanup_job_resources() {
     # Kill pipeline siblings (gpu_watchdog.sh survives when only tee PID is killed)
     pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
     pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
-    if [ "$IS_LOCAL" = "1" ]; then
-        python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "${MIRROR_DIR:-$BASE_DIR/repositories/_local_${SAFE_JOB_ID}}" 2>/dev/null || true
-    else
-        python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO" 2>/dev/null || true
-    fi
+    python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
-
-    if [ "$IS_LOCAL" = "1" ] && [ -n "$MIRROR_DIR" ] && [ -d "$MIRROR_DIR" ]; then
-        log_info "Cleaning up local execution mirror workspace $MIRROR_DIR..."
-        rm -rf "$MIRROR_DIR" 2>/dev/null || true
-    fi
 }
 # Trap EXIT, SIGINT, and SIGTERM to ensure cleanup
 trap cleanup_job_resources EXIT SIGINT SIGTERM
@@ -291,13 +268,34 @@ for pid in $(pgrep -f "dvc-viewer" || true); do
 done
 
 if [ "$IS_LOCAL" = "1" ]; then
-    log_info "[Step 2.1/3] IS_LOCAL=1: Bypassing git clone / git fetch from GitHub."
-    if git rev-parse HEAD &>/dev/null; then
-        git rev-parse HEAD > .cluster-ci-commit
+    log_info "[LOCAL MODE] Bypassing Git operations. Downloading source archive from Headnode..."
+    mkdir -p "$BASE_DIR/$REPO_WORK_DIR"
+    cd "$BASE_DIR/$REPO_WORK_DIR"
+
+    log_info "[LOCAL MODE] Downloading code archive from $HEADNODE_URL/api/jobs/$JOB_ID/download_code..."
+    if [ -n "$CLUSTER_TOKEN" ]; then
+        curl -s -f -H "Authorization: Bearer $CLUSTER_TOKEN" \
+             "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o /tmp/local_source.tar.gz
     else
-        echo "local-headnode-run" > .cluster-ci-commit
+        curl -s -f "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o /tmp/local_source.tar.gz
     fi
-    log_success "Local mirror workspace ready at $(pwd)."
+
+    log_info "[LOCAL MODE] Extracting source archive..."
+    tar -xzf /tmp/local_source.tar.gz -C .
+    rm -f /tmp/local_source.tar.gz
+
+    # Initialize minimal git repo for DVC compatibility
+    if [ ! -d ".git" ]; then
+        log_info "[LOCAL MODE] Initializing temporary Git repository for DVC compatibility..."
+        git init
+        git add -A
+        git commit -m "Local snapshot" --allow-empty
+    fi
+
+    # Write a pseudo commit hash for traceability
+    echo "local-$(date +%s)-${JOB_ID:0:8}" > .cluster-ci-commit
+
+    log_success "[LOCAL MODE] Source code extracted and local Git initialized."
 else
     if [ ! -d "$REPO_BASENAME/.git" ]; then
         log_info "[Step 2.1/3] First repository fetch. Cloning in progress..."
@@ -547,7 +545,10 @@ docker run -d \
     -e UV_CACHE_DIR=/home/user/.cache/uv \
     $ENV_FILE_FLAG \
     -e HEADNODE_URL="$HEADNODE_URL" \
+    -e JOB_ID="$JOB_ID" \
+    -e CLUSTER_TOKEN="$CLUSTER_TOKEN" \
     -e CLUSTER_CI_MODE=executor \
+    -e IS_LOCAL="$IS_LOCAL" \
     -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
     -e CLUSTER_CI_VRAM_LIMIT_GB="$VRAM_LIMIT" \
     -e PYTHONSTARTUP=/cluster-ci/src/runner/gpu_memory_guard.py \
@@ -617,7 +618,10 @@ fi
 function docker_exec() {
 docker exec \
         -e HEADNODE_URL="$HEADNODE_URL" \
+        -e JOB_ID="$JOB_ID" \
+        -e CLUSTER_TOKEN="$CLUSTER_TOKEN" \
         -e CLUSTER_CI_MODE=executor \
+        -e IS_LOCAL="$IS_LOCAL" \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
 }
@@ -890,61 +894,19 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     elif [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
         EXEC_RET=137
         log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
-    elif [ $EXEC_RET -eq 255 ]; then
-        log_error "❌ Critical Failure: Execution process aborted unexpectedly (Exit code: 255)."
     else
         log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
     fi
 fi
 
-if [ "$IS_LOCAL" = "1" ]; then
-    log_info "IS_LOCAL=1: Syncing updated metrics, plots, and dvc.lock directly back to $LOCAL_REPO_PATH..."
-    if [ -f "dvc.lock" ]; then
-        cp -f dvc.lock "$LOCAL_REPO_PATH/dvc.lock"
-        log_info "Copied dvc.lock -> $LOCAL_REPO_PATH/dvc.lock"
-    fi
-    python3 -c "
-import sys, os, shutil
-base_dir = os.environ.get('BASE_DIR', '.')
-local_repo = os.environ.get('LOCAL_REPO_PATH')
-if local_repo and os.path.isdir(local_repo):
-    sys.path.insert(0, os.path.join(base_dir, 'src/runner'))
-    try:
-        from dvc_git_helper import get_cache_false_paths
-        paths = get_cache_false_paths('dvc.yaml')
-    except Exception as err:
-        print(f'Warning loading dvc_git_helper: {err}')
-        paths = []
-    
-    for default_p in ['metrics.json', 'scores.json', 'plots']:
-        if os.path.exists(default_p) and default_p not in paths:
-            paths.append(default_p)
-
-    for p in paths:
-        if os.path.exists(p):
-            target = os.path.join(local_repo, p)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            if os.path.isdir(p):
-                shutil.copytree(p, target, dirs_exist_ok=True)
-            else:
-                shutil.copy2(p, target)
-            print(f'Synced {p} -> {target}')
-" || log_warn "Failed to sync metrics/plots to LOCAL_REPO_PATH."
-    log_success "Local synchronization complete. Skipped git push origin."
-else
-    log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-    docker_exec "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
-fi
+log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
+timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
 
 echo "=========================================================================="
-if [ -z "$EXEC_RET" ] || [ "$EXEC_RET" -eq 0 ]; then
-    log_success "CLUSTER-CI: GitOps execution completed successfully."
-else
-    log_error "CLUSTER-CI: GitOps execution failed with exit code $EXEC_RET."
-fi
+log_success "CLUSTER-CI: GitOps execution completed successfully."
 echo "=========================================================================="
 
 echo "===STAGE:sync:END==="
@@ -965,19 +927,12 @@ if [ -n "$GITHUB_STEP_SUMMARY" ]; then
     timeout 30 docker_exec "dvc plots diff --md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No plot changes or error." >> "$GITHUB_STEP_SUMMARY"
 fi
 
-if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
+if [ $EXEC_RET -ne 0 ]; then
     if [ $EXEC_RET -eq 137 ]; then
         # Already logged above (RAM or VRAM OOM), just exit
         true
-    elif [ $EXEC_RET -eq 255 ]; then
-        log_error "❌ Critical Failure: Execution process aborted unexpectedly (Exit code: 255)."
     else
         log_error "Exiting with error code $EXEC_RET due to previous failure."
     fi
-    sync 2>/dev/null || true
-    sleep 1
     exit $EXEC_RET
 fi
-
-sync 2>/dev/null || true
-sleep 1

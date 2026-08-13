@@ -19,6 +19,9 @@ import threading
 import queue
 import urllib.request
 import urllib.error
+import io
+import tarfile
+import base64
 
 
 # Global variables for cleanup
@@ -153,24 +156,6 @@ def discover_headnode_url():
             pass
     return None
 
-def is_headnode_environment(args_local=False):
-    """Detect if running on Headnode or if --local flag is provided."""
-    if args_local:
-        return True
-    if os.environ.get("CLUSTER_LOCAL") in ("1", "true", "True") or os.environ.get("HEADNODE_LOCAL") in ("1", "true", "True"):
-        return True
-
-    headnode_url = discover_headnode_url() or "http://127.0.0.1:5000"
-    if "127.0.0.1" in headnode_url or "localhost" in headnode_url:
-        try:
-            req = urllib.request.Request(f"{headnode_url.rstrip('/')}/check_space")
-            with urllib.request.urlopen(req, timeout=1) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            pass
-    return False
-
 def find_job_id_from_headnode(headnode_url, repo, branch):
     """Query the headnode to find the active job_id for a given repo+branch."""
     if not headnode_url:
@@ -263,7 +248,7 @@ def print_line(line, force=False):
     # Display to console (always, no limit)
     print(line, flush=True)
 
-def check_dependencies(is_local=False):
+def check_dependencies(require_gh=True):
     """Verify that git (and optionally gh) are installed and accessible."""
     # Robust PATH check for Windows: add standard GitHub CLI path if not present but exists
     if sys.platform == "win32":
@@ -279,7 +264,7 @@ def check_dependencies(is_local=False):
         print("❌ Error: git is not installed or not in PATH.", file=sys.stderr)
         sys.exit(1)
 
-    if not is_local:
+    if require_gh:
         try:
             subprocess.run(["gh", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -287,12 +272,11 @@ def check_dependencies(is_local=False):
             print("Please install it: https://cli.github.com/", file=sys.stderr)
             sys.exit(1)
 
-    # Check if in a git repository (only required when not in local mode)
-    if not is_local:
-        res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode != 0 or res.stdout.strip() != "true":
-            print("❌ Error: Not in a git repository.", file=sys.stderr)
-            sys.exit(1)
+    # Check if in a git repository
+    res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if res.returncode != 0 or res.stdout.strip() != "true":
+        print("❌ Error: Not in a git repository.", file=sys.stderr)
+        sys.exit(1)
 
 def check_gh_auth():
     """Ensure user is logged in to GitHub CLI."""
@@ -303,12 +287,8 @@ def check_gh_auth():
 
 def get_current_user():
     """Retrieve GitHub username."""
-    try:
-        res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-        return res.stdout.strip()
-    except Exception:
-        import getpass
-        return getpass.getuser()
+    res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    return res.stdout.strip()
 
 def get_repo_full_name():
     """Find the GitHub repository name from remote origin URL."""
@@ -320,12 +300,9 @@ def get_repo_full_name():
         match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", url)
         if match:
             REPO_FULL_NAME = match.group(1)
-            return
     except Exception:
+        # Fallback to default
         pass
-    
-    cwd_name = os.path.basename(os.getcwd())
-    REPO_FULL_NAME = f"local/{cwd_name}"
     return REPO_FULL_NAME
 
 def save_run_state(run_id, branch, commit_sha, job_id=None, headnode_url=None, is_local=False):
@@ -339,8 +316,8 @@ def save_run_state(run_id, branch, commit_sha, job_id=None, headnode_url=None, i
         }
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️  Could not save run state: {e}", file=sys.stderr)
 
 def clear_run_state():
     """Remove the state file after successful cleanup."""
@@ -384,10 +361,10 @@ def _headnode_stop_job(job_id, headnode_url, cluster_token):
         print(f"   Could not reach headnode: {e}")
 
 def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnode_url=None, cluster_token=None, is_local=False):
-    """Cancel a GHA or local run, sync partial results if non-local.
+    """Cancel a run, sync partial results. Branch is preserved for artifact access.
     
     This is the single source of truth for run teardown, used by:
-    - Normal cleanup after shadow_run() / local_shadow_run()
+    - Normal cleanup after shadow_run() / local_run()
     - Orphan recovery at startup
     - Signal handlers (Ctrl+C, SIGTERM)
     """
@@ -396,16 +373,20 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnod
         print("🔌 Stopping job on cluster headnode...")
         _headnode_stop_job(job_id, headnode_url, cluster_token)
 
-    # 1. Sync partial results before anything else (skip if local execution mode)
-    if not is_local:
-        try:
+    # 1. Sync partial results before anything else
+    try:
+        if is_local:
+            if job_id and headnode_url:
+                print("📥 Syncing any partial local results before cleanup...")
+                fetch_local_results(job_id, headnode_url, cluster_token)
+        else:
             print("📥 Syncing any partial results before cleanup...")
             fetch_cluster_results(branch, commit_sha)
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"⚠️  Error during partial results sync: {e}", file=sys.stderr)
 
-    # 2. Cancel the GHA run if still active (skip if local run)
-    if run_id and not is_local and not str(run_id).startswith("local-"):
+    # 2. Cancel the GHA run if still active (skip for local runs)
+    if run_id and not is_local:
         try:
             res = subprocess.run(
                 ["gh", "run", "view", str(run_id), "--json", "status"],
@@ -419,8 +400,12 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnod
                         ["gh", "run", "cancel", str(run_id)],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️  Error cancelling GHA run: {e}", file=sys.stderr)
+
+    # NOTE: Draft branch is intentionally NOT deleted.
+    # It persists so the cross-branch artifact viewer can access its results.
+    # The next cluster-run will overwrite it via --force push.
 
     # 3. Remove state file
     clear_run_state()
@@ -445,8 +430,8 @@ def cleanup():
                     headnode_url = state.get("headnode_url")
                     cluster_token = state.get("cluster_token")
                     is_local = state.get("is_local", False)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️  Error reading state file during cleanup: {e}", file=sys.stderr)
         cancel_and_cleanup_run(
             RUN_ID if USER_INTERRUPTED else None, BRANCH, COMMIT_SHA,
             job_id=job_id if USER_INTERRUPTED else None,
@@ -498,10 +483,11 @@ def recover_orphaned_run():
         orphan_job_id = state.get("job_id")
         orphan_headnode_url = state.get("headnode_url")
         orphan_cluster_token = state.get("cluster_token")
+        orphan_is_local = state.get("is_local", False)
         cancel_and_cleanup_run(
             orphan_run_id, orphan_branch, orphan_sha,
             job_id=orphan_job_id, headnode_url=orphan_headnode_url,
-            cluster_token=orphan_cluster_token,
+            cluster_token=orphan_cluster_token, is_local=orphan_is_local,
         )
         print("✅ Orphaned run cleaned up.\n")
     except Exception as e:
@@ -1204,37 +1190,255 @@ def shadow_run():
         print(f"❌ Run finished with conclusion: {conclusion}")
         sys.exit(1)
 
-def local_shadow_run():
-    """Execute job directly on Headnode without GitHub Actions or git push."""
-    global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
+
+def get_local_username():
+    """Retrieve username, trying gh first then falling back to system OS username."""
+    try:
+        return get_current_user()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("USERNAME") or os.environ.get("LOGNAME") or "local_user"
+
+
+def package_local_source(project_dir="."):
+    """Package project workspace using git ls-files to respect .gitignore into a tar.gz BytesIO archive."""
+    cmd = ["git", "ls-files", "--cached", "--others", "--exclude-standard"]
+    try:
+        res = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+        files = res.stdout.splitlines()
+    except Exception as e:
+        print(f"❌ Error listing workspace files via git ls-files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    excluded_prefixes = (
+        ".git/",
+        ".dvc/cache/",
+        "__pycache__/",
+        ".cluster-ci-logs/",
+        ".venv/",
+        "venv/",
+        ".pytest_cache/",
+        ".mypy_cache/",
+    )
+    excluded_filenames = (".cluster-ci-run.json",)
+
+    buf = io.BytesIO()
+    count = 0
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for rel_path in files:
+            rel_path = rel_path.strip()
+            if not rel_path:
+                continue
+            norm_path = rel_path.replace("\\", "/")
+            if any(norm_path.startswith(prefix) or f"/{prefix}" in norm_path for prefix in excluded_prefixes):
+                continue
+            if norm_path in excluded_filenames or norm_path.endswith(".pyc"):
+                continue
+
+            full_path = os.path.join(project_dir, rel_path)
+            if os.path.isfile(full_path):
+                tar.add(full_path, arcname=rel_path)
+                count += 1
+
+    buf.seek(0)
+    print(f"📦 Packaged {count} workspace files into local source archive ({len(buf.getvalue()) / (1024*1024):.2f} MB)")
+    return buf
+
+
+def parse_cluster_ci_config(project_dir="."):
+    """Parse workspace .cluster-ci file for RAM, VRAM, MAX_RUNTIME_HOURS, EXPOSED_PORT, CUSTOM_WEB_APP, ALLOWED_WORKERS."""
+    ci_file = os.path.join(project_dir, ".cluster-ci")
+    content = ""
+    if os.path.exists(ci_file):
+        try:
+            with open(ci_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"⚠️  Could not read .cluster-ci file: {e}", file=sys.stderr)
+
+    # Parse RAM
+    ram_req = 2.0
+    match_env = re.search(r'REQUIRED_RAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    if match_env:
+        ram_req = float(match_env.group(1))
+    else:
+        match_ram = re.search(r'--ram\s+(\d+(?:\.\d+)?)', content)
+        if match_ram:
+            ram_req = float(match_ram.group(1))
+
+    # Parse MAX_RUNTIME_HOURS (Fail-Fast)
+    runtime_match = re.search(r'MAX_RUNTIME_HOURS\s*=\s*(\d+(?:\.\d+)?)', content)
+    if not runtime_match:
+        print("❌ Error: MAX_RUNTIME_HOURS is missing in .cluster-ci. This parameter is mandatory (max 24h).", file=sys.stderr)
+        sys.exit(1)
+
+    max_runtime = float(runtime_match.group(1))
+    if max_runtime <= 0 or max_runtime > 24:
+        print(f"❌ Error: MAX_RUNTIME_HOURS must be between 0 and 24 hours (found: {max_runtime}).", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse EXPOSED_PORT
+    exposed_port = None
+    port_match = re.search(r'EXPOSED_PORT\s*=\s*(\d+)', content)
+    if port_match:
+        exposed_port = int(port_match.group(1))
+
+    # Parse REQUIRED_VRAM
+    vram_req = 0.0
+    vram_match = re.search(r'REQUIRED_VRAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    if vram_match:
+        vram_req = float(vram_match.group(1))
+
+    # Parse CUSTOM_WEB_APP
+    custom_web_app = False
+    custom_app_match = re.search(r'CUSTOM_WEB_APP\s*=\s*(true|1)', content, re.IGNORECASE)
+    if custom_app_match:
+        custom_web_app = True
+
+    # Parse ALLOWED_WORKERS
+    allowed_workers = None
+    aw_match = re.search(r'ALLOWED_WORKERS\s*=\s*(.+)', content)
+    if aw_match:
+        allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
+
+    return {
+        "ram_required_gb": ram_req,
+        "vram_required_gb": vram_req,
+        "max_runtime_hours": max_runtime,
+        "exposed_port": exposed_port,
+        "custom_web_app": custom_web_app,
+        "allowed_workers": allowed_workers,
+    }
+
+
+def fetch_local_results(job_id, headnode_url, cluster_token=None):
+    """Fetch metrics and results archive from Headnode and extract locally."""
+    if not job_id or not headnode_url:
+        return False
+    try:
+        url = f"{headnode_url}/api/jobs/{job_id}/results"
+        req = urllib.request.Request(url)
+        if cluster_token:
+            req.add_header("Authorization", f"Bearer {cluster_token}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status == 200:
+                data = resp.read()
+                extracted_files = []
+                if data.startswith(b"PK\x03\x04"):
+                    import zipfile
+                    with zipfile.ZipFile(io.BytesIO(data), "r") as z:
+                        extracted_files = z.namelist()
+                        z.extractall(".")
+                elif data.startswith(b"\x1f\x8b") or data.startswith(b"\x1f\x9d"):
+                    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as t:
+                        extracted_files = t.getnames()
+                        t.extractall(".")
+                else:
+                    print("⚠️  Unrecognized results archive format received from headnode.", file=sys.stderr)
+                    return False
+
+                if extracted_files:
+                    print(f"\n✨ [Auto-sync] Local results retrieved successfully ({len(extracted_files)} file(s)):")
+                    for f in extracted_files:
+                        print(f"   🎉 {f}")
+                return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            print(f"⚠️  Could not fetch local results (HTTP {e.code}): {e.reason}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️  Failed to fetch results from headnode: {e}", file=sys.stderr)
+    return False
+
+
+def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
+    """Poll job status and stream live logs directly from headnode API for a local run."""
+    init_log_redirection()
+    offset = 0
+    last_status_msg = ""
+
+    while True:
+        # 1. Fetch latest logs from Headnode API
+        try:
+            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
+            req = urllib.request.Request(logs_url)
+            if cluster_token:
+                req.add_header("Authorization", f"Bearer {cluster_token}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    log_resp = json.loads(resp.read().decode("utf-8"))
+                    new_logs = log_resp.get("logs", "")
+                    offset = log_resp.get("offset", offset)
+                    if new_logs and isinstance(new_logs, str):
+                        for line in new_logs.splitlines():
+                            print_line(line)
+        except Exception:
+            # Silently continue on temporary network glitches while polling logs
+            pass
+
+        # 2. Check job status
+        try:
+            status_url = f"{headnode_url}/job_status/{job_id}"
+            req = urllib.request.Request(status_url)
+            if cluster_token:
+                req.add_header("Authorization", f"Bearer {cluster_token}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    job_data = json.loads(resp.read().decode("utf-8"))
+                    status = job_data.get("status")
+                    exit_code = job_data.get("exit_code")
+
+                    if status in ("pending", "assigned"):
+                        msg = f"⏳ Job status: {status}..."
+                        if msg != last_status_msg:
+                            print_line(msg)
+                            last_status_msg = msg
+
+                    elif status in ("completed", "failed"):
+                        # Drain any remaining logs one final time
+                        try:
+                            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
+                            req = urllib.request.Request(logs_url)
+                            if cluster_token:
+                                req.add_header("Authorization", f"Bearer {cluster_token}")
+                            with urllib.request.urlopen(req, timeout=5) as r2:
+                                if r2.status == 200:
+                                    log_resp = json.loads(r2.read().decode("utf-8"))
+                                    final_logs = log_resp.get("logs", "")
+                                    if final_logs and isinstance(final_logs, str):
+                                        for line in final_logs.splitlines():
+                                            print_line(line)
+                        except Exception:
+                            pass
+
+                        # Fetch metrics & results from headnode
+                        fetch_local_results(job_id, headnode_url, cluster_token)
+                        close_log_redirection()
+                        print_log_summary()
+
+                        if status == "completed":
+                            ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 0
+                            print(f"\n✅ Cluster-CI local run completed successfully! (Exit code: {ret_code})")
+                            return int(ret_code)
+                        else:
+                            ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
+                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})")
+                            return int(ret_code)
+        except Exception:
+            # Status check temporary error
+            pass
+
+        time.sleep(2)
+
+
+def local_run():
+    """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
+    global BRANCH, COMMIT_SHA, USER_INTERRUPTED
 
     clean_old_results()
-    check_gitattributes_safety()
 
-    try:
-        user = get_current_user()
-    except Exception:
-        user = os.environ.get("USER") or os.environ.get("USERNAME") or "local_user"
-
-    BRANCH = f"cluster-draft/{user}"
-    repo = get_repo_full_name()
-    local_repo_path = os.path.abspath(os.getcwd())
-
-    headnode_url = discover_headnode_url() or "http://127.0.0.1:5000"
-
-    print(f"📍 Running in Direct Headnode Mode (Local Execution)")
-    print(f"🚀 Submitting job from local path: {local_repo_path}")
-
-    commit_sha = None
-    try:
-        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if res.returncode == 0:
-            commit_sha = res.stdout.strip()
-    except Exception:
-        pass
-    if not commit_sha:
-        commit_sha = "local-head"
-    COMMIT_SHA = commit_sha
+    headnode_url = discover_headnode_url()
+    if not headnode_url:
+        print("❌ Error: HEADNODE_URL could not be discovered. Please set HEADNODE_URL environment variable or configure .env.", file=sys.stderr)
+        sys.exit(1)
 
     cluster_token = os.environ.get("CLUSTER_TOKEN")
     if not cluster_token:
@@ -1247,59 +1451,77 @@ def local_shadow_run():
                         if line.startswith("CLUSTER_TOKEN="):
                             cluster_token = line.split("=", 1)[1].strip().strip('"').strip("'")
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️  Could not read CLUSTER_TOKEN from .env: {e}", file=sys.stderr)
     if cluster_token:
         os.environ["CLUSTER_TOKEN"] = cluster_token
 
-    env_vars = {}
-    all_secrets_json = os.environ.get("ALL_GITHUB_SECRETS")
-    if all_secrets_json:
+    config = parse_cluster_ci_config(".")
+    repo = get_repo_full_name()
+    username = get_local_username()
+    BRANCH = f"local-draft/{username}"
+    COMMIT_SHA = "local-snapshot"
+
+    print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (repo: {repo}, branch: {BRANCH})")
+
+    archive_buf = package_local_source(".")
+    archive_b64 = base64.b64encode(archive_buf.getvalue()).decode("utf-8")
+
+    payload = {
+        "repo": repo,
+        "branch": BRANCH,
+        "username": username,
+        "commit_hash": COMMIT_SHA,
+        "ram_required_gb": config["ram_required_gb"],
+        "vram_required_gb": config["vram_required_gb"],
+        "max_runtime_hours": config["max_runtime_hours"],
+        "exposed_port": config["exposed_port"],
+        "custom_web_app": config["custom_web_app"],
+        "allowed_workers": config["allowed_workers"],
+        "is_local": True,
+        "source_archive": archive_b64,
+    }
+
+    submit_url = f"{headnode_url}/submit_job"
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(submit_url, data=data_bytes, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if cluster_token:
+        req.add_header("Authorization", f"Bearer {cluster_token}")
+
+    print(f"🚀 Sending local workspace archive to Headnode at {headnode_url}...")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            res_data = json.loads(resp.read().decode("utf-8"))
+            job_id = res_data.get("job_id")
+            if not job_id:
+                print(f"❌ Error: Headnode submit_job response missing job_id: {res_data}", file=sys.stderr)
+                sys.exit(1)
+            print(f"✅ Job submitted successfully! Job ID: {job_id}")
+    except urllib.error.HTTPError as e:
+        error_body = ""
         try:
-            secrets_dict = json.loads(all_secrets_json)
-            for k, v in secrets_dict.items():
-                if k.lower() != 'github_token':
-                    env_vars[k] = v
+            error_body = e.read().decode("utf-8")
         except Exception:
             pass
-
-    try:
-        from scheduler.submit_job import submit_job, wait_for_job
-    except ImportError:
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-        from scheduler.submit_job import submit_job, wait_for_job
-
-    try:
-        job_id = submit_job(
-            headnode_url=headnode_url,
-            repo=repo,
-            branch=BRANCH,
-            gh_token=None,
-            env_vars=env_vars,
-            commit_hash=commit_sha,
-            is_local=True,
-            local_repo_path=local_repo_path
-        )
+        print(f"❌ Error submitting local job (HTTP {e.code}): {e.reason} - {error_body}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"❌ Local job submission failed: {e}", file=sys.stderr)
+        print(f"❌ Connection error to Headnode submit_job ({submit_url}): {e}", file=sys.stderr)
         sys.exit(1)
 
-    RUN_ID = f"local-{job_id}"
-    save_run_state(RUN_ID, BRANCH, commit_sha, job_id=job_id, headnode_url=headnode_url, is_local=True)
+    save_run_state(run_id=None, branch=BRANCH, commit_sha=COMMIT_SHA, job_id=job_id, headnode_url=headnode_url, is_local=True)
 
-    print(f"📺 Streaming logs for local job {job_id[:12]} (Ctrl+C to cancel)...")
+    print(f"📺 Polling status & streaming logs for local job {job_id[:12]}... (Ctrl+C to cancel)")
 
     try:
-        exit_code = wait_for_job(headnode_url, job_id, branch=BRANCH)
+        ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token)
         clear_run_state()
-        if exit_code != 0:
-            sys.exit(exit_code)
-        print("✅ Local run completed successfully!")
+        if ret_code != 0:
+            sys.exit(ret_code)
     except KeyboardInterrupt:
         USER_INTERRUPTED = True
         print("\n🛑 Execution interrupted by user.")
-        _headnode_stop_job(job_id, headnode_url, cluster_token)
-        clear_run_state()
         sys.exit(130)
 
 def main():
@@ -1320,17 +1542,14 @@ def main():
 
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
     parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync"],
-                        help="Action to perform (default: submit a new shadow run)")
+                        help="Action to perform (default: submit a new shadow run or local run)")
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view' or 'cancel'")
-    parser.add_argument("--local", action="store_true",
-                        help="Execute directly on Headnode without GitHub Actions or Git push")
+    parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
 
     args = parser.parse_args()
 
-    is_local = is_headnode_environment(args.local)
-
-    check_dependencies(is_local=is_local)
+    check_dependencies(require_gh=not args.local if args.command is None else True)
 
     # Recover any orphaned run from a previously force-killed session
     recover_orphaned_run()
@@ -1403,33 +1622,8 @@ def main():
 
     elif args.command == "cancel":
         run_id = args.run_id
-        is_local_run = False
-        job_id = None
-        headnode_url = discover_headnode_url() or "http://127.0.0.1:5000"
-
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, "r", encoding="utf-8") as f:
-                    state = json.load(f)
-                    job_id = state.get("job_id")
-                    if state.get("is_local"):
-                        is_local_run = True
-            except Exception:
-                pass
-
-        if is_local_run or is_local:
-            if job_id and headnode_url:
-                print(f"🔌 Stopping local job {job_id[:12]}... on Headnode...")
-                cluster_token = os.environ.get("CLUSTER_TOKEN")
-                _headnode_stop_job(job_id, headnode_url, cluster_token)
-            else:
-                print("⚠️ Could not find active local job ID to stop.")
-            clear_run_state()
-            return
-
-        if not is_local:
-            check_gh_auth()
-        user = get_current_user() if not is_local else "local_user"
+        check_gh_auth()
+        user = get_current_user()
         branch = f"cluster-draft/{user}"
         
         if not run_id:
@@ -1446,8 +1640,19 @@ def main():
                 sys.exit(1)
 
         # 0. Stop job on headnode FIRST (kills Docker, releases resources)
+        headnode_url = discover_headnode_url()
         repo = get_repo_full_name()
         if headnode_url:
+            job_id = None
+            # Try to read job_id from state file
+            try:
+                if os.path.exists(STATE_FILE):
+                    with open(STATE_FILE, "r", encoding="utf-8") as f:
+                        state = json.load(f)
+                        job_id = state.get("job_id")
+            except Exception:
+                pass
+            # Fallback: query headnode by branch
             if not job_id:
                 job_id = find_job_id_from_headnode(headnode_url, repo, branch)
             if job_id:
@@ -1472,6 +1677,9 @@ def main():
         print(f"🛑 Cancelling run {run_id}...")
         subprocess.run(["gh", "run", "cancel", run_id])
 
+        # NOTE: Draft branch is intentionally preserved.
+        # Its results remain accessible via the cross-branch artifact viewer.
+        # The next cluster-run will overwrite it via --force push.
         print(f"ℹ️  Branch origin/{branch} preserved (results accessible via dashboard).")
 
         # 3. Clear state file
@@ -1479,8 +1687,11 @@ def main():
 
     else:
         # Submit run
-        if is_local:
-            local_shadow_run()
+        if args.local:
+            try:
+                local_run()
+            finally:
+                cleanup()
         else:
             try:
                 shadow_run()

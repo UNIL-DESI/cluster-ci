@@ -408,10 +408,8 @@ def execute_job(job):
     p2p_url = job.get('p2p_url')
     gh_token = job.get('gh_token')
     env_vars = job.get('env_vars')
-    is_local = job.get('is_local', False)
-    local_repo_path = job.get('local_repo_path')
 
-    logger.info(f"Executing job {job_id} for {repo}@{branch} with {ram_limit_gb}GB limit (is_local={is_local})")
+    logger.info(f"Executing job {job_id} for {repo}@{branch} with {ram_limit_gb}GB limit")
     purge_orphan_runners_and_containers(job_id)
     update_job_status(job_id, 'running')
 
@@ -427,14 +425,9 @@ def execute_job(job):
     env["CLUSTER_CI_MODE"] = "executor"
     env["JOB_ID"] = job_id
     env["LOGS_DIR"] = LOGS_DIR
-
-    is_local_flag = bool(is_local and str(is_local).lower() in ("1", "true"))
-    if is_local_flag:
-        logger.info(f"Injecting local execution environment for job {job_id}: IS_LOCAL=1, LOCAL_REPO_PATH={local_repo_path}")
+    if job.get('is_local'):
+        logger.info(f"Injecting IS_LOCAL=1 for job {job_id}")
         env["IS_LOCAL"] = "1"
-        if local_repo_path:
-            env["LOCAL_REPO_PATH"] = local_repo_path
-
     commit_hash = job.get('commit_hash')
     if commit_hash:
         logger.info(f"Injecting CALLER_COMMIT_SHA for job {job_id}: {commit_hash}")
@@ -479,9 +472,7 @@ def execute_job(job):
 
     try:
         # Delete stale port file from previous runs
-        safe_job_id = job_id.replace('/', '-')
-        repo_work_dir = os.path.join(REPOS_DIR, f"_local_{safe_job_id}") if is_local_flag else os.path.join(REPOS_DIR, repo)
-        port_file = os.path.join(repo_work_dir, ".cluster-ci-viewer-port")
+        port_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-viewer-port")
         if os.path.exists(port_file):
             try:
                 os.remove(port_file)
@@ -602,8 +593,7 @@ def execute_job(job):
 
             # Try to report dynamic viewer port if not already done
             if not port_reported:
-                repo_work_dir = os.path.join(REPOS_DIR, f"_local_{safe_job_id}") if is_local_flag else os.path.join(REPOS_DIR, repo)
-                port_file = os.path.join(repo_work_dir, ".cluster-ci-viewer-port")
+                port_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-viewer-port")
                 if os.path.exists(port_file):
                     try:
                         with open(port_file, 'r') as f:
@@ -619,8 +609,7 @@ def execute_job(job):
 
         # Try to extract the commit hash from the job's directory
         commit_hash = None
-        repo_work_dir = os.path.join(REPOS_DIR, f"_local_{safe_job_id}") if is_local_flag else os.path.join(REPOS_DIR, repo)
-        commit_file = os.path.join(repo_work_dir, ".cluster-ci-commit")
+        commit_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-commit")
         if os.path.exists(commit_file):
             try:
                 with open(commit_file, 'r') as f:
@@ -643,13 +632,6 @@ def execute_job(job):
                 pass
             log_file.flush()
             update_job_status(job_id, 'failed', 137, commit_hash=commit_hash)
-        elif exit_code == 255:
-            error_msg = f"❌ [CLUSTER CRITICAL FAILURE] Execution process aborted unexpectedly (Exit code 255).\n"
-            sys.stderr.write(error_msg)
-            sys.stderr.flush()
-            log_file.write(error_msg)
-            log_file.flush()
-            update_job_status(job_id, 'failed', 255, commit_hash=commit_hash)
         elif exit_code == 0:
             update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash)
         elif exit_code < 0:

@@ -8,7 +8,7 @@ socket.getaddrinfo = new_getaddrinfo
 # Set a global timeout for all socket operations to prevent infinite hangs
 socket.setdefaulttimeout(20.0)
 
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template, send_file
 from persistence import init_db, get_db_conn
 from authlib.integrations.flask_client import OAuth
 import uuid
@@ -25,6 +25,8 @@ import json
 import yaml
 import hashlib
 import tempfile
+import io
+import base64
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -48,6 +50,7 @@ DVC_CMD = get_executable("dvc")
 UV_CMD = get_executable("uv")
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB limit for source code archive uploads
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # Derive a stable secret_key from CLUSTER_TOKEN so sessions survive service restarts.
 # os.urandom(24) would invalidate all sessions on every restart.
@@ -83,10 +86,27 @@ def check_token():
 @app.before_request
 def require_token():
     # Only protect API endpoints that workers or users use to modify state
-    protected_endpoints = ['register_worker', 'submit_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off']
+    protected_endpoints = ['register_worker', 'submit_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results']
     if request.endpoint in protected_endpoints:
         if not check_token():
             return jsonify({"error": "Unauthorized"}), 401
+
+def cleanup_local_archive(job_id_or_path):
+    """Clean up uploaded local source code archive after job completion or failure."""
+    try:
+        if isinstance(job_id_or_path, str) and os.path.exists(job_id_or_path) and job_id_or_path.endswith('.tar.gz'):
+            os.remove(job_id_or_path)
+            app.logger.info(f"🧹 Cleaned up local source archive: {job_id_or_path}")
+        else:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT local_archive_path FROM jobs WHERE job_id = ?', (job_id_or_path,))
+                row = cursor.fetchone()
+                if row and row['local_archive_path'] and os.path.exists(row['local_archive_path']):
+                    os.remove(row['local_archive_path'])
+                    app.logger.info(f"🧹 Cleaned up local source archive for job {job_id_or_path}: {row['local_archive_path']}")
+    except Exception as e:
+        app.logger.warning(f"Failed to cleanup local archive for {job_id_or_path}: {e}")
 
 @app.route('/maintenance/on', methods=['POST'])
 def maintenance_on():
@@ -225,6 +245,7 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
         ''', (exit_code, job_id))
         conn.commit()
 
+    cleanup_local_archive(job_id)
     app.logger.info(f"🛑 cancel_job_cleanly({job_id}): done — job marked as failed")
     return True
 
@@ -232,66 +253,82 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
 def submit_job():
     if MAINTENANCE_MODE:
         return jsonify({"error": "Service Unavailable: Maintenance Mode Active"}), 503
-    data = request.json
+
+    if request.is_json:
+        data = request.get_json() or {}
+    else:
+        data = request.form.to_dict() if request.form else {}
+
+    is_local_val = data.get('is_local', False)
+    is_local = bool(is_local_val and str(is_local_val).lower() in ['true', '1'])
+
     repo = data.get('repo')
     branch = data.get('branch')
+    username = data.get('username')
+    commit_hash = data.get('commit_hash')
     ram_required_gb = data.get('ram_required_gb', 0)
     max_runtime_hours = data.get('max_runtime_hours')
     exposed_port = data.get('exposed_port')
     vram_required_gb = data.get('vram_required_gb', 0)
     custom_web_app = data.get('custom_web_app', False)
+    if isinstance(custom_web_app, str):
+        custom_web_app = custom_web_app.lower() in ['true', '1']
     allowed_workers = data.get('allowed_workers')  # List of hostnames to restrict execution
+    if isinstance(allowed_workers, str):
+        try:
+            allowed_workers = json.loads(allowed_workers)
+        except Exception:
+            allowed_workers = [w.strip() for w in allowed_workers.split(',') if w.strip()]
     gh_run_id = data.get('gh_run_id')
     gh_token = data.get('gh_token')
     env_vars = data.get('env_vars') # Dictionary of secrets
+    if isinstance(env_vars, str):
+        try:
+            env_vars = json.loads(env_vars)
+        except Exception:
+            env_vars = None
+
     job_id = str(uuid.uuid4())
+    local_archive_path = None
 
-    is_local_raw = data.get('is_local', False)
-    if isinstance(is_local_raw, str):
-        is_local = is_local_raw.lower() in ('true', '1')
-    else:
-        is_local = bool(is_local_raw)
-    local_repo_path = data.get('local_repo_path')
-
-    # Validation when is_local=True (Fail-Fast)
     if is_local:
-        if not local_repo_path or not isinstance(local_repo_path, str):
-            err_msg = "is_local is True but local_repo_path is missing or invalid"
-            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
-            return jsonify({"error": err_msg}), 400
-        if not os.path.exists(local_repo_path) or not os.path.isdir(local_repo_path):
-            err_msg = f"local_repo_path does not exist or is not a directory: '{local_repo_path}'"
-            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
-            return jsonify({"error": err_msg}), 400
-        cluster_ci_path = os.path.join(local_repo_path, ".cluster-ci")
-        if not os.path.exists(cluster_ci_path):
-            err_msg = f"local_repo_path '{local_repo_path}' does not contain .cluster-ci file"
-            app.logger.error(f"❌ [SUBMIT_JOB FAIL] {err_msg}")
-            return jsonify({"error": err_msg}), 400
+        # Local job mode: assign local-draft/{username} branch and save source archive
+        if username:
+            branch = f"local-draft/{username}"
+        elif not branch or not branch.startswith("local-draft/"):
+            branch = "local-draft/anonymous"
 
-        # Auto-restrict execution to Headnode if allowed_workers is not provided
-        if not allowed_workers:
-            headnode_hostname = socket.gethostname()
-            allowed_workers = [headnode_hostname]
-            app.logger.info(f"📍 [SUBMIT_JOB] Local job submission: auto-restricting execution to Headnode hostname '{headnode_hostname}'")
+        gh_run_id = None  # No GitHub Action associated with local jobs
 
-    # Metadata extraction (Pre-flight check)
-    required_hashes = []
-    if is_local:
-        lock_path = os.path.join(local_repo_path, "dvc.lock")
-        if os.path.exists(lock_path):
-            try:
-                with open(lock_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    required_hashes = list(set(re.findall(r'md5:\s*([a-f0-9]{32})', content)))
-                app.logger.info(f"📦 [SUBMIT_JOB] Extracted {len(required_hashes)} DVC hashes directly from local {lock_path}")
-            except Exception as e:
-                app.logger.error(f"❌ Metadata extraction from local dvc.lock failed at {lock_path}: {e}")
-        else:
-            app.logger.warning(f"⚠️ No dvc.lock found in local_repo_path '{local_repo_path}'. Continuing without pre-flight DVC hashes.")
+        # Process source archive upload
+        LOCAL_UPLOADS_DIR = os.path.join(REPOS_DIR, "_local_uploads")
+        os.makedirs(LOCAL_UPLOADS_DIR, exist_ok=True)
+        archive_dest = os.path.join(LOCAL_UPLOADS_DIR, f"{job_id}.tar.gz")
+
+        archive_saved = False
+        if 'archive' in request.files:
+            archive_file = request.files['archive']
+            archive_file.save(archive_dest)
+            local_archive_path = archive_dest
+            archive_saved = True
+        elif data.get('source_archive'):
+            with open(archive_dest, 'wb') as f:
+                f.write(base64.b64decode(data['source_archive']))
+            local_archive_path = archive_dest
+            archive_saved = True
+
+        if not archive_saved:
+            app.logger.warning(f"Submit job {job_id} submitted with is_local=True but no archive file provided directly in submit_job request.")
+
+        required_hashes = []
     else:
+        # Standard GHA / Git mode: Shallow clone to get dvc.lock
+        required_hashes = []
         repo_url = f"https://github.com/{repo}.git"
+
+        # Prioritize token from submit_job (gh_token) over local GITHUB_PAT
         pat = gh_token or os.environ.get("GITHUB_PAT")
+
         if pat:
             repo_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
 
@@ -315,26 +352,34 @@ def submit_job():
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    username = data.get('username')
-    commit_hash = data.get('commit_hash')
-
     # 1. AUTO-CANCELLATION: Automatically cancel active jobs according to branch category
-    # - Draft branches (cluster-draft/*): Cancel ALL active draft jobs (pending/assigned/running)
-    #   for the same USERNAME across ALL repos — one cluster-run per user at a time.
-    # - Non-draft branches (main, feature/*, etc.): Only cancel PENDING jobs on the same
-    #   repo+branch. Running/assigned jobs are preserved so they can finish gracefully.
-    #   This enforces "only one pending per repo+branch" — new submissions replace the queued one.
+    # - Draft branches (cluster-draft/* or local-draft/*): Cancel active draft jobs
+    #   for the same USERNAME — one active draft run per user at a time.
+    # - Non-draft branches (main, feature/*, etc.): Only cancel PENDING jobs on the same repo+branch.
     jobs_to_cancel = []
     cancel_reasons = {}  # job_id -> reason string for tracing
-    is_draft = branch.startswith("cluster-draft/") if branch else False
-    app.logger.info(f"📋 [AUTO-CANCEL] New submission: repo={repo}, branch={branch}, user={username}, is_draft={is_draft}")
+    app.logger.info(f"📋 [AUTO-CANCEL] New submission: repo={repo}, branch={branch}, user={username}, is_local={is_local}")
+
     if branch:
         try:
             with get_db_conn() as conn:
                 cursor = conn.cursor()
-                if is_draft:
-                    # Draft branches: aggressive cross-repo cancellation by username.
-                    # A user can only have ONE cluster-run at a time on the entire cluster.
+                if branch.startswith("local-draft/"):
+                    if username:
+                        cursor.execute('''
+                            SELECT job_id, repo, branch, username, status FROM jobs
+                            WHERE username = ? AND branch LIKE 'local-draft/%'
+                            AND status IN ('pending', 'assigned', 'running')
+                        ''', (username,))
+                        active_jobs = cursor.fetchall()
+                        app.logger.info(f"📋 [AUTO-CANCEL] Local draft mode: found {len(active_jobs)} active local draft job(s) for user={username}")
+                        for aj in active_jobs:
+                            aj_id = aj['job_id']
+                            aj_repo = aj['repo'] or '?'
+                            aj_status = aj['status']
+                            jobs_to_cancel.append(aj_id)
+                            cancel_reasons[aj_id] = f"local_draft:same_user (user={username}, repo={aj_repo}, status={aj_status})"
+                elif branch.startswith("cluster-draft/"):
                     if username:
                         cursor.execute('''
                             SELECT job_id, repo, branch, username, status FROM jobs
@@ -342,7 +387,7 @@ def submit_job():
                             AND status IN ('pending', 'assigned', 'running')
                         ''', (username,))
                         active_jobs = cursor.fetchall()
-                        app.logger.info(f"📋 [AUTO-CANCEL] Draft mode: found {len(active_jobs)} active draft job(s) for user={username} (cross-repo)")
+                        app.logger.info(f"📋 [AUTO-CANCEL] Cluster draft mode: found {len(active_jobs)} active draft job(s) for user={username} (cross-repo)")
                         for aj in active_jobs:
                             aj_id = aj['job_id']
                             aj_repo = aj['repo'] or '?'
@@ -352,8 +397,6 @@ def submit_job():
                     else:
                         app.logger.warning("📋 [AUTO-CANCEL] Draft branch submitted without username — cannot perform cross-repo cancellation")
                 else:
-                    # Non-draft branches: only cancel PENDING jobs on the exact same repo+branch.
-                    # Running/assigned jobs are left untouched to finish their execution.
                     cursor.execute('''
                         SELECT job_id, branch, username, status FROM jobs
                         WHERE repo = ? AND branch = ? AND status = 'pending'
@@ -390,12 +433,12 @@ def submit_job():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, is_local, local_repo_path, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_repo_path))
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, status, is_local, local_archive_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_archive_path))
         conn.commit()
 
-    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes)})
+    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0})
 
 @app.route('/workers', methods=['GET'])
 def list_workers():
@@ -435,7 +478,7 @@ def scheduler_status():
         
         for w in workers_list:
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at
+                SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at, is_local
                 FROM jobs
                 WHERE worker_id = ? AND status IN ('running', 'assigned')
                 LIMIT 1
@@ -448,7 +491,7 @@ def scheduler_status():
                 
         # 2. Fetch the pending queue ordered by FIFO priority
         cursor.execute('''
-            SELECT job_id, repo, branch, username, ram_required_gb, status, created_at
+            SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local
             FROM jobs
             WHERE status = 'pending'
             ORDER BY created_at ASC
@@ -475,6 +518,91 @@ def job_status(job_id):
             return jsonify(dict(job))
         else:
             return jsonify({"error": "Job not found"}), 404
+
+@app.route('/api/jobs/<job_id>/download_code', methods=['GET'])
+def download_code(job_id):
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT local_archive_path, is_local FROM jobs WHERE job_id = ?', (job_id,))
+        job = cursor.fetchone()
+    if not job or not job['is_local']:
+        return jsonify({"error": "Not a local job"}), 404
+    archive_path = job['local_archive_path']
+    if not archive_path or not os.path.exists(archive_path):
+        return jsonify({"error": "Archive not found"}), 404
+    return send_file(
+        archive_path,
+        mimetype='application/gzip',
+        as_attachment=True,
+        download_name=f"{job_id}.tar.gz"
+    )
+
+@app.route('/api/jobs/<job_id>/sync_results', methods=['POST'])
+def sync_results(job_id):
+    LOCAL_RESULTS_DIR = os.path.join(REPOS_DIR, "_local_results")
+    job_results_dir = os.path.join(LOCAL_RESULTS_DIR, job_id)
+    os.makedirs(job_results_dir, exist_ok=True)
+
+    if request.files:
+        count = 0
+        for key, file_obj in request.files.items():
+            file_name = file_obj.filename or key
+            clean_name = os.path.normpath(file_name).lstrip('/\\')
+            if clean_name.startswith('..'):
+                continue
+            dest_path = os.path.join(job_results_dir, clean_name)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            file_obj.save(dest_path)
+            count += 1
+        return jsonify({"status": "ok", "synced_files": count})
+    elif request.is_json:
+        data = request.get_json() or {}
+        files_dict = data.get("files", {})
+        count = 0
+        for rel_path, b64_content in files_dict.items():
+            clean_name = os.path.normpath(rel_path).lstrip('/\\')
+            if clean_name.startswith('..'):
+                continue
+            dest_path = os.path.join(job_results_dir, clean_name)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, "wb") as f:
+                f.write(base64.b64decode(b64_content))
+            count += 1
+        return jsonify({"status": "ok", "synced_files": count})
+    else:
+        return jsonify({"error": "No files or json payload provided"}), 400
+
+@app.route('/api/jobs/<job_id>/results', methods=['GET'])
+def get_job_results(job_id):
+    LOCAL_RESULTS_DIR = os.path.join(REPOS_DIR, "_local_results")
+    job_results_dir = os.path.join(LOCAL_RESULTS_DIR, job_id)
+    zip_file_path = os.path.join(LOCAL_RESULTS_DIR, f"{job_id}.zip")
+
+    if os.path.exists(zip_file_path):
+        return send_file(
+            zip_file_path,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"results_{job_id[:8]}.zip"
+        )
+    elif os.path.exists(job_results_dir) and os.listdir(job_results_dir):
+        memory_file = io.BytesIO()
+        import zipfile
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(job_results_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, job_results_dir)
+                    zf.write(full_path, rel_path)
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"results_{job_id[:8]}.zip"
+        )
+    else:
+        return jsonify({"error": "No results found for this job"}), 404
 
 @app.route('/worker_poll/<worker_id>', methods=['GET'])
 def worker_poll(worker_id):
@@ -543,6 +671,7 @@ def update_job_status():
             ''', (status, commit_hash, viewer_port, job_id))
         elif status in ['completed', 'failed']:
             cursor.execute('UPDATE jobs SET status = ?, finished_at = CURRENT_TIMESTAMP, exit_code = COALESCE(?, exit_code), commit_hash = COALESCE(?, commit_hash) WHERE job_id = ?', (status, exit_code, commit_hash, job_id))
+            cleanup_local_archive(job_id)
         else:
             cursor.execute('UPDATE jobs SET status = ? WHERE job_id = ?', (status, job_id))
         conn.commit()
@@ -555,7 +684,7 @@ def clean_ghosts():
     ghost_candidate_jobs = []
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT job_id, repo, gh_run_id, is_local FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND (is_local IS NULL OR is_local = 0) AND gh_run_id IS NOT NULL")
+        cursor.execute("SELECT job_id, repo, gh_run_id FROM jobs WHERE status IN ('pending', 'running', 'assigned') AND gh_run_id IS NOT NULL")
         ghost_candidate_jobs = [dict(row) for row in cursor.fetchall()]
         
     cleaned = 0
@@ -564,8 +693,6 @@ def clean_ghosts():
     headers = {"Authorization": f"token {gh_token}", "Accept": "application/vnd.github.v3+json"} if gh_token else {}
     
     for job in ghost_candidate_jobs:
-        if job.get('is_local') == 1 or not job.get('gh_run_id'):
-            continue
         url = f"https://api.github.com/repos/{job['repo']}/actions/runs/{job['gh_run_id']}"
         try:
             resp = requests.get(url, headers=headers, timeout=5)
@@ -806,7 +933,7 @@ def api_list_runs(repo):
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT job_id, branch, status, commit_hash, created_at, started_at, finished_at, exit_code, custom_web_app
+            SELECT job_id, branch, status, commit_hash, created_at, started_at, finished_at, exit_code, custom_web_app, is_local
             FROM jobs
             WHERE repo = ?
             ORDER BY created_at DESC
@@ -993,7 +1120,7 @@ def api_queue():
             cursor = conn.cursor()
             # Fetch pending jobs
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at
+                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local
                 FROM jobs
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
