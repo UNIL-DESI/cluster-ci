@@ -111,11 +111,25 @@ The CLI will detect that it is operating in Direct Headnode Mode, bypass GitHub 
 
 When `cluster-run --local` is invoked, the platform executes the following stages:
 
-1. **Local Filesystem Ingestion**: The CLI scans your current working directory (`os.path.abspath(os.getcwd())`), creates a local workspace snapshot, and passes the path directly to the Headnode scheduler. No git commits or remote branch pushes take place.
+1. **Local Filesystem Ingestion**: The CLI creates a compressed snapshot of Git-tracked files and untracked files that are not excluded by `.gitignore`, then uploads that snapshot directly to the Headnode scheduler. No commits or remote branch pushes take place. To include confidential inputs while keeping them safely ignored by Git, list each required file or directory on a separate line in `.cluster-ci-local-include`. Paths must remain inside the project. `.env`, symlinks, and Git internals are always excluded.
 2. **Fail-Fast Validation**: Prior to queue insertion, the Headnode API (`headnode_service.py`) validates your `.cluster-ci` parameters (`REQUIRED_RAM`, `REQUIRED_VRAM`, `MAX_RUNTIME_HOURS`). If validation fails (e.g. invalid syntax or excessive RAM request), the submission returns an immediate `HTTP 400 Bad Request` with exact diagnostic error messages.
 3. **Isolated Container Workspace**: The job is assigned to an available worker (or local Headnode executor slot) and launched inside an isolated Docker container running the unified NGC PyTorch image (`nvcr.io/nvidia/pytorch:26.05-py3`). The container is granted access to requested GPU hardware (NVIDIA Blackwell GB10 / RTX 3090) while remaining isolated from host system files.
-4. **Local Metrics & Plots Sync**: As stages in `dvc.yaml` complete, metrics, plots, and updated lockfiles (`dvc.lock`) are synchronized directly back to your project directory on the Headnode filesystem in real-time.
-5. **Zero GitHub Upload**: No network requests are made to GitHub's servers, guaranteeing complete isolation of sensitive code and data within the local infrastructure.
+4. **Local Result Sync**: Small metrics, plots, and `dvc.lock` updates are synchronized during the run. At the end, all declared DVC outputs are returned to the project directory as well.
+5. **Zero GitHub Upload**: Local mode does not contact GitHub. Sensitive code and data remain within the local cluster infrastructure.
+
+### Returning declared outputs
+
+At the end of a local run, Cluster-CI packages files recorded under `outs:` in
+`dvc.lock`, together with metrics, plots, and `dvc.lock`, and returns them to the
+project directory on the Headnode. The transfer uses the authenticated internal
+Cluster-CI API; it does not require a Git or DVC remote.
+
+Local source and result archives are transferred in authenticated 32 MB chunks.
+Each chunk and the completed archive are verified with SHA-256, so aggregate
+transfer size is limited by available disk space rather than an HTTP request-size
+limit. Result files are removed from temporary Headnode scheduler storage after
+the client has downloaded and safely extracted them. Abandoned transfers and
+unretrieved completed results are removed after 24 hours.
 
 ---
 

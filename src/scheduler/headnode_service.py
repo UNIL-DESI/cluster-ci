@@ -27,6 +27,7 @@ import hashlib
 import tempfile
 import io
 import base64
+import zipfile
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -50,7 +51,7 @@ DVC_CMD = get_executable("dvc")
 UV_CMD = get_executable("uv")
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB limit for source code archive uploads
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # Per-request guard; local transfers use smaller chunks.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # Derive a stable secret_key from CLUSTER_TOKEN so sessions survive service restarts.
 # os.urandom(24) would invalidate all sessions on every restart.
@@ -86,7 +87,7 @@ def check_token():
 @app.before_request
 def require_token():
     # Only protect API endpoints that workers or users use to modify state
-    protected_endpoints = ['register_worker', 'submit_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results']
+    protected_endpoints = ['register_worker', 'submit_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
     if request.endpoint in protected_endpoints:
         if not check_token():
             return jsonify({"error": "Unauthorized"}), 401
@@ -107,6 +108,257 @@ def cleanup_local_archive(job_id_or_path):
                     app.logger.info(f"🧹 Cleaned up local source archive for job {job_id_or_path}: {row['local_archive_path']}")
     except Exception as e:
         app.logger.warning(f"Failed to cleanup local archive for {job_id_or_path}: {e}")
+
+
+LOCAL_TRANSFER_CHUNK_SIZE = 32 * 1024 * 1024
+LOCAL_TRANSFER_MAX_AGE_SECONDS = 24 * 60 * 60
+LOCAL_RESULTS_MAX_AGE_SECONDS = 24 * 60 * 60
+LOCAL_RESULT_PROTECTED_NAMES = {
+    ".git",
+    ".env",
+    ".cluster-ci",
+    ".cluster-ci-run.json",
+    ".cluster-ci-logs",
+}
+
+
+def _transfer_root():
+    return os.path.join(REPOS_DIR, "_local_transfers")
+
+
+def _transfer_paths(transfer_id):
+    try:
+        normalized_id = str(uuid.UUID(transfer_id))
+    except (ValueError, AttributeError):
+        return None
+    directory = os.path.join(_transfer_root(), normalized_id)
+    return {
+        "id": normalized_id,
+        "directory": directory,
+        "metadata": os.path.join(directory, "metadata.json"),
+        "payload": os.path.join(directory, "payload.part"),
+        "chunks": os.path.join(directory, "chunks"),
+    }
+
+
+def _write_transfer_metadata(paths, metadata):
+    temp_path = paths["metadata"] + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, sort_keys=True)
+    os.chmod(temp_path, 0o600)
+    os.replace(temp_path, paths["metadata"])
+
+
+def _load_transfer(transfer_id):
+    paths = _transfer_paths(transfer_id)
+    if not paths or not os.path.isfile(paths["metadata"]):
+        return None, None
+    try:
+        with open(paths["metadata"], "r", encoding="utf-8") as handle:
+            return paths, json.load(handle)
+    except (OSError, ValueError):
+        return None, None
+
+
+def _cleanup_stale_local_transfers():
+    root = _transfer_root()
+    if not os.path.isdir(root):
+        return
+    cutoff = time.time() - LOCAL_TRANSFER_MAX_AGE_SECONDS
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        try:
+            if os.path.isdir(path) and os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path)
+        except OSError:
+            continue
+
+
+def _cleanup_stale_local_results():
+    root = os.path.join(REPOS_DIR, "_local_results")
+    if not os.path.isdir(root):
+        return
+    cutoff = time.time() - LOCAL_RESULTS_MAX_AGE_SECONDS
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        try:
+            if os.path.getmtime(path) >= cutoff:
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            continue
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@app.route('/api/local_transfers', methods=['POST'])
+def create_local_transfer():
+    data = request.get_json(silent=True) or {}
+    purpose = data.get("purpose")
+    if purpose not in ("source", "results"):
+        return jsonify({"error": "purpose must be 'source' or 'results'"}), 400
+    try:
+        total_size = int(data.get("total_size"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "total_size must be an integer"}), 400
+    expected_sha256 = str(data.get("sha256") or "").lower()
+    if total_size <= 0 or not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+        return jsonify({"error": "A positive total_size and SHA-256 are required"}), 400
+
+    job_id = data.get("job_id")
+    if purpose == "results" and not _local_results_paths(job_id)[0]:
+        return jsonify({"error": "A valid job_id is required for result transfers"}), 400
+
+    _cleanup_stale_local_transfers()
+    _cleanup_stale_local_results()
+    transfer_id = str(uuid.uuid4())
+    paths = _transfer_paths(transfer_id)
+    os.makedirs(paths["chunks"], mode=0o700)
+    metadata = {
+        "transfer_id": transfer_id,
+        "purpose": purpose,
+        "job_id": job_id if purpose == "results" else None,
+        "total_size": total_size,
+        "sha256": expected_sha256,
+        "chunk_size": LOCAL_TRANSFER_CHUNK_SIZE,
+        "created_at": time.time(),
+        "completed": False,
+    }
+    _write_transfer_metadata(paths, metadata)
+    with open(paths["payload"], "wb") as payload:
+        payload.truncate(total_size)
+    os.chmod(paths["payload"], 0o600)
+    return jsonify({"transfer_id": transfer_id, "chunk_size": LOCAL_TRANSFER_CHUNK_SIZE}), 201
+
+
+@app.route('/api/local_transfers/<transfer_id>/chunks/<int:chunk_index>', methods=['PUT'])
+def upload_local_transfer_chunk(transfer_id, chunk_index):
+    paths, metadata = _load_transfer(transfer_id)
+    if not paths or metadata.get("completed"):
+        return jsonify({"error": "Transfer not found or already completed"}), 404
+
+    total_size = metadata["total_size"]
+    chunk_size = metadata["chunk_size"]
+    chunk_count = (total_size + chunk_size - 1) // chunk_size
+    if chunk_index < 0 or chunk_index >= chunk_count:
+        return jsonify({"error": "Chunk index out of range"}), 400
+    expected_size = min(chunk_size, total_size - chunk_index * chunk_size)
+    expected_hash = request.headers.get("X-Chunk-SHA256", "").lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+        return jsonify({"error": "X-Chunk-SHA256 is required"}), 400
+
+    fd, temp_path = tempfile.mkstemp(prefix=f".{chunk_index}.", dir=paths["chunks"])
+    received = 0
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            while True:
+                block = request.stream.read(1024 * 1024)
+                if not block:
+                    break
+                received += len(block)
+                if received > expected_size:
+                    return jsonify({"error": "Chunk exceeds expected size"}), 400
+                digest.update(block)
+                destination.write(block)
+        if received != expected_size or digest.hexdigest() != expected_hash:
+            return jsonify({"error": "Chunk size or SHA-256 mismatch"}), 400
+
+        with open(paths["payload"], "r+b") as payload, open(temp_path, "rb") as source:
+            payload.seek(chunk_index * chunk_size)
+            shutil.copyfileobj(source, payload, length=1024 * 1024)
+            payload.flush()
+            os.fsync(payload.fileno())
+
+        marker_path = os.path.join(paths["chunks"], f"{chunk_index:08d}.json")
+        marker_temp = marker_path + ".tmp"
+        with open(marker_temp, "w", encoding="utf-8") as marker:
+            json.dump({"size": received, "sha256": expected_hash}, marker)
+        os.replace(marker_temp, marker_path)
+        os.utime(paths["directory"], None)
+        return jsonify({"status": "ok", "chunk_index": chunk_index})
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+@app.route('/api/local_transfers/<transfer_id>/complete', methods=['POST'])
+def complete_local_transfer(transfer_id):
+    paths, metadata = _load_transfer(transfer_id)
+    if not paths or metadata.get("completed"):
+        return jsonify({"error": "Transfer not found or already completed"}), 404
+
+    total_size = metadata["total_size"]
+    chunk_size = metadata["chunk_size"]
+    chunk_count = (total_size + chunk_size - 1) // chunk_size
+    for chunk_index in range(chunk_count):
+        marker_path = os.path.join(paths["chunks"], f"{chunk_index:08d}.json")
+        if not os.path.isfile(marker_path):
+            return jsonify({"error": f"Missing chunk {chunk_index}"}), 409
+
+    if os.path.getsize(paths["payload"]) != total_size or _sha256_file(paths["payload"]) != metadata["sha256"]:
+        return jsonify({"error": "Completed transfer failed size or SHA-256 verification"}), 400
+
+    if metadata["purpose"] == "source":
+        completed_path = os.path.join(paths["directory"], "source.tar.gz")
+        os.replace(paths["payload"], completed_path)
+        metadata["completed"] = True
+        metadata["completed_path"] = completed_path
+        _write_transfer_metadata(paths, metadata)
+        shutil.rmtree(paths["chunks"], ignore_errors=True)
+        return jsonify({"status": "ok", "transfer_id": transfer_id})
+
+    if not zipfile.is_zipfile(paths["payload"]):
+        return jsonify({"error": "Result transfer is not a valid ZIP archive"}), 400
+    with zipfile.ZipFile(paths["payload"], "r") as archive:
+        members = archive.infolist()
+        for member in members:
+            if not _safe_result_name(member.filename):
+                return jsonify({"error": f"Unsafe archive member: {member.filename}"}), 400
+            unix_mode = (member.external_attr >> 16) & 0o170000
+            if unix_mode == 0o120000:
+                return jsonify({"error": f"Symlink archive member is not allowed: {member.filename}"}), 400
+
+    _, result_zip_path = _local_results_paths(metadata["job_id"])
+    os.makedirs(os.path.dirname(result_zip_path), exist_ok=True)
+    os.replace(paths["payload"], result_zip_path)
+    shutil.rmtree(paths["directory"], ignore_errors=True)
+    return jsonify({"status": "ok", "archived_files": len(members)})
+
+
+@app.route('/api/local_transfers/<transfer_id>', methods=['DELETE'])
+def delete_local_transfer(transfer_id):
+    paths = _transfer_paths(transfer_id)
+    if not paths:
+        return jsonify({"error": "Invalid transfer ID"}), 400
+    shutil.rmtree(paths["directory"], ignore_errors=True)
+    return jsonify({"status": "ok"})
+
+
+def _consume_source_transfer(transfer_id, archive_destination):
+    paths, metadata = _load_transfer(transfer_id)
+    if (
+        not paths
+        or metadata.get("purpose") != "source"
+        or not metadata.get("completed")
+        or not os.path.isfile(metadata.get("completed_path", ""))
+    ):
+        return False
+    os.replace(metadata["completed_path"], archive_destination)
+    shutil.rmtree(paths["directory"], ignore_errors=True)
+    return True
 
 @app.route('/maintenance/on', methods=['POST'])
 def maintenance_on():
@@ -305,20 +557,10 @@ def submit_job():
         os.makedirs(LOCAL_UPLOADS_DIR, exist_ok=True)
         archive_dest = os.path.join(LOCAL_UPLOADS_DIR, f"{job_id}.tar.gz")
 
-        archive_saved = False
-        if 'archive' in request.files:
-            archive_file = request.files['archive']
-            archive_file.save(archive_dest)
-            local_archive_path = archive_dest
-            archive_saved = True
-        elif data.get('source_archive'):
-            with open(archive_dest, 'wb') as f:
-                f.write(base64.b64decode(data['source_archive']))
-            local_archive_path = archive_dest
-            archive_saved = True
-
-        if not archive_saved:
-            app.logger.warning(f"Submit job {job_id} submitted with is_local=True but no archive file provided directly in submit_job request.")
+        source_transfer_id = data.get('source_transfer_id')
+        if not source_transfer_id or not _consume_source_transfer(source_transfer_id, archive_dest):
+            return jsonify({"error": "A completed source_transfer_id is required for local jobs"}), 400
+        local_archive_path = archive_dest
 
         required_hashes = []
     else:
@@ -537,18 +779,45 @@ def download_code(job_id):
         download_name=f"{job_id}.tar.gz"
     )
 
+def _local_results_paths(job_id):
+    try:
+        normalized_job_id = str(uuid.UUID(job_id))
+    except (ValueError, AttributeError):
+        return None, None
+    local_results_dir = os.path.join(REPOS_DIR, "_local_results")
+    return (
+        os.path.join(local_results_dir, normalized_job_id),
+        os.path.join(local_results_dir, f"{normalized_job_id}.zip"),
+    )
+
+
+def _safe_result_name(file_name):
+    normalized = str(file_name or '').replace('\\', '/')
+    raw_parts = [part for part in normalized.split('/') if part not in ('', '.')]
+    if not normalized or normalized.startswith('/') or '..' in raw_parts:
+        return None
+    clean_name = os.path.normpath(normalized).replace('\\', '/')
+    if clean_name in ('', '.') or clean_name == '..' or clean_name.startswith('../'):
+        return None
+    first_part = clean_name.split('/', 1)[0]
+    if first_part in LOCAL_RESULT_PROTECTED_NAMES or first_part.startswith('.env.'):
+        return None
+    return clean_name
+
+
 @app.route('/api/jobs/<job_id>/sync_results', methods=['POST'])
 def sync_results(job_id):
-    LOCAL_RESULTS_DIR = os.path.join(REPOS_DIR, "_local_results")
-    job_results_dir = os.path.join(LOCAL_RESULTS_DIR, job_id)
+    job_results_dir, _ = _local_results_paths(job_id)
+    if not job_results_dir:
+        return jsonify({"error": "Invalid job ID"}), 400
     os.makedirs(job_results_dir, exist_ok=True)
 
     if request.files:
         count = 0
-        for key, file_obj in request.files.items():
+        for key, file_obj in request.files.items(multi=True):
             file_name = file_obj.filename or key
-            clean_name = os.path.normpath(file_name).lstrip('/\\')
-            if clean_name.startswith('..'):
+            clean_name = _safe_result_name(file_name)
+            if not clean_name:
                 continue
             dest_path = os.path.join(job_results_dir, clean_name)
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -560,8 +829,8 @@ def sync_results(job_id):
         files_dict = data.get("files", {})
         count = 0
         for rel_path, b64_content in files_dict.items():
-            clean_name = os.path.normpath(rel_path).lstrip('/\\')
-            if clean_name.startswith('..'):
+            clean_name = _safe_result_name(rel_path)
+            if not clean_name:
                 continue
             dest_path = os.path.join(job_results_dir, clean_name)
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -572,13 +841,22 @@ def sync_results(job_id):
     else:
         return jsonify({"error": "No files or json payload provided"}), 400
 
-@app.route('/api/jobs/<job_id>/results', methods=['GET'])
+
+@app.route('/api/jobs/<job_id>/results', methods=['GET', 'DELETE'])
 def get_job_results(job_id):
-    LOCAL_RESULTS_DIR = os.path.join(REPOS_DIR, "_local_results")
-    job_results_dir = os.path.join(LOCAL_RESULTS_DIR, job_id)
-    zip_file_path = os.path.join(LOCAL_RESULTS_DIR, f"{job_id}.zip")
+    job_results_dir, zip_file_path = _local_results_paths(job_id)
+    if not job_results_dir:
+        return jsonify({"error": "Invalid job ID"}), 400
+
+    if request.method == 'DELETE':
+        if os.path.exists(zip_file_path):
+            os.remove(zip_file_path)
+        if os.path.isdir(job_results_dir):
+            shutil.rmtree(job_results_dir)
+        return jsonify({"status": "ok"})
 
     if os.path.exists(zip_file_path):
+        os.utime(zip_file_path, None)
         return send_file(
             zip_file_path,
             mimetype='application/zip',
@@ -1283,6 +1561,8 @@ def periodic_clean_ghosts():
         try:
             with app.app_context():
                 clean_ghosts()
+                _cleanup_stale_local_transfers()
+                _cleanup_stale_local_results()
         except Exception as e:
             app.logger.error(f"Error in background clean_ghosts: {e}")
 

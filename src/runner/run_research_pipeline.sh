@@ -902,6 +902,16 @@ fi
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
 timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 120 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
+if [ "$IS_LOCAL" = "1" ]; then
+    log_info "Local mode: returning declared DVC outputs to the headnode..."
+    if ! timeout 610 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 600 uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync-local-results"; then
+        log_error "Local result archive synchronization failed."
+        if [ "$EXEC_RET" -eq 0 ]; then
+            EXEC_RET=74
+        fi
+    fi
+fi
+
 # Note: Synchronous dvc push has been removed to avoid saturating network bandwidth.
 # Lazy GC (in gc_orchestrator.py) now handles asynchronous backups when worker disk space falls below 100 GB.
 

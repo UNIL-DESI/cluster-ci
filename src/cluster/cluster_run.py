@@ -19,9 +19,10 @@ import threading
 import queue
 import urllib.request
 import urllib.error
-import io
 import tarfile
-import base64
+import hashlib
+import shutil
+import zipfile
 
 
 # Global variables for cleanup
@@ -316,6 +317,7 @@ def save_run_state(run_id, branch, commit_sha, job_id=None, headnode_url=None, i
         }
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f)
+        os.chmod(STATE_FILE, 0o600)
     except Exception as e:
         print(f"⚠️  Could not save run state: {e}", file=sys.stderr)
 
@@ -1192,21 +1194,171 @@ def shadow_run():
 
 
 def get_local_username():
-    """Retrieve username, trying gh first then falling back to system OS username."""
+    """Return the operating-system username without contacting GitHub."""
+    return (
+        os.environ.get("USER")
+        or os.environ.get("USERNAME")
+        or os.environ.get("LOGNAME")
+        or "local_user"
+    )
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _delete_local_transfer(headnode_url, transfer_id, cluster_token=None):
+    if not transfer_id:
+        return
+    req = urllib.request.Request(
+        f"{headnode_url.rstrip('/')}/api/local_transfers/{transfer_id}", method="DELETE"
+    )
+    if cluster_token:
+        req.add_header("Authorization", f"Bearer {cluster_token}")
     try:
-        return get_current_user()
+        with urllib.request.urlopen(req, timeout=30):
+            pass
     except Exception:
-        return os.environ.get("USER") or os.environ.get("USERNAME") or os.environ.get("LOGNAME") or "local_user"
+        pass
+
+
+def upload_local_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_id=None):
+    """Upload a local-mode archive in authenticated, checksum-verified chunks."""
+    total_size = os.path.getsize(path)
+    payload = {
+        "purpose": purpose,
+        "total_size": total_size,
+        "sha256": _sha256_file(path),
+    }
+    if job_id:
+        payload["job_id"] = job_id
+
+    create_req = urllib.request.Request(
+        f"{headnode_url.rstrip('/')}/api/local_transfers",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    if cluster_token:
+        create_req.add_header("Authorization", f"Bearer {cluster_token}")
+    with urllib.request.urlopen(create_req, timeout=30) as response:
+        transfer = json.loads(response.read().decode("utf-8"))
+
+    transfer_id = transfer["transfer_id"]
+    chunk_size = int(transfer["chunk_size"])
+    chunk_count = (total_size + chunk_size - 1) // chunk_size
+    try:
+        with open(path, "rb") as source:
+            for chunk_index in range(chunk_count):
+                chunk = source.read(chunk_size)
+                chunk_hash = hashlib.sha256(chunk).hexdigest()
+                chunk_url = (
+                    f"{headnode_url.rstrip('/')}/api/local_transfers/"
+                    f"{transfer_id}/chunks/{chunk_index}"
+                )
+                for attempt in range(1, 4):
+                    try:
+                        chunk_req = urllib.request.Request(
+                            chunk_url,
+                            data=chunk,
+                            method="PUT",
+                            headers={
+                                "Content-Type": "application/octet-stream",
+                                "X-Chunk-SHA256": chunk_hash,
+                            },
+                        )
+                        if cluster_token:
+                            chunk_req.add_header("Authorization", f"Bearer {cluster_token}")
+                        with urllib.request.urlopen(chunk_req, timeout=120):
+                            pass
+                        break
+                    except Exception:
+                        if attempt == 3:
+                            raise
+                        time.sleep(attempt)
+                print(
+                    f"📤 Uploaded chunk {chunk_index + 1}/{chunk_count} "
+                    f"({min((chunk_index + 1) * chunk_size, total_size) / (1024 * 1024):.1f}/"
+                    f"{total_size / (1024 * 1024):.1f} MB)"
+                )
+
+        complete_req = urllib.request.Request(
+            f"{headnode_url.rstrip('/')}/api/local_transfers/{transfer_id}/complete",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        if cluster_token:
+            complete_req.add_header("Authorization", f"Bearer {cluster_token}")
+        with urllib.request.urlopen(complete_req, timeout=600) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        result["transfer_id"] = transfer_id
+        return result
+    except Exception:
+        _delete_local_transfer(headnode_url, transfer_id, cluster_token)
+        raise
+
+
+LOCAL_INCLUDE_FILE = ".cluster-ci-local-include"
+
+
+def _explicit_local_files(project_dir):
+    """List ignored files explicitly opted into a local-mode snapshot."""
+    project_root = os.path.realpath(project_dir)
+    include_path = os.path.join(project_root, LOCAL_INCLUDE_FILE)
+    if not os.path.isfile(include_path):
+        return []
+
+    selected = set()
+    with open(include_path, "r", encoding="utf-8", errors="strict") as handle:
+        entries = [line.strip() for line in handle if line.strip() and not line.lstrip().startswith("#")]
+
+    for entry in entries:
+        normalized = entry.replace("\\", "/").rstrip("/")
+        if not normalized or normalized.startswith("/") or ".." in normalized.split("/"):
+            raise ValueError(f"Unsafe path in {LOCAL_INCLUDE_FILE}: {entry}")
+        full_path = os.path.realpath(os.path.join(project_root, normalized))
+        try:
+            common = os.path.commonpath([project_root, full_path])
+        except ValueError:
+            common = ""
+        if common != project_root:
+            raise ValueError(f"Path leaves the project in {LOCAL_INCLUDE_FILE}: {entry}")
+        if os.path.islink(os.path.join(project_root, normalized)):
+            raise ValueError(f"Symlinks are not allowed in {LOCAL_INCLUDE_FILE}: {entry}")
+        if os.path.isfile(full_path):
+            selected.add(os.path.relpath(full_path, project_root).replace("\\", "/"))
+        elif os.path.isdir(full_path):
+            for root, directories, filenames in os.walk(full_path):
+                directories[:] = [
+                    name for name in directories
+                    if not os.path.islink(os.path.join(root, name))
+                ]
+                for filename in filenames:
+                    candidate = os.path.join(root, filename)
+                    if not os.path.islink(candidate) and os.path.isfile(candidate):
+                        selected.add(os.path.relpath(candidate, project_root).replace("\\", "/"))
+        else:
+            raise ValueError(f"Path does not exist in {LOCAL_INCLUDE_FILE}: {entry}")
+    return sorted(selected)
 
 
 def package_local_source(project_dir="."):
-    """Package project workspace using git ls-files to respect .gitignore into a tar.gz BytesIO archive."""
+    """Package Git-visible and explicitly included local files into tar.gz."""
     cmd = ["git", "ls-files", "--cached", "--others", "--exclude-standard"]
     try:
         res = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-        files = res.stdout.splitlines()
+        files = set(res.stdout.splitlines())
+        files.update(_explicit_local_files(project_dir))
     except Exception as e:
-        print(f"❌ Error listing workspace files via git ls-files: {e}", file=sys.stderr)
+        print(f"❌ Error selecting local workspace files: {e}", file=sys.stderr)
         sys.exit(1)
 
     excluded_prefixes = (
@@ -1221,27 +1373,40 @@ def package_local_source(project_dir="."):
     )
     excluded_filenames = (".cluster-ci-run.json",)
 
-    buf = io.BytesIO()
+    fd, archive_path = tempfile.mkstemp(prefix="cluster-ci-source-", suffix=".tar.gz")
+    os.close(fd)
     count = 0
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for rel_path in files:
-            rel_path = rel_path.strip()
-            if not rel_path:
-                continue
-            norm_path = rel_path.replace("\\", "/")
-            if any(norm_path.startswith(prefix) or f"/{prefix}" in norm_path for prefix in excluded_prefixes):
-                continue
-            if norm_path in excluded_filenames or norm_path.endswith(".pyc"):
-                continue
+    try:
+        with tarfile.open(archive_path, mode="w:gz") as tar:
+            for rel_path in sorted(files):
+                rel_path = rel_path.strip()
+                if not rel_path:
+                    continue
+                norm_path = rel_path.replace("\\", "/")
+                if any(norm_path.startswith(prefix) or f"/{prefix}" in norm_path for prefix in excluded_prefixes):
+                    continue
+                path_parts = [part for part in norm_path.split("/") if part]
+                if (
+                    norm_path in excluded_filenames
+                    or norm_path.endswith(".pyc")
+                    or any(part == ".env" or part.startswith(".env.") for part in path_parts)
+                ):
+                    continue
 
-            full_path = os.path.join(project_dir, rel_path)
-            if os.path.isfile(full_path):
-                tar.add(full_path, arcname=rel_path)
-                count += 1
-
-    buf.seek(0)
-    print(f"📦 Packaged {count} workspace files into local source archive ({len(buf.getvalue()) / (1024*1024):.2f} MB)")
-    return buf
+                full_path = os.path.join(project_dir, rel_path)
+                if os.path.isfile(full_path):
+                    tar.add(full_path, arcname=rel_path)
+                    count += 1
+        archive_size = os.path.getsize(archive_path)
+        print(
+            f"📦 Packaged {count} workspace files into local source archive "
+            f"({archive_size / (1024 * 1024):.2f} MB)"
+        )
+        return archive_path
+    except Exception:
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+        raise
 
 
 def parse_cluster_ci_config(project_dir="."):
@@ -1319,27 +1484,55 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
         req = urllib.request.Request(url)
         if cluster_token:
             req.add_header("Authorization", f"Bearer {cluster_token}")
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=600) as resp:
             if resp.status == 200:
-                data = resp.read()
-                extracted_files = []
-                if data.startswith(b"PK\x03\x04"):
-                    import zipfile
-                    with zipfile.ZipFile(io.BytesIO(data), "r") as z:
-                        extracted_files = z.namelist()
-                        z.extractall(".")
-                elif data.startswith(b"\x1f\x8b") or data.startswith(b"\x1f\x9d"):
-                    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as t:
-                        extracted_files = t.getnames()
-                        t.extractall(".")
-                else:
-                    print("⚠️  Unrecognized results archive format received from headnode.", file=sys.stderr)
-                    return False
+                fd, archive_path = tempfile.mkstemp(prefix="cluster-ci-results-", suffix=".zip")
+                os.close(fd)
+                try:
+                    with open(archive_path, "wb") as destination:
+                        shutil.copyfileobj(resp, destination, length=1024 * 1024)
+
+                    if not zipfile.is_zipfile(archive_path):
+                        print("⚠️  Invalid ZIP result archive received from headnode.", file=sys.stderr)
+                        return False
+
+                    with zipfile.ZipFile(archive_path, "r") as archive:
+                        extracted_files = archive.namelist()
+                        reserved = {'.git', '.env', '.cluster-ci', '.cluster-ci-run.json', '.cluster-ci-logs'}
+                        for member in archive.infolist():
+                            normalized = member.filename.replace('\\', '/')
+                            parts = [part for part in normalized.split('/') if part not in ('', '.')]
+                            unix_mode = (member.external_attr >> 16) & 0o170000
+                            if (
+                                normalized.startswith('/')
+                                or '..' in parts
+                                or (
+                                    parts
+                                    and (parts[0] in reserved or parts[0].startswith('.env.'))
+                                )
+                                or unix_mode == 0o120000
+                            ):
+                                print(f"⚠️  Unsafe result archive member rejected: {member.filename}", file=sys.stderr)
+                                return False
+                        archive.extractall(".")
+                finally:
+                    if os.path.exists(archive_path):
+                        os.remove(archive_path)
 
                 if extracted_files:
                     print(f"\n✨ [Auto-sync] Local results retrieved successfully ({len(extracted_files)} file(s)):")
                     for f in extracted_files:
                         print(f"   🎉 {f}")
+
+                delete_req = urllib.request.Request(url, method="DELETE")
+                if cluster_token:
+                    delete_req.add_header("Authorization", f"Bearer {cluster_token}")
+                try:
+                    with urllib.request.urlopen(delete_req, timeout=30) as delete_resp:
+                        if delete_resp.status != 200:
+                            print("⚠️  Results were retrieved but headnode cleanup failed.", file=sys.stderr)
+                except Exception as cleanup_error:
+                    print(f"⚠️  Results were retrieved but headnode cleanup failed: {cleanup_error}", file=sys.stderr)
                 return True
     except urllib.error.HTTPError as e:
         if e.code != 404:
@@ -1431,7 +1624,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
 
 def local_run():
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
-    global BRANCH, COMMIT_SHA, USER_INTERRUPTED
+    global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE
 
     clean_old_results()
 
@@ -1464,8 +1657,20 @@ def local_run():
 
     print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (repo: {repo}, branch: {BRANCH})")
 
-    archive_buf = package_local_source(".")
-    archive_b64 = base64.b64encode(archive_buf.getvalue()).decode("utf-8")
+    archive_path = package_local_source(".")
+    source_transfer_id = None
+    try:
+        print("📤 Uploading local workspace through the chunked transfer API...")
+        transfer_result = upload_local_file_in_chunks(
+            archive_path,
+            headnode_url,
+            purpose="source",
+            cluster_token=cluster_token,
+        )
+        source_transfer_id = transfer_result["transfer_id"]
+    finally:
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
 
     payload = {
         "repo": repo,
@@ -1479,7 +1684,7 @@ def local_run():
         "custom_web_app": config["custom_web_app"],
         "allowed_workers": config["allowed_workers"],
         "is_local": True,
-        "source_archive": archive_b64,
+        "source_transfer_id": source_transfer_id,
     }
 
     submit_url = f"{headnode_url}/submit_job"
@@ -1499,6 +1704,7 @@ def local_run():
                 sys.exit(1)
             print(f"✅ Job submitted successfully! Job ID: {job_id}")
     except urllib.error.HTTPError as e:
+        _delete_local_transfer(headnode_url, source_transfer_id, cluster_token)
         error_body = ""
         try:
             error_body = e.read().decode("utf-8")
@@ -1507,6 +1713,7 @@ def local_run():
         print(f"❌ Error submitting local job (HTTP {e.code}): {e.reason} - {error_body}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
+        _delete_local_transfer(headnode_url, source_transfer_id, cluster_token)
         print(f"❌ Connection error to Headnode submit_job ({submit_url}): {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -1517,6 +1724,7 @@ def local_run():
     try:
         ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token)
         clear_run_state()
+        _CLEANUP_DONE = True
         if ret_code != 0:
             sys.exit(ret_code)
     except KeyboardInterrupt:

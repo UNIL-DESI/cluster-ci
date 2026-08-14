@@ -2,7 +2,14 @@ import os
 import re
 import sys
 import argparse
+import hashlib
+import json
 import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
 
 if sys.platform.startswith("win"):
@@ -255,6 +262,232 @@ def get_cache_false_paths(dvc_yaml_path):
 
     return list(paths)
 
+
+def get_dvc_out_paths(dvc_lock_path='dvc.lock'):
+    """Return repository-relative output paths recorded in dvc.lock."""
+    if not os.path.exists(dvc_lock_path):
+        return []
+
+    yaml = YAML()
+    with open(dvc_lock_path, 'r') as f:
+        data = yaml.load(f) or {}
+
+    paths = set()
+    for stage in (data.get('stages') or {}).values():
+        for entry in stage.get('outs') or []:
+            path = entry.get('path') if isinstance(entry, dict) else entry
+            if path:
+                path = Path(str(path)).as_posix()
+                if path != '.dvc-viewer' and not path.startswith('.dvc-viewer/'):
+                    paths.add(path)
+    return sorted(paths)
+
+
+def _safe_workspace_path(project_root, relative_path):
+    """Resolve a declared result path without allowing it to leave the workspace."""
+    path = Path(str(relative_path))
+    protected = {'.git', '.env', '.cluster-ci', '.cluster-ci-run.json', '.cluster-ci-logs'}
+    if (
+        path.is_absolute()
+        or '..' in path.parts
+        or (path.parts and (path.parts[0] in protected or path.parts[0].startswith('.env.')))
+    ):
+        return None
+    root = Path(project_root).resolve()
+    resolved = (root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved
+
+
+def build_local_results_archive(project_root='.'):
+    """Create a ZIP containing declared DVC outputs and small result metadata."""
+    project_root = Path(project_root).resolve()
+    candidates = set(get_dvc_out_paths(project_root / 'dvc.lock'))
+    candidates.update(get_cache_false_paths(project_root / 'dvc.yaml'))
+    if (project_root / 'dvc.lock').is_file():
+        candidates.add('dvc.lock')
+
+    fd, archive_path = tempfile.mkstemp(prefix='cluster-ci-results-', suffix='.zip')
+    os.close(fd)
+    archived_files = set()
+
+    try:
+        with zipfile.ZipFile(archive_path, 'w', compression=zipfile.ZIP_DEFLATED,
+                             compresslevel=1, allowZip64=True) as archive:
+            for relative_path in sorted(candidates):
+                source = _safe_workspace_path(project_root, relative_path)
+                if source is None:
+                    log_warn(f"Skipping unsafe result path: {relative_path}")
+                    continue
+                if source.is_symlink():
+                    log_warn(f"Skipping symlinked result path: {relative_path}")
+                    continue
+                if source.is_file():
+                    arcname = source.relative_to(project_root).as_posix()
+                    if arcname not in archived_files:
+                        archive.write(source, arcname)
+                        archived_files.add(arcname)
+                elif source.is_dir():
+                    for child in sorted(source.rglob('*')):
+                        if child.is_symlink() or not child.is_file():
+                            continue
+                        arcname = child.relative_to(project_root).as_posix()
+                        if arcname not in archived_files:
+                            archive.write(child, arcname)
+                            archived_files.add(arcname)
+
+        if not archived_files:
+            os.remove(archive_path)
+            return None, []
+
+        return archive_path, sorted(archived_files)
+    except Exception:
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+        raise
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        while True:
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _delete_local_transfer(headnode_url, transfer_id, cluster_token=None):
+    req = urllib.request.Request(
+        f"{headnode_url.rstrip('/')}/api/local_transfers/{transfer_id}", method='DELETE'
+    )
+    if cluster_token:
+        req.add_header('Authorization', f'Bearer {cluster_token}')
+    try:
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception:
+        pass
+
+
+def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_id=None):
+    total_size = os.path.getsize(path)
+    create_payload = {
+        'purpose': purpose,
+        'total_size': total_size,
+        'sha256': _sha256_file(path),
+    }
+    if job_id:
+        create_payload['job_id'] = job_id
+    create_req = urllib.request.Request(
+        f"{headnode_url.rstrip('/')}/api/local_transfers",
+        data=json.dumps(create_payload).encode('utf-8'),
+        method='POST',
+        headers={'Content-Type': 'application/json'},
+    )
+    if cluster_token:
+        create_req.add_header('Authorization', f'Bearer {cluster_token}')
+    with urllib.request.urlopen(create_req, timeout=30) as response:
+        transfer = json.loads(response.read().decode('utf-8'))
+
+    transfer_id = transfer['transfer_id']
+    chunk_size = int(transfer['chunk_size'])
+    chunk_count = (total_size + chunk_size - 1) // chunk_size
+    try:
+        with open(path, 'rb') as source:
+            for chunk_index in range(chunk_count):
+                chunk = source.read(chunk_size)
+                chunk_hash = hashlib.sha256(chunk).hexdigest()
+                chunk_url = (
+                    f"{headnode_url.rstrip('/')}/api/local_transfers/"
+                    f"{transfer_id}/chunks/{chunk_index}"
+                )
+                for attempt in range(1, 4):
+                    try:
+                        chunk_req = urllib.request.Request(
+                            chunk_url,
+                            data=chunk,
+                            method='PUT',
+                            headers={
+                                'Content-Type': 'application/octet-stream',
+                                'X-Chunk-SHA256': chunk_hash,
+                            },
+                        )
+                        if cluster_token:
+                            chunk_req.add_header('Authorization', f'Bearer {cluster_token}')
+                        with urllib.request.urlopen(chunk_req, timeout=120):
+                            pass
+                        break
+                    except Exception:
+                        if attempt == 3:
+                            raise
+                        time.sleep(attempt)
+                log_info(
+                    f"Uploaded chunk {chunk_index + 1}/{chunk_count} "
+                    f"({min((chunk_index + 1) * chunk_size, total_size) / (1024 * 1024):.1f}/"
+                    f"{total_size / (1024 * 1024):.1f} MB)"
+                )
+
+        complete_req = urllib.request.Request(
+            f"{headnode_url.rstrip('/')}/api/local_transfers/{transfer_id}/complete",
+            data=b'{}',
+            method='POST',
+            headers={'Content-Type': 'application/json'},
+        )
+        if cluster_token:
+            complete_req.add_header('Authorization', f'Bearer {cluster_token}')
+        with urllib.request.urlopen(complete_req, timeout=600) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception:
+        _delete_local_transfer(headnode_url, transfer_id, cluster_token)
+        raise
+
+
+def sync_local_results_archive():
+    """Return declared DVC outputs to the headnode for a local-mode job."""
+    if os.environ.get('IS_LOCAL') != '1':
+        log_info("Not a local-mode job; skipping local result archive upload.")
+        return True
+
+    headnode_url = os.environ.get('HEADNODE_URL')
+    job_id = os.environ.get('JOB_ID')
+    cluster_token = os.environ.get('CLUSTER_TOKEN')
+    if not headnode_url or not job_id:
+        raise RuntimeError("HEADNODE_URL or JOB_ID is missing; cannot upload local results")
+
+    archive_path, archived_files = build_local_results_archive('.')
+    if not archive_path:
+        log_info("No declared local result files were produced.")
+        return True
+
+    archive_size = os.path.getsize(archive_path)
+
+    try:
+        log_info(
+            f"Uploading {len(archived_files)} declared result file(s) "
+            f"({archive_size / (1024 * 1024):.1f} MB) to the headnode..."
+        )
+        response_data = _upload_file_in_chunks(
+            archive_path,
+            headnode_url,
+            purpose='results',
+            cluster_token=cluster_token,
+            job_id=job_id,
+        )
+        if response_data.get('archived_files') != len(archived_files):
+            raise RuntimeError(
+                "Headnode accepted the archive but reported an unexpected file count"
+            )
+        log_success("Declared local results synchronized to the headnode.")
+        return True
+    finally:
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+
 def _sync_metrics_http():
     """Upload metrics/plots to headnode via HTTP (local mode)."""
     headnode_url = os.environ.get("HEADNODE_URL")
@@ -320,7 +553,14 @@ def _sync_metrics_http():
     try:
         log_info(f"Posting {len(files_to_upload)} metric/lock file(s) to {url}...")
         with urllib.request.urlopen(req, timeout=60) as response:
+            payload = response.read()
             if response.status in (200, 201):
+                response_data = json.loads(payload.decode('utf-8'))
+                synced_files = response_data.get('synced_files')
+                if synced_files != len(files_to_upload):
+                    raise RuntimeError(
+                        f"Headnode saved {synced_files} of {len(files_to_upload)} metric/lock files"
+                    )
                 log_success(f"Metrics successfully synced to headnode via HTTP (Status {response.status}).")
             else:
                 log_warn(f"HTTP sync metrics returned unexpected status: {response.status}")
@@ -448,6 +688,7 @@ if __name__ == "__main__":
 
     subparsers.add_parser('inject')
     subparsers.add_parser('sync')
+    subparsers.add_parser('sync-local-results')
 
     args = parser.parse_args()
 
@@ -455,5 +696,7 @@ if __name__ == "__main__":
         inject_cache_false('dvc.yaml')
     elif args.command == 'sync':
         sync_metrics()
+    elif args.command == 'sync-local-results':
+        sync_local_results_archive()
     else:
         parser.print_help()

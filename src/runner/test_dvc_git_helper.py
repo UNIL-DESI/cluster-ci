@@ -8,7 +8,12 @@ from ruamel.yaml import YAML
 # Add src to sys.path to import dvc_git_helper
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from src.runner.dvc_git_helper import inject_cache_false, get_cache_false_paths
+from src.runner.dvc_git_helper import (
+    build_local_results_archive,
+    get_cache_false_paths,
+    get_dvc_out_paths,
+    inject_cache_false,
+)
 
 class TestDVCGitHelper(unittest.TestCase):
     def setUp(self):
@@ -176,6 +181,51 @@ class TestDVCGitHelper(unittest.TestCase):
         # Should fallback gracefully without throwing errors or iterating on the string characters
         paths = get_cache_false_paths(self.dvc_yaml)
         self.assertEqual(len(paths), 0)
+
+    def test_local_results_archive_contains_declared_outputs(self):
+        output_dir = os.path.join(self.test_dir, 'artifacts')
+        os.makedirs(output_dir)
+        with open(os.path.join(output_dir, 'predictions.jsonl'), 'w') as f:
+            f.write('{"prediction": 1}\n')
+        with open(os.path.join(self.test_dir, 'metrics.json'), 'w') as f:
+            f.write('{"accuracy": 1.0}\n')
+
+        with open(self.dvc_yaml, 'w') as f:
+            self.yaml.dump({
+                'stages': {
+                    'evaluate': {
+                        'metrics': [{'metrics.json': {'cache': False}}],
+                    },
+                },
+            }, f)
+        dvc_lock = os.path.join(self.test_dir, 'dvc.lock')
+        with open(dvc_lock, 'w') as f:
+            self.yaml.dump({
+                'schema': '2.0',
+                'stages': {
+                    'evaluate': {
+                        'outs': [
+                            {'path': 'artifacts', 'md5': 'example.dir'},
+                            {'path': 'metrics.json', 'md5': 'example'},
+                            {'path': '.dvc-viewer/hashes', 'md5': 'internal.dir'},
+                        ],
+                    },
+                },
+            }, f)
+
+        self.assertEqual(get_dvc_out_paths(dvc_lock), ['artifacts', 'metrics.json'])
+        archive_path, archived_files = build_local_results_archive(self.test_dir)
+        try:
+            self.assertEqual(
+                archived_files,
+                ['artifacts/predictions.jsonl', 'dvc.lock', 'metrics.json'],
+            )
+            import zipfile
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertEqual(sorted(archive.namelist()), archived_files)
+        finally:
+            if archive_path and os.path.exists(archive_path):
+                os.remove(archive_path)
 
 
 from unittest.mock import patch, MagicMock
