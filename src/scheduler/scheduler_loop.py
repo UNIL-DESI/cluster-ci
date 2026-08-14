@@ -259,7 +259,7 @@ def schedule_jobs():
 
                         # Headnode malus: deprioritize the headnode so remote workers
                         # are preferred at equal data locality scores
-                        svc_url = worker.get('service_url', '')
+                        svc_url = worker.get('service_url') or ''
                         worker_hostname = worker.get('hostname', '')
                         is_headnode = (
                             worker_hostname == headnode_hostname
