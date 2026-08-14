@@ -636,6 +636,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4. Technical Architecture: How cluster-run --local Operates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#returning-declared-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returning declared outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1377,6 +1394,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4. Technical Architecture: How cluster-run --local Operates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#returning-declared-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Returning declared outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1527,12 +1561,23 @@ Contact <strong>Henri Jamet</strong> (<a href="mailto:henri.jamet@unil.ch"><code
 </span></code></pre></div>
 <p>When <code>cluster-run --local</code> is invoked, the platform executes the following stages:</p>
 <ol>
-<li><strong>Local Filesystem Ingestion</strong>: The CLI scans your current working directory (<code>os.path.abspath(os.getcwd())</code>), creates a local workspace snapshot, and passes the path directly to the Headnode scheduler. No git commits or remote branch pushes take place.</li>
+<li><strong>Local Filesystem Ingestion</strong>: The CLI creates a compressed snapshot of Git-tracked files and untracked files that are not excluded by <code>.gitignore</code>, then uploads that snapshot directly to the Headnode scheduler. No commits or remote branch pushes take place. To include confidential inputs while keeping them safely ignored by Git, list each required file or directory on a separate line in <code>.cluster-ci-local-include</code>. Paths must remain inside the project. <code>.env</code>, symlinks, and Git internals are always excluded.</li>
 <li><strong>Fail-Fast Validation</strong>: Prior to queue insertion, the Headnode API (<code>headnode_service.py</code>) validates your <code>.cluster-ci</code> parameters (<code>REQUIRED_RAM</code>, <code>REQUIRED_VRAM</code>, <code>MAX_RUNTIME_HOURS</code>). If validation fails (e.g. invalid syntax or excessive RAM request), the submission returns an immediate <code>HTTP 400 Bad Request</code> with exact diagnostic error messages.</li>
 <li><strong>Isolated Container Workspace</strong>: The job is assigned to an available worker (or local Headnode executor slot) and launched inside an isolated Docker container running the unified NGC PyTorch image (<code>nvcr.io/nvidia/pytorch:26.05-py3</code>). The container is granted access to requested GPU hardware (NVIDIA Blackwell GB10 / RTX 3090) while remaining isolated from host system files.</li>
-<li><strong>Local Metrics &amp; Plots Sync</strong>: As stages in <code>dvc.yaml</code> complete, metrics, plots, and updated lockfiles (<code>dvc.lock</code>) are synchronized directly back to your project directory on the Headnode filesystem in real-time.</li>
-<li><strong>Zero GitHub Upload</strong>: No network requests are made to GitHub's servers, guaranteeing complete isolation of sensitive code and data within the local infrastructure.</li>
+<li><strong>Local Result Sync</strong>: Small metrics, plots, and <code>dvc.lock</code> updates are synchronized during the run. At the end, all declared DVC outputs are returned to the project directory as well.</li>
+<li><strong>Zero GitHub Upload</strong>: Local mode does not contact GitHub. Sensitive code and data remain within the local cluster infrastructure.</li>
 </ol>
+<h3 id="returning-declared-outputs">Returning declared outputs</h3>
+<p>At the end of a local run, Cluster-CI packages files recorded under <code>outs:</code> in
+<code>dvc.lock</code>, together with metrics, plots, and <code>dvc.lock</code>, and returns them to the
+project directory on the Headnode. The transfer uses the authenticated internal
+Cluster-CI API; it does not require a Git or DVC remote.</p>
+<p>Local source and result archives are transferred in authenticated 32 MB chunks.
+Each chunk and the completed archive are verified with SHA-256, so aggregate
+transfer size is limited by available disk space rather than an HTTP request-size
+limit. Result files are removed from temporary Headnode scheduler storage after
+the client has downloaded and safely extracted them. Abandoned transfers and
+unretrieved completed results are removed after 24 hours.</p>
 <hr />
 <h2 id="5-controlling-local-jobs">5. Controlling Local Jobs</h2>
 <h3 id="monitoring-streaming-logs">Monitoring &amp; Streaming Logs</h3>
