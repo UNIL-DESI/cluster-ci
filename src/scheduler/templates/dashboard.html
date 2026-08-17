@@ -1559,7 +1559,7 @@
                                             </div>
                                             <div class="d-flex align-items-center gap-2 flex-wrap">
                                                 <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
-                                                ${run.is_local ? '<span class="badge-premium" style="background:#f3e8ff;color:#7e22ce;"><i class="bi bi-house-door-fill me-1"></i>LOCAL</span>' : ''}
+                                                ${run.is_local ? '<span class="badge-premium" style="background:var(--info-light);color:var(--info);"><i class="bi bi-house-door-fill me-1"></i>LOCAL</span>' : ''}
                                                 <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
                                                 ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
                                                 ${launchDate ? `<span class="text-muted" style="font-size:0.75rem;"><i class="bi bi-calendar3 me-1"></i>Lancé le ${launchDate}</span>` : ''}
@@ -1638,7 +1638,7 @@
                                                     <span class="spinner-grow spinner-grow-sm text-warning" style="width: 0.6rem; height: 0.6rem;" role="status"></span>
                                                     <strong class="text-dark">${escapeHtml(repoShort)}</strong>
                                                     <span class="text-muted small">@${escapeHtml(job.branch || '?')}</span>
-                                                    ${job.is_local ? '<span class="badge ms-1" style="background:#f3e8ff;color:#7e22ce;font-size:0.75rem;">🏠 LOCAL</span>' : ''}
+                                                    ${job.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.75rem;">🏠 LOCAL</span>' : ''}
                                                     <span class="text-muted small">par <strong>${escapeHtml(job.username || '?')}</strong></span>
                                                     <span class="badge bg-secondary rounded-pill">${job.ram_required_gb || 0} GB</span>
                                                 </div>
@@ -1905,7 +1905,7 @@
                                             Run from ${runDate}
                                         </h5>
                                         <p class="card-text text-muted mb-0">
-                                            Branch: <strong>${escapeHtml(run.branch)}</strong> ${run.is_local ? '<span class="badge ms-1" style="background:#f3e8ff;color:#7e22ce;">🏠 LOCAL</span>' : ''} | Job ID: ${run.job_id.substring(0,8)}...
+                                            Branch: <strong>${escapeHtml(run.branch)}</strong> ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);">🏠 LOCAL</span>' : ''} | Job ID: ${run.job_id.substring(0,8)}...
                                         </p>
                                     </div>
                                     <div class="d-flex gap-2">
@@ -1956,7 +1956,7 @@
                     const statusClass = run.status === 'completed' ? 'text-success' : 'text-danger';
                     const statusIcon = run.status === 'completed' ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill';
                     statusDiv.className = statusClass + ' mb-2';
-                    statusDiv.innerHTML = `<i class="bi ${statusIcon}"></i> ${escapeHtml(run.status)} ${run.is_local ? '<span class="badge ms-1" style="background:#f3e8ff;color:#7e22ce;font-size:0.7rem;">🏠 LOCAL</span>' : ''}`;
+                    statusDiv.innerHTML = `<i class="bi ${statusIcon}"></i> ${escapeHtml(run.status)} ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.7rem;">🏠 LOCAL</span>' : ''}`;
 
                     const logsBtn = document.createElement('button');
                     logsBtn.className = 'btn btn-link btn-sm p-0 mb-2 d-block mx-auto text-decoration-none';
