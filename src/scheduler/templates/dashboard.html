@@ -145,22 +145,42 @@
         [data-theme="dark"] .dropdown-divider {
             border-color: var(--border-color);
         }
+        .form-control {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
         [data-theme="dark"] .form-control {
             background-color: var(--bg-card);
             color: var(--text-primary);
             border-color: var(--border-color);
         }
-        [data-theme="dark"] .form-control:focus {
+        .form-select {
             background-color: var(--bg-card);
             color: var(--text-primary);
-            border-color: var(--primary);
-            box-shadow: 0 0 0 0.25rem var(--primary-border);
+            border-color: var(--border-color);
         }
         [data-theme="dark"] .form-select {
             background-color: var(--bg-card);
             color: var(--text-primary);
             border-color: var(--border-color);
         }
+
+        /* Focus outlines eradication of default blue */
+        :focus, .form-control:focus, .form-select:focus, .btn:focus {
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 0 3px var(--primary-light) !important;
+            outline: none !important;
+        }
+        [data-theme="dark"] :focus,
+        [data-theme="dark"] .form-control:focus,
+        [data-theme="dark"] .form-select:focus,
+        [data-theme="dark"] .btn:focus {
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 0 3px var(--primary-border) !important;
+            outline: none !important;
+        }
+
         [data-theme="dark"] .modal-content {
             background-color: var(--bg-card);
             border-color: var(--border-color);
@@ -231,39 +251,67 @@
             background-color: var(--info) !important;
         }
 
-        .navbar-premium {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        /* Navbar Adaptative Styling */
+        .navbar-premium, .navbar-custom, .navbar {
+            background: var(--bg-card) !important;
+            border-bottom: 1px solid var(--border-color) !important;
+            color: var(--text-primary) !important;
+            box-shadow: var(--shadow-sm);
             padding: 0.6rem 0;
         }
-        .navbar-premium .navbar-brand {
+        .navbar-premium .navbar-brand, .navbar-custom .navbar-brand, .navbar .navbar-brand {
             font-weight: 700;
-            color: #ffffff !important;
+            color: var(--text-primary) !important;
             letter-spacing: -0.025em;
             font-size: 1.2rem;
-        }
-        .navbar-premium .navbar-brand i {
-            color: var(--primary);
-        }
-        .navbar-premium .navbar-text {
-            color: #94a3b8 !important;
-        }
-        .navbar-premium .navbar-text strong {
-            color: #e2e8f0;
-        }
-        .navbar-cluster-badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            background: var(--primary-light);
-            border: 1px solid var(--primary-border);
-            border-radius: 9999px;
-            padding: 3px 12px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: var(--primary);
-            margin-left: 12px;
+        }
+        .navbar-premium .navbar-brand i, .navbar-custom .navbar-brand i, .navbar .navbar-brand i {
+            color: var(--primary) !important;
+        }
+        .navbar-premium .navbar-text, .navbar-custom .navbar-text, .navbar .navbar-text {
+            color: var(--text-secondary) !important;
+        }
+        .navbar-premium .navbar-text strong, .navbar-custom .navbar-text strong, .navbar .navbar-text strong {
+            color: var(--text-primary) !important;
+        }
+
+        #theme-toggle-btn {
+            background: var(--bg-subtle) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 8px !important;
+            padding: 4px 10px !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            transition: all 0.2s ease !important;
+        }
+        #theme-toggle-btn:hover {
+            background: var(--primary-light) !important;
+            border-color: var(--primary-border) !important;
+            color: var(--primary) !important;
+        }
+
+        .btn-logout {
+            background: transparent !important;
+            border: 1px solid var(--border-color) !important;
+            color: var(--text-secondary) !important;
+            border-radius: 8px !important;
+            padding: 0.35rem 0.75rem !important;
+            font-size: 0.85rem !important;
+            font-weight: 500 !important;
+            transition: all 0.15s ease !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            text-decoration: none !important;
+        }
+        .btn-logout:hover {
+            background: var(--bg-subtle) !important;
+            color: var(--primary) !important;
+            border-color: var(--primary) !important;
         }
 
         .breadcrumb-premium {
@@ -455,21 +503,33 @@
         }
 
         /* Log modal segmented view */
+        .log-terminal-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--primary-light);
+            color: var(--primary);
+            font-size: 1rem;
+        }
+
         .log-stage-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            display: flex;
+            flex-wrap: wrap;
             gap: 8px;
-            padding: 12px;
-            background: #0b0f19;
+            padding: 12px 16px;
+            background: var(--bg-card);
             border-bottom: 1px solid var(--border-color);
         }
         .log-stage-btn {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 8px 12px;
+            padding: 6px 14px;
             border-radius: 8px;
-            border: 1px solid transparent;
+            border: 1px solid var(--border-color);
             cursor: pointer;
             font-size: 0.82rem;
             font-weight: 500;
@@ -477,38 +537,85 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
         }
-        .log-stage-btn i { font-size: 1rem; flex-shrink: 0; }
-        .log-stage-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
-        .log-stage-btn.active { box-shadow: 0 0 0 2px #fff, 0 0 8px rgba(255,255,255,0.3); transform: translateY(-1px); }
-        .log-stage-btn.status-success { background: var(--success); color: #fff; border-color: var(--success); }
-        .log-stage-btn.status-warning { background: var(--warning); color: #212529; border-color: var(--warning); }
-        .log-stage-btn.status-error { background: var(--danger); color: #fff; border-color: var(--danger); }
-        .log-stage-btn.status-neutral { background: var(--bg-subtle); color: var(--text-secondary); border-color: var(--border-color); }
-        .log-stage-btn.status-running { background: var(--primary); color: #fff; border-color: var(--primary); animation: pulse-glow 2s infinite; }
+        .log-stage-btn i { font-size: 0.95rem; flex-shrink: 0; }
+        .log-stage-btn:hover { filter: brightness(0.95); transform: translateY(-1px); }
+        [data-theme="dark"] .log-stage-btn:hover { filter: brightness(1.15); }
         
-        @keyframes pulse-glow {
-            0%, 100% { box-shadow: 0 0 4px var(--primary-border); }
-            50% { box-shadow: 0 0 12px var(--primary); }
+        .log-stage-btn.status-neutral {
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+            border-color: var(--border-color);
+        }
+        .log-stage-btn.status-neutral.active {
+            background: var(--primary-light);
+            color: var(--primary);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 1px var(--primary);
+            font-weight: 600;
+        }
+        .log-stage-btn.status-success {
+            background: var(--success-light);
+            color: var(--success);
+            border-color: var(--success);
+        }
+        .log-stage-btn.status-success.active {
+            box-shadow: 0 0 0 2px var(--success);
+            font-weight: 600;
+        }
+        .log-stage-btn.status-warning {
+            background: var(--warning-light);
+            color: var(--warning);
+            border-color: var(--warning);
+        }
+        .log-stage-btn.status-warning.active {
+            box-shadow: 0 0 0 2px var(--warning);
+            font-weight: 600;
+        }
+        .log-stage-btn.status-error {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border-color: #ef4444;
+        }
+        .log-stage-btn.status-error.active {
+            box-shadow: 0 0 0 2px #ef4444;
+            font-weight: 600;
+        }
+        .log-stage-btn.status-running {
+            background: var(--primary-light);
+            color: var(--primary);
+            border-color: var(--primary);
+            animation: pulse-stage-glow 2s infinite;
+        }
+        .log-stage-btn.status-running.active {
+            box-shadow: 0 0 0 2px var(--primary);
+            font-weight: 600;
+        }
+        
+        @keyframes pulse-stage-glow {
+            0%, 100% { box-shadow: 0 0 0 1px var(--primary-border); }
+            50% { box-shadow: 0 0 0 3px var(--primary); }
         }
 
-        .btn-copy-logs {
+        .btn-log-action, .btn-copy-logs {
             border: 1px solid var(--border-color) !important;
             color: var(--text-secondary) !important;
             background-color: var(--bg-subtle) !important;
-            border-radius: 6px !important;
+            border-radius: 8px !important;
             padding: 6px 12px !important;
-            font-size: 0.8rem !important;
+            font-size: 0.82rem !important;
             font-weight: 500 !important;
             display: inline-flex !important;
             align-items: center !important;
             gap: 6px !important;
             transition: all 0.2s ease !important;
         }
-        .btn-copy-logs:hover {
+        .btn-log-action:hover, .btn-copy-logs:hover {
             background-color: var(--border-color) !important;
             color: var(--text-primary) !important;
-            border-color: var(--text-muted) !important;
+            border-color: var(--primary) !important;
         }
         .btn-copy-logs.copied {
             background-color: var(--success) !important;
@@ -516,14 +623,74 @@
             color: #ffffff !important;
         }
 
+        #logModal .modal-body {
+            background-color: #0d1117 !important;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        [data-theme="dark"] #logModal .modal-body {
+            background-color: #090d16 !important;
+        }
+
+        /* Custom fine scrollbar for terminal */
+        #logModal .modal-body::-webkit-scrollbar,
+        .log-section-content::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        #logModal .modal-body::-webkit-scrollbar-track,
+        .log-section-content::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        #logModal .modal-body::-webkit-scrollbar-thumb,
+        .log-section-content::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+        #logModal .modal-body::-webkit-scrollbar-thumb:hover,
+        .log-section-content::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-hover);
+        }
+
         .log-section-content {
             white-space: pre-wrap;
-            font-family: var(--font-mono);
+            word-break: break-all;
+            font-family: 'Fira Code', 'JetBrains Mono', monospace;
             color: #e2e8f0;
             font-size: 0.85rem;
-            padding: 18px;
+            line-height: 1.5;
+            padding: 18px 20px;
             margin: 0;
-            min-height: 300px;
+            min-height: 350px;
+            background-color: #0d1117;
+        }
+        [data-theme="dark"] .log-section-content {
+            background-color: #090d16;
+        }
+
+        /* Syntax highlighting classes for log lines */
+        .log-line {
+            display: block;
+            min-height: 1.35em;
+            line-height: 1.5;
+        }
+        .log-line-timestamp {
+            color: #64748b;
+            font-weight: 500;
+        }
+        .log-line-success {
+            color: #34d399;
+        }
+        .log-line-warn {
+            color: #fbbf24;
+        }
+        .log-line-error {
+            color: #f87171;
+            font-weight: 500;
+        }
+        .log-line-cmd {
+            color: #2dd4bf;
+            font-weight: 500;
         }
 
         /* Additional artifacts and tabs styles */
@@ -736,7 +903,7 @@
         .active-run-card {
             background: var(--bg-card);
             border: 1px solid var(--primary-border);
-            border-left: 4px solid #ea580c;
+            border-left: 4px solid var(--primary);
             border-radius: var(--radius-lg);
             box-shadow: var(--shadow-md);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -750,7 +917,7 @@
             left: 0;
             bottom: 0;
             width: 4px;
-            background: linear-gradient(180deg, #ea580c 0%, #f97316 100%);
+            background: linear-gradient(180deg, var(--primary) 0%, var(--primary-hover) 100%);
         }
         .active-run-card:hover {
             transform: translateY(-2px);
@@ -819,15 +986,14 @@
         <div class="container">
             <div class="d-flex align-items-center">
                 <a class="navbar-brand mb-0" href="/"><i class="bi bi-cpu-fill me-2"></i>Cluster-CI</a>
-                <span class="navbar-cluster-badge"><i class="bi bi-hdd-rack"></i> Cluster</span>
             </div>
             <div class="d-flex align-items-center">
-                <button id="theme-toggle-btn" class="btn btn-sm me-3" onclick="toggleTheme()" title="Basculer le thème" style="background: rgba(255,255,255,0.1); color: #f8fafc; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+                <button id="theme-toggle-btn" class="btn btn-sm me-3" onclick="toggleTheme()" title="Basculer le thème">
                     <i id="theme-toggle-icon" class="bi bi-sun-fill text-warning"></i>
                 </button>
-                <div class="navbar-text">
-                    <i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong>
-                    <a href="{{ url_for('logout') }}" class="btn btn-sm ms-3" style="background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25);">
+                <div class="navbar-text d-flex align-items-center">
+                    <span><i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong></span>
+                    <a href="{{ url_for('logout') }}" class="btn btn-logout ms-3">
                         <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                 </div>
@@ -900,24 +1066,36 @@
 
     <!-- Log Modal (Segmented by pipeline stage) -->
     <div class="modal fade" id="logModal" tabindex="-1" aria-labelledby="logModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-xl modal-dialog-scrollable">
-            <div class="modal-content bg-dark text-light">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title" id="logModalLabel"><i class="bi bi-terminal"></i> Execution Logs</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width: 95%;">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-color);">
+                <div class="modal-header d-flex align-items-center justify-content-between" style="background: var(--bg-card); border-bottom: 1px solid var(--border-color);">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="log-terminal-icon"><i class="bi bi-terminal-fill"></i></span>
+                        <h5 class="modal-title fw-bold mb-0" id="logModalLabel" style="color: var(--text-primary);">Execution Logs</h5>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-log-action btn-copy-logs" onclick="copyLogs()" title="Copier les logs affichés">
+                            <i class="bi bi-clipboard"></i> <span class="d-none d-sm-inline">Copier</span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-log-action" onclick="downloadCurrentLogs()" title="Télécharger les logs">
+                            <i class="bi bi-download"></i> <span class="d-none d-sm-inline">Télécharger</span>
+                        </button>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
                 </div>
                 <div id="log-stage-grid" class="log-stage-grid">
                     <!-- Stage buttons rendered dynamically -->
                 </div>
-                <div class="modal-body p-0" style="background-color: #1e1e1e;">
-                    <pre id="log-content" class="log-section-content"></pre>
+                <div class="modal-body p-0" style="background: #0d1117;">
+                    <div id="log-content" class="log-section-content"></div>
                 </div>
-                <div class="modal-footer border-secondary d-flex justify-content-between align-items-center">
-                    <button type="button" class="btn btn-outline-light btn-sm btn-copy-logs" onclick="copyLogs()">
-                        <i class="bi bi-clipboard"></i> Copy
-                    </button>
-                    <span id="log-line-indicator" class="text-muted small"></span>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <div class="modal-footer d-flex justify-content-between align-items-center" style="background: var(--bg-card); border-top: 1px solid var(--border-color);">
+                    <div class="d-flex align-items-center gap-2">
+                        <span id="log-line-indicator" class="text-muted small"></span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1897,7 +2075,7 @@
                         }).replace(',', '');
 
                         col.innerHTML = `
-                            <div class="card shadow-sm border-primary active-run-card">
+                            <div class="card shadow-sm active-run-card">
                                 <div class="card-body d-flex justify-content-between align-items-center">
                                     <div>
                                         <h5 class="card-title text-primary mb-1">
@@ -2936,6 +3114,36 @@
             return section ? section.content : '';
         }
 
+        function highlightLogLine(line) {
+            if (!line) return '<span class="log-line">&nbsp;</span>';
+            const escaped = escapeHtml(line);
+
+            // Error / Fail / Exception / Traceback
+            if (/\b(ERROR|FAIL|FAILED|FATAL|EXCEPTION|CRITICAL)\b|Traceback \(most recent call last\):|Exit code [1-9]|❌/i.test(line)) {
+                return `<span class="log-line log-line-error">${escaped}</span>`;
+            }
+            // Warning
+            if (/\b(WARN|WARNING|DEPRECATED|ALERT)\b|⚠️/i.test(line)) {
+                return `<span class="log-line log-line-warn">${escaped}</span>`;
+            }
+            // Info / OK / Passed / Success
+            if (/\b(SUCCESS|PASSED|SUCCESSFULLY|COMPLETED|OK)\b|✅|✓/i.test(line)) {
+                return `<span class="log-line log-line-success">${escaped}</span>`;
+            }
+            // Commands / DVC / Shell
+            if (/^\s*(\$|>|\+|Running stage|dvc |python |pytest |git |bash |cd |export |echo )/i.test(line)) {
+                return `<span class="log-line log-line-cmd">${escaped}</span>`;
+            }
+
+            // Timestamps / dates at start of line
+            const tsRegex = /^(\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\]?|\b\d{2}:\d{2}:\d{2}\b)/;
+            if (tsRegex.test(escaped)) {
+                return `<span class="log-line">${escaped.replace(tsRegex, '<span class="log-line-timestamp">$1</span>')}</span>`;
+            }
+
+            return `<span class="log-line">${escaped}</span>`;
+        }
+
         function renderLogContent(content, reset) {
             let allLines = content.split('\n');
             const totalLines = allLines.length;
@@ -2952,12 +3160,12 @@
 
             if (currentSectionLines.length <= LOG_CHUNK_SIZE) {
                 // Small content: render everything at once
-                logContent.textContent = currentSectionLines.join('\n');
+                logContent.innerHTML = currentSectionLines.map(highlightLogLine).join('');
                 renderedLineCount = currentSectionLines.length;
             } else {
                 // Large content: render first chunk only
                 const end = Math.min(renderedLineCount + LOG_CHUNK_SIZE, currentSectionLines.length);
-                logContent.textContent = currentSectionLines.slice(0, end).join('\n');
+                logContent.innerHTML = currentSectionLines.slice(0, end).map(highlightLogLine).join('');
                 renderedLineCount = end;
             }
 
@@ -2970,7 +3178,7 @@
             const logContent = document.getElementById('log-content');
             const end = Math.min(renderedLineCount + LOG_CHUNK_SIZE, currentSectionLines.length);
             const nextChunk = currentSectionLines.slice(renderedLineCount, end);
-            logContent.textContent += '\n' + nextChunk.join('\n');
+            logContent.innerHTML += nextChunk.map(highlightLogLine).join('');
             renderedLineCount = end;
 
             updateLineIndicator(0, currentSectionLines.length);
@@ -2987,6 +3195,23 @@
             } else {
                 indicator.textContent = `${renderedLineCount} / ${total} lines ↓`;
             }
+        }
+
+        function downloadCurrentLogs() {
+            const sections = parseLogSections(fullLogBuffer);
+            const text = getStageContent(currentSelectedStage, sections) || fullLogBuffer;
+            if (!text) return;
+            const stageName = currentSelectedStage ? currentSelectedStage.replace(/[^a-zA-Z0-9_-]/g, '_') : 'logs';
+            const filename = `cluster_ci_${stageName}_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.log`;
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         function copyLogs() {
@@ -3067,7 +3292,7 @@
         function showLogs(jobId) {
             const logModal = new bootstrap.Modal(document.getElementById('logModal'));
             const logContent = document.getElementById('log-content');
-            logContent.textContent = 'Connecting to worker for logs...';
+            logContent.innerHTML = '<div class="text-muted small p-2"><i class="bi bi-hourglass-split me-1"></i>Connexion au worker pour récupérer les logs...</div>';
             document.getElementById('log-stage-grid').innerHTML = '';
             document.getElementById('log-line-indicator').textContent = '';
             fullLogBuffer = '';
@@ -3171,7 +3396,7 @@
                         modalBody.scrollTop = modalBody.scrollHeight;
                     }
                 } else if (lastLogOffset === 0) {
-                    document.getElementById('log-content').textContent = 'Waiting for logs...';
+                    document.getElementById('log-content').innerHTML = '<div class="text-muted small p-2"><i class="bi bi-hourglass-split me-1"></i>En attente de logs...</div>';
                 }
             } catch (err) {
                 console.error("Log polling error", err);
