@@ -1,24 +1,203 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cluster-CI Login</title>
+    <script>
+        (function() {
+            try {
+                const savedTheme = localStorage.getItem('cluster_theme');
+                const theme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <style>
+        :root, [data-theme="light"] {
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            --font-mono: 'Fira Code', 'Courier New', Courier, monospace;
+            --primary: #ea580c;
+            --primary-hover: #c2410c;
+            --primary-light: #fff7ed;
+            --primary-border: rgba(234, 88, 12, 0.2);
+            --success: #059669;
+            --success-hover: #047857;
+            --success-light: #ecfdf5;
+            --info: #0d9488;
+            --info-light: #f0fdfa;
+            --danger: #ef4444;
+            --danger-light: #fef2f2;
+            --warning: #f59e0b;
+            --warning-light: #fffbeb;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-subtle: #f1f5f9;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+            --radius-lg: 14px;
+        }
+
+        [data-theme="dark"] {
+            --primary: #f97316;
+            --primary-hover: #fb923c;
+            --primary-light: rgba(249, 115, 22, 0.15);
+            --primary-border: rgba(249, 115, 22, 0.3);
+            --success: #10b981;
+            --success-hover: #34d399;
+            --success-light: rgba(16, 185, 129, 0.15);
+            --info: #14b8a6;
+            --info-light: rgba(20, 184, 166, 0.15);
+            --danger: #f87171;
+            --danger-light: rgba(248, 113, 113, 0.15);
+            --warning: #fbbf24;
+            --warning-light: rgba(251, 191, 36, 0.15);
+            --bg-page: #0b0f19;
+            --bg-card: #111827;
+            --bg-subtle: #1f2937;
+            --border-color: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+            --radius-lg: 14px;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding-bottom: 4.5rem;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .login-card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 440px;
+            position: relative;
+        }
+
+        .login-brand-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: var(--primary-light);
+            color: var(--primary);
+            font-size: 2rem;
+            margin-bottom: 1.25rem;
+            border: 1px solid var(--primary-border);
+        }
+
+        .btn-github-solar {
+            background-color: var(--primary) !important;
+            color: #ffffff !important;
+            border: 1px solid var(--primary) !important;
+            font-weight: 600;
+            padding: 12px 24px;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            box-shadow: 0 4px 12px var(--primary-border);
+        }
+
+        .btn-github-solar:hover {
+            background-color: var(--primary-hover) !important;
+            border-color: var(--primary-hover) !important;
+            color: #ffffff !important;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px var(--primary-border);
+        }
+
+        .theme-toggle-corner {
+            position: absolute;
+            top: 1.25rem;
+            right: 1.25rem;
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            border-radius: 8px;
+            padding: 4px 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .theme-toggle-corner:hover {
+            color: var(--primary);
+            border-color: var(--primary);
+        }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-6">
-                <div class="card shadow">
-                    <div class="card-body text-center">
-                        <h1 class="card-title mb-4">Cluster-CI Portal</h1>
-                        <p class="card-text">Please log in with your GitHub account to access your projects.</p>
-                        <a href="{{ url_for('login') }}" class="btn btn-dark btn-lg">
-                            <i class="bi bi-github"></i> Login with GitHub
-                        </a>
-                    </div>
-                </div>
-            </div>
+<body>
+    <div class="login-card text-center">
+        <button id="theme-toggle-btn" class="theme-toggle-corner" onclick="toggleTheme()" title="Basculer le thème">
+            <i id="theme-toggle-icon" class="bi bi-sun-fill text-warning"></i>
+        </button>
+        <div class="login-brand-icon">
+            <i class="bi bi-cpu-fill"></i>
         </div>
+        <h2 class="fw-bold mb-2" style="letter-spacing: -0.025em;">Cluster-CI</h2>
+        <p class="text-muted mb-4" style="font-size: 0.95rem;">Connectez-vous avec votre compte GitHub pour accéder à vos projets et exécutions.</p>
+        <a href="{{ url_for('login') }}" class="btn-github-solar">
+            <i class="bi bi-github fs-5"></i> Continuer avec GitHub
+        </a>
     </div>
+
+    <script>
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById('theme-toggle-icon');
+            if (!icon) return;
+            if (theme === 'dark') {
+                icon.className = 'bi bi-moon-stars-fill text-warning';
+            } else {
+                icon.className = 'bi bi-sun-fill text-warning';
+            }
+        }
+
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            try {
+                localStorage.setItem('cluster_theme', theme);
+            } catch (e) {}
+            updateThemeIcon(theme);
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            setTheme(newTheme);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            updateThemeIcon(currentTheme);
+        });
+    </script>
 </body>
 </html>

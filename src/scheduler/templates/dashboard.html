@@ -1,31 +1,49 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cluster-CI Explorer</title>
+    <script>
+        (function() {
+            try {
+                const savedTheme = localStorage.getItem('cluster_theme');
+                const theme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
     <style>
-        :root {
+        :root, [data-theme="light"] {
             --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             --font-mono: 'Fira Code', 'Courier New', Courier, monospace;
-            --bg-page: #f8fafc;
-            --bg-card: #ffffff;
-            --border-color: #e2e8f0;
-            --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --text-muted: #94a3b8;
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
-            --primary-light: #eff6ff;
-            --success: #10b981;
+            --primary: #ea580c;
+            --primary-hover: #c2410c;
+            --primary-light: #fff7ed;
+            --primary-border: rgba(234, 88, 12, 0.2);
+            --success: #059669;
+            --success-hover: #047857;
             --success-light: #ecfdf5;
+            --info: #0d9488;
+            --info-light: #f0fdfa;
             --danger: #ef4444;
             --danger-light: #fef2f2;
             --warning: #f59e0b;
             --warning-light: #fffbeb;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-subtle: #f1f5f9;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
             --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
@@ -34,11 +52,183 @@
             --radius-lg: 14px;
         }
 
+        [data-theme="dark"] {
+            --primary: #f97316;
+            --primary-hover: #fb923c;
+            --primary-light: rgba(249, 115, 22, 0.15);
+            --primary-border: rgba(249, 115, 22, 0.3);
+            --success: #10b981;
+            --success-hover: #34d399;
+            --success-light: rgba(16, 185, 129, 0.15);
+            --info: #14b8a6;
+            --info-light: rgba(20, 184, 166, 0.15);
+            --danger: #f87171;
+            --danger-light: rgba(248, 113, 113, 0.15);
+            --warning: #fbbf24;
+            --warning-light: rgba(251, 191, 36, 0.15);
+            --bg-page: #0b0f19;
+            --bg-card: #111827;
+            --bg-subtle: #1f2937;
+            --border-color: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+            --shadow-premium: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+            --radius-md: 10px;
+            --radius-lg: 14px;
+        }
+
         body {
             font-family: var(--font-sans);
-            background-color: var(--bg-page);
-            color: var(--text-primary);
+            background-color: var(--bg-page) !important;
+            color: var(--text-primary) !important;
             -webkit-font-smoothing: antialiased;
+            padding-bottom: 4.5rem;
+            min-height: 100vh;
+        }
+
+        /* Dark mode overrides for standard elements */
+        [data-theme="dark"] .bg-light {
+            background-color: var(--bg-page) !important;
+        }
+        [data-theme="dark"] .bg-white {
+            background-color: var(--bg-card) !important;
+        }
+        [data-theme="dark"] .card {
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .card-header {
+            background-color: var(--bg-subtle) !important;
+            border-color: var(--border-color) !important;
+            color: var(--text-primary) !important;
+        }
+        [data-theme="dark"] .card-body {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .text-dark {
+            color: var(--text-primary) !important;
+        }
+        [data-theme="dark"] .text-slate-800 {
+            color: var(--text-primary) !important;
+        }
+        [data-theme="dark"] .text-slate-700 {
+            color: var(--text-secondary) !important;
+        }
+        [data-theme="dark"] .text-slate-600 {
+            color: var(--text-secondary) !important;
+        }
+        [data-theme="dark"] .bg-slate-100,
+        [data-theme="dark"] .bg-slate-50 {
+            background-color: var(--bg-subtle) !important;
+        }
+        [data-theme="dark"] .border-slate-200 {
+            border-color: var(--border-color) !important;
+        }
+        [data-theme="dark"] .dropdown-menu {
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .dropdown-item {
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .dropdown-item:hover {
+            background-color: var(--bg-subtle);
+            color: var(--primary);
+        }
+        [data-theme="dark"] .dropdown-divider {
+            border-color: var(--border-color);
+        }
+        [data-theme="dark"] .form-control {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        [data-theme="dark"] .form-control:focus {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 0.25rem var(--primary-border);
+        }
+        [data-theme="dark"] .form-select {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        [data-theme="dark"] .modal-content {
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .modal-header,
+        [data-theme="dark"] .modal-footer {
+            border-color: var(--border-color);
+        }
+        [data-theme="dark"] .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+        [data-theme="dark"] .border-end {
+            border-color: var(--border-color) !important;
+        }
+        [data-theme="dark"] .border-bottom {
+            border-color: var(--border-color) !important;
+        }
+        [data-theme="dark"] hr {
+            border-color: var(--border-color);
+            opacity: 0.3;
+        }
+
+        /* Buttons & Semantic Theme Helpers */
+        .btn-primary {
+            background-color: var(--primary) !important;
+            border-color: var(--primary) !important;
+            color: #ffffff !important;
+        }
+        .btn-primary:hover, .btn-primary:focus, .btn-primary:active {
+            background-color: var(--primary-hover) !important;
+            border-color: var(--primary-hover) !important;
+        }
+        .btn-outline-primary {
+            color: var(--primary) !important;
+            border-color: var(--primary) !important;
+        }
+        .btn-outline-primary:hover, .btn-outline-primary:focus, .btn-outline-primary:active {
+            background-color: var(--primary) !important;
+            border-color: var(--primary) !important;
+            color: #ffffff !important;
+        }
+        .btn-success {
+            background-color: var(--success) !important;
+            border-color: var(--success) !important;
+            color: #ffffff !important;
+        }
+        .btn-success:hover, .btn-success:focus, .btn-success:active {
+            background-color: var(--success-hover) !important;
+            border-color: var(--success-hover) !important;
+        }
+        .text-primary {
+            color: var(--primary) !important;
+        }
+        .bg-primary {
+            background-color: var(--primary) !important;
+        }
+        .text-success {
+            color: var(--success) !important;
+        }
+        .bg-success {
+            background-color: var(--success) !important;
+        }
+        .text-info {
+            color: var(--info) !important;
+        }
+        .bg-info {
+            background-color: var(--info) !important;
         }
 
         .navbar-premium {
@@ -54,7 +244,7 @@
             font-size: 1.2rem;
         }
         .navbar-premium .navbar-brand i {
-            color: #60a5fa;
+            color: var(--primary);
         }
         .navbar-premium .navbar-text {
             color: #94a3b8 !important;
@@ -66,13 +256,13 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(96,165,250,0.12);
-            border: 1px solid rgba(96,165,250,0.2);
+            background: var(--primary-light);
+            border: 1px solid var(--primary-border);
             border-radius: 9999px;
             padding: 3px 12px;
             font-size: 0.75rem;
             font-weight: 500;
-            color: #93c5fd;
+            color: var(--primary);
             margin-left: 12px;
         }
 
@@ -184,6 +374,7 @@
             width: 100%;
             font-size: 0.9rem;
             color: var(--text-primary);
+            background: transparent;
         }
 
         .full-width {
@@ -253,10 +444,14 @@
             border-spacing: 0;
         }
         .table-preview th {
-            background-color: #f1f5f9;
+            background-color: var(--bg-subtle);
             color: var(--text-secondary);
             font-weight: 600;
             border-bottom: 2px solid var(--border-color);
+        }
+        .table-preview td {
+            border-color: var(--border-color);
+            color: var(--text-primary);
         }
 
         /* Log modal segmented view */
@@ -265,8 +460,8 @@
             grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
             gap: 8px;
             padding: 12px;
-            background: #0f172a;
-            border-bottom: 1px solid #1e293b;
+            background: #0b0f19;
+            border-bottom: 1px solid var(--border-color);
         }
         .log-stage-btn {
             display: flex;
@@ -289,18 +484,18 @@
         .log-stage-btn.status-success { background: var(--success); color: #fff; border-color: var(--success); }
         .log-stage-btn.status-warning { background: var(--warning); color: #212529; border-color: var(--warning); }
         .log-stage-btn.status-error { background: var(--danger); color: #fff; border-color: var(--danger); }
-        .log-stage-btn.status-neutral { background: #1e293b; color: #94a3b8; border-color: #334155; }
+        .log-stage-btn.status-neutral { background: var(--bg-subtle); color: var(--text-secondary); border-color: var(--border-color); }
         .log-stage-btn.status-running { background: var(--primary); color: #fff; border-color: var(--primary); animation: pulse-glow 2s infinite; }
         
         @keyframes pulse-glow {
-            0%, 100% { box-shadow: 0 0 4px rgba(37,99,235,0.4); }
-            50% { box-shadow: 0 0 12px rgba(37,99,235,0.8); }
+            0%, 100% { box-shadow: 0 0 4px var(--primary-border); }
+            50% { box-shadow: 0 0 12px var(--primary); }
         }
 
         .btn-copy-logs {
-            border: 1px solid #475569 !important;
-            color: #94a3b8 !important;
-            background-color: #1e293b !important;
+            border: 1px solid var(--border-color) !important;
+            color: var(--text-secondary) !important;
+            background-color: var(--bg-subtle) !important;
             border-radius: 6px !important;
             padding: 6px 12px !important;
             font-size: 0.8rem !important;
@@ -311,13 +506,13 @@
             transition: all 0.2s ease !important;
         }
         .btn-copy-logs:hover {
-            background-color: #334155 !important;
-            color: #f8fafc !important;
-            border-color: #64748b !important;
+            background-color: var(--border-color) !important;
+            color: var(--text-primary) !important;
+            border-color: var(--text-muted) !important;
         }
         .btn-copy-logs.copied {
-            background-color: #16a34a !important;
-            border-color: #16a34a !important;
+            background-color: var(--success) !important;
+            border-color: var(--success) !important;
             color: #ffffff !important;
         }
 
@@ -344,17 +539,17 @@
         .custom-pills .nav-link.active {
             background-color: var(--primary-light) !important;
             color: var(--primary) !important;
-            border-color: rgba(37, 99, 235, 0.15) !important;
+            border-color: var(--primary-border) !important;
         }
         .custom-pills .nav-link:hover:not(.active) {
-            background-color: #f1f5f9;
+            background-color: var(--bg-subtle);
             color: var(--text-primary);
         }
         
         .artifact-tree-item {
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             user-select: none;
-            border-bottom: 1px solid rgba(226, 232, 240, 0.4);
+            border-bottom: 1px solid var(--border-color);
         }
         .artifact-tree-item:hover {
             background-color: var(--primary-light) !important;
@@ -377,19 +572,19 @@
             color: #f59e0b !important;
         }
         .text-slate-800 {
-            color: #1e293b !important;
+            color: var(--text-primary) !important;
         }
         .text-slate-700 {
-            color: #334155 !important;
+            color: var(--text-secondary) !important;
         }
         .text-slate-500 {
-            color: #64748b !important;
+            color: var(--text-muted) !important;
         }
         .text-slate-400 {
-            color: #94a3b8 !important;
+            color: var(--text-muted) !important;
         }
         .bg-slate-100 {
-            background-color: #f1f5f9 !important;
+            background-color: var(--bg-subtle) !important;
         }
         .font-medium {
             font-weight: 500;
@@ -410,42 +605,40 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 1px 2px rgba(0,0,0,0.04);
         }
         
-        /* Interactive animations and shadow improvements */
-        .card-premium {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02), 0 1px 2px rgba(0, 0, 0, 0.03);
-            border: 1px solid var(--border-color);
-        }
-        .card-premium:hover {
-            border-color: var(--primary);
-            box-shadow: var(--shadow-lg);
-        }
-        
         /* Version nav dropdown custom styles */
         #preview-version-select {
             cursor: pointer;
             box-shadow: var(--shadow-sm);
+            background-color: var(--bg-subtle);
+            color: var(--text-primary);
+            border-color: var(--border-color);
         }
         #preview-version-select:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+            box-shadow: 0 0 0 3px var(--primary-border);
         }
 
         /* ===== Cluster Stats Bar (glassmorphism) ===== */
         .cluster-stats-bar {
-            background: rgba(255,255,255,0.75);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(226,232,240,0.6);
+            border: 1px solid var(--border-color);
             border-radius: var(--radius-lg);
             padding: 16px 24px;
             margin-bottom: 24px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+            box-shadow: var(--shadow-md);
             display: flex;
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
             gap: 16px;
             animation: fadeSlideIn 0.4s ease;
+        }
+        [data-theme="light"] .cluster-stats-bar {
+            background: rgba(255,255,255,0.85);
+        }
+        [data-theme="dark"] .cluster-stats-bar {
+            background: rgba(17,24,39,0.85);
         }
         .cluster-stats-section {
             display: flex;
@@ -468,8 +661,8 @@
             border-radius: 50%;
             flex-shrink: 0;
         }
-        .worker-dot.online { background-color: var(--success); box-shadow: 0 0 6px rgba(16,185,129,0.4); }
-        .worker-dot.busy { background-color: var(--primary); box-shadow: 0 0 6px rgba(37,99,235,0.4); animation: pulse-dot 2s infinite; }
+        .worker-dot.online { background-color: var(--success); box-shadow: 0 0 6px var(--success-light); }
+        .worker-dot.busy { background-color: var(--primary); box-shadow: 0 0 6px var(--primary-border); animation: pulse-dot 2s infinite; }
         .worker-dot.offline { background-color: var(--text-muted); opacity: 0.5; }
         .worker-chip {
             display: inline-flex;
@@ -479,7 +672,7 @@
             border-radius: 8px;
             font-size: 0.78rem;
             font-weight: 500;
-            background: var(--bg-page);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
             color: var(--text-secondary);
             transition: all 0.2s ease;
@@ -541,24 +734,28 @@
 
         /* ===== Enhanced Active Run Cards ===== */
         .active-run-card {
-            background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
-            border: 1px solid rgba(37,99,235,0.15);
-            border-left: 4px solid transparent;
-            border-image: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%) 1;
-            border-image-slice: 1;
-            border-radius: 0;
-            box-shadow: 0 4px 16px rgba(37,99,235,0.06);
+            background: var(--bg-card);
+            border: 1px solid var(--primary-border);
+            border-left: 4px solid #ea580c;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             overflow: hidden;
+            position: relative;
         }
-        .active-run-card {
-            border-radius: var(--radius-lg);
-            border-left: 4px solid var(--primary);
-            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 60%);
+        .active-run-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 4px;
+            background: linear-gradient(180deg, #ea580c 0%, #f97316 100%);
         }
         .active-run-card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(37,99,235,0.1);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--primary);
         }
         .active-run-status {
             width: 10px;
@@ -574,6 +771,7 @@
             font-weight: 600;
             color: var(--primary);
             background: var(--primary-light);
+            border: 1px solid var(--primary-border);
             padding: 2px 10px;
             border-radius: 6px;
         }
@@ -591,15 +789,15 @@
 
         /* ===== Project Cards Enhanced ===== */
         .project-card-premium {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: var(--radius-lg);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+            box-shadow: var(--shadow-sm);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .project-card-premium:hover {
             transform: translateY(-4px);
-            box-shadow: 0 12px 28px rgba(0,0,0,0.06);
+            box-shadow: var(--shadow-lg);
             border-color: var(--primary);
         }
         .project-card-premium:hover .explorer-icon {
@@ -623,11 +821,16 @@
                 <a class="navbar-brand mb-0" href="/"><i class="bi bi-cpu-fill me-2"></i>Cluster-CI</a>
                 <span class="navbar-cluster-badge"><i class="bi bi-hdd-rack"></i> Cluster</span>
             </div>
-            <div class="navbar-text">
-                <i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong>
-                <a href="{{ url_for('logout') }}" class="btn btn-sm ms-3" style="background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25);">
-                    <i class="bi bi-box-arrow-right"></i> Logout
-                </a>
+            <div class="d-flex align-items-center">
+                <button id="theme-toggle-btn" class="btn btn-sm me-3" onclick="toggleTheme()" title="Basculer le thème" style="background: rgba(255,255,255,0.1); color: #f8fafc; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+                    <i id="theme-toggle-icon" class="bi bi-sun-fill text-warning"></i>
+                </button>
+                <div class="navbar-text">
+                    <i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong>
+                    <a href="{{ url_for('logout') }}" class="btn btn-sm ms-3" style="background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25);">
+                        <i class="bi bi-box-arrow-right"></i> Logout
+                    </a>
+                </div>
             </div>
         </div>
     </nav>
@@ -722,6 +925,39 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // ===== Theme Switcher Logic =====
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById('theme-toggle-icon');
+            if (!icon) return;
+            if (theme === 'dark') {
+                icon.className = 'bi bi-moon-stars-fill text-warning';
+            } else {
+                icon.className = 'bi bi-sun-fill text-warning';
+            }
+        }
+
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            try {
+                localStorage.setItem('cluster_theme', theme);
+            } catch (e) {
+                console.warn('Unable to save theme to localStorage:', e);
+            }
+            updateThemeIcon(theme);
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            setTheme(newTheme);
+        }
+
+        // Initialize theme icon on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            updateThemeIcon(currentTheme);
+        });
+
         const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
         const previewContent = document.getElementById('preview-content');
         const previewLoading = document.getElementById('preview-loading');
@@ -838,9 +1074,9 @@
                     const stagesBadges = cfg.stages.map(s => `<span class="badge bg-primary bg-opacity-10 text-primary rounded-pill" style="font-size: 0.7rem; font-weight: 500;">${escapeHtml(s)}</span>`).join(' ');
 
                     return `
-                        <div class="card border-0 shadow-sm mb-2" style="background: white;">
+                        <div class="card border mb-2" style="background: var(--bg-card); border-color: var(--border-color) !important;">
                             <div class="card-header p-2 px-3 d-flex align-items-center justify-content-between" 
-                                 style="cursor: pointer; background: rgba(248,250,252,0.8); border-bottom: 1px solid #e2e8f0;"
+                                 style="cursor: pointer; background: var(--bg-subtle); border-bottom: 1px solid var(--border-color);"
                                  onclick="document.getElementById('hydra-cfg-${idx}').classList.toggle('d-none'); this.querySelector('.bi-chevron-down, .bi-chevron-right').classList.toggle('bi-chevron-down'); this.querySelector('.bi-chevron-down, .bi-chevron-right').classList.toggle('bi-chevron-right');">
                                 <div class="d-flex align-items-center gap-2 text-truncate">
                                     <i class="bi bi-chevron-down text-slate-400" style="font-size: 0.75rem;"></i>
@@ -1186,7 +1422,7 @@
                             <span class="badge-premium badge-primary-premium">
                                 <i class="bi bi-cpu"></i> ${busyWorkers.length} actif${busyWorkers.length > 1 ? 's' : ''}
                             </span>
-                            <span class="badge-premium" style="background:#f0fdf4;color:#166534;">
+                            <span class="badge-premium" style="background: var(--success-light); color: var(--success);">
                                 <i class="bi bi-pause-circle"></i> ${idleWorkers.length} libre${idleWorkers.length > 1 ? 's' : ''}
                             </span>
                         </div>
@@ -1395,7 +1631,7 @@
                                 const cancelBtn = isOwnJob ? `<button class="btn btn-outline-danger btn-sm ms-2" onclick="event.stopPropagation(); stopJob('${job.job_id}')" title="Annuler ce job"><i class="bi bi-x-circle"></i> Annuler</button>` : '';
 
                                 col.innerHTML = `
-                                    <div class="card shadow-sm border-warning" style="background-color: #fffdf5; border-left: 4px solid var(--warning);">
+                                    <div class="card shadow-sm border-warning" style="background-color: var(--bg-card); border-left: 4px solid var(--warning);">
                                         <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">
                                             <div>
                                                 <div class="d-flex align-items-center gap-2 mb-1">
@@ -1547,7 +1783,7 @@
                         
                         <!-- Current artifacts pane -->
                         <div class="tab-pane fade" id="artifacts-pane" role="tabpanel" aria-labelledby="artifacts-tab">
-                            <div class="card shadow-sm border-0 mb-4 bg-white rounded-xl mt-3">
+                            <div class="card shadow-sm border mb-4 rounded-xl mt-3" style="background: var(--bg-card); border-color: var(--border-color) !important;">
                                 <div class="card-body p-4">
                                     <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
                                         <h5 class="card-title text-slate-800 mb-0 font-bold d-flex align-items-center gap-2">
@@ -1661,7 +1897,7 @@
                         }).replace(',', '');
 
                         col.innerHTML = `
-                            <div class="card shadow-sm border-primary" style="background-color: #f8fbff;">
+                            <div class="card shadow-sm border-primary active-run-card">
                                 <div class="card-body d-flex justify-content-between align-items-center">
                                     <div>
                                         <h5 class="card-title text-primary mb-1">
@@ -1794,7 +2030,7 @@
                         <button class="btn btn-sm rounded-pill border stage-chip" 
                                 data-stage="${escapeHtml(stage)}" 
                                 onclick="toggleStageChip(this)"
-                                style="font-size: 0.8rem; font-weight: 500; padding: 4px 14px; background: #f1f5f9; color: #475569; border-color: #cbd5e1; transition: all 0.2s;">
+                                style="font-size: 0.8rem; font-weight: 500; padding: 4px 14px; background: var(--bg-subtle); color: var(--text-secondary); border-color: var(--border-color); transition: all 0.2s;">
                             <i class="bi bi-funnel me-1" style="font-size: 0.7rem;"></i>${escapeHtml(stage)}
                         </button>
                     `).join('');
@@ -1890,14 +2126,14 @@
             const isDraft = branch.startsWith('cluster-draft/');
             let bg, color, icon;
             if (isMain) {
-                bg = '#dcfce7'; color = '#166534'; icon = 'bi-shield-check';
+                bg = 'var(--success-light)'; color = 'var(--success)'; icon = 'bi-shield-check';
             } else if (isDraft) {
-                bg = '#fef3c7'; color = '#92400e'; icon = 'bi-lightning';
+                bg = 'var(--warning-light)'; color = 'var(--warning)'; icon = 'bi-lightning';
             } else {
-                bg = '#e0e7ff'; color = '#3730a3'; icon = 'bi-diagram-2';
+                bg = 'var(--info-light)'; color = 'var(--info)'; icon = 'bi-diagram-2';
             }
             const displayName = isDraft ? branch.replace('cluster-draft/', '⚡') : branch;
-            return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};" title="Branche: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
+            return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};border:1px solid var(--border-color);" title="Branche: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
         }
 
         function renderArtifactView(files, mode) {
@@ -1932,12 +2168,12 @@
 
                 const dateStr = f.created_at ? new Date(f.created_at).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(f.path)}`;
-                const stageBadge = f.stage ? `<span class="badge rounded-pill ms-2" style="font-size:0.7rem;font-weight:500;padding:2px 8px;background:${f.artifact_type==='metric'?'#dbeafe':'#dcfce7'};color:${f.artifact_type==='metric'?'#1e40af':'#166534'};">${escapeHtml(f.stage)}</span>` : '';
+                const stageBadge = f.stage ? `<span class="badge rounded-pill ms-2" style="font-size:0.7rem;font-weight:500;padding:2px 8px;background:${f.artifact_type==='metric'?'var(--primary-light)':f.artifact_type==='plot'?'var(--success-light)':'var(--bg-subtle)'};color:${f.artifact_type==='metric'?'var(--primary)':f.artifact_type==='plot'?'var(--success)':'var(--text-secondary)'};border:1px solid var(--border-color);">${escapeHtml(f.stage)}</span>` : '';
                 const branchBadge = makeBranchBadge(f.branch);
 
                 return `
                     <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded"
-                         style="cursor:pointer;background:#fff;"
+                         style="cursor:pointer;background:var(--bg-card);border:1px solid var(--border-color);"
                          onclick="previewFile('${downloadUrl}','${escapeHtml(f.path).replace(/'/g,"\\\'")}',${f.size||0})"
                          data-path="${escapeHtml(f.path).toLowerCase()}"
                          data-stage="${escapeHtml(f.stage||'')}">
@@ -2019,12 +2255,12 @@
                 const rev = window.latestCommitHash || 'main';
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;
 
-                const stageBadge = node.stage ? `<span class="badge rounded-pill ms-2" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: ${node.artifactType === 'metric' ? '#dbeafe' : node.artifactType === 'plot' ? '#dcfce7' : '#f1f5f9'}; color: ${node.artifactType === 'metric' ? '#1e40af' : node.artifactType === 'plot' ? '#166534' : '#475569'};">${escapeHtml(node.stage)}</span>` : '';
+                const stageBadge = node.stage ? `<span class="badge rounded-pill ms-2" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: ${node.artifactType === 'metric' ? 'var(--primary-light)' : node.artifactType === 'plot' ? 'var(--success-light)' : 'var(--bg-subtle)'}; color: ${node.artifactType === 'metric' ? 'var(--primary)' : node.artifactType === 'plot' ? 'var(--success)' : 'var(--text-secondary)'}; border: 1px solid var(--border-color);">${escapeHtml(node.stage)}</span>` : '';
                 const branchBadge = makeBranchBadge(node.branch);
 
                 return `
                     <div class="artifact-tree-item file-node d-flex align-items-center justify-content-between py-2 px-3 my-1 rounded" 
-                         style="margin-left: ${depth * 15}px; cursor: pointer; background: #fff;" 
+                         style="margin-left: ${depth * 15}px; cursor: pointer; background: var(--bg-card); border: 1px solid var(--border-color);" 
                          onclick="previewFile('${downloadUrl}', '${escapeHtml(node.path).replace(/'/g, "\\'")}', ${node.size || 0})"
                          data-path="${escapeHtml(node.path).toLowerCase()}"
                          data-stage="${escapeHtml(node.stage || '')}">
@@ -2057,7 +2293,7 @@
             return `
                 <div class="artifact-folder-node" data-path="${escapeHtml(node.path).toLowerCase()}">
                     <div class="artifact-tree-item folder-header d-flex align-items-center py-2 px-3 my-1 rounded" 
-                         style="margin-left: ${depth * 15}px; cursor: pointer; background: rgba(248, 250, 252, 0.7);" 
+                         style="margin-left: ${depth * 15}px; cursor: pointer; background: var(--bg-subtle); border: 1px solid var(--border-color);" 
                          onclick="toggleFolder('${folderId}')">
                         <i class="bi bi-chevron-down chevron-icon me-2 text-slate-400" id="${folderId}-chevron"></i>
                         <i class="bi bi-folder-fill text-amber-500 me-2 fs-5" id="${folderId}-icon"></i>
@@ -2098,14 +2334,14 @@
 
             if (window._activeStageFilters.has(stage)) {
                 window._activeStageFilters.delete(stage);
-                btn.style.background = '#f1f5f9';
-                btn.style.color = '#475569';
-                btn.style.borderColor = '#cbd5e1';
+                btn.style.background = 'var(--bg-subtle)';
+                btn.style.color = 'var(--text-secondary)';
+                btn.style.borderColor = 'var(--border-color)';
             } else {
                 window._activeStageFilters.add(stage);
-                btn.style.background = '#3b82f6';
+                btn.style.background = 'var(--primary)';
                 btn.style.color = '#fff';
-                btn.style.borderColor = '#3b82f6';
+                btn.style.borderColor = 'var(--primary)';
             }
 
             applyAllArtifactFilters();
@@ -2364,7 +2600,7 @@
 
                     html += `
                         <div class="col">
-                            <div class="card shadow-sm h-100 border-0" style="background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);">
+                            <div class="card shadow-sm h-100 border" style="background: var(--bg-card); border-color: var(--border-color) !important;">
                                 <div class="card-body">
                                     <h5 class="card-title text-dark"><i class="bi bi-pc-display-horizontal"></i> ${escapeHtml(w.hostname || w.worker_id.substring(0,8))}</h5>
                                     ${w.gpu_name ? `<div class="small text-muted mb-1"><i class="bi bi-gpu-card me-1"></i>${escapeHtml(w.gpu_name)}${w.total_vram_gb ? ` — ${Math.round(w.total_vram_gb)} GB VRAM${w.gpu_count > 1 ? '/GPU' : ''}` : ''}</div>` : ''}

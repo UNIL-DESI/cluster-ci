@@ -1024,8 +1024,9 @@ def check_space():
 
 REPOS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "repositories")
 
-def find_local_repo(repo_slug):
-    """Find the local clone of a repo, handling owner name mismatches."""
+def find_local_repo(repo_slug, auto_clone=True):
+    """Find the local clone of a repo, handling owner name mismatches.
+    If not found locally and repo_slug is in owner/repo format, attempts auto-cloning."""
     # Try exact match first
     exact = os.path.join(REPOS_DIR, repo_slug)
     if os.path.exists(exact) and os.path.exists(os.path.join(exact, ".git")):
@@ -1040,6 +1041,34 @@ def find_local_repo(repo_slug):
             candidate = os.path.join(REPOS_DIR, owner_dir, repo_name)
             if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, ".git")):
                 return candidate
+
+    # Auto-clone if not found and format is owner/repo
+    if auto_clone and '/' in repo_slug and not repo_slug.startswith(('_', '.')):
+        parts = repo_slug.split('/')
+        if len(parts) == 2 and parts[0] and parts[1]:
+            pat = os.environ.get("GITHUB_PAT") or os.environ.get("GH_TOKEN")
+            repo_url = f"https://x-access-token:{pat}@github.com/{repo_slug}.git" if pat else f"https://github.com/{repo_slug}.git"
+            app.logger.info(f"🔄 Repository '{repo_slug}' not found locally in {REPOS_DIR}. Auto-cloning from GitHub...")
+            target_dir = os.path.join(REPOS_DIR, repo_slug)
+            os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            try:
+                res = subprocess.run(
+                    ["git", "clone", repo_url, target_dir],
+                    capture_output=True, text=True, timeout=60
+                )
+                if res.returncode == 0 and os.path.exists(os.path.join(target_dir, ".git")):
+                    app.logger.info(f"✅ Successfully auto-cloned '{repo_slug}' into {target_dir}")
+                    return target_dir
+                else:
+                    err_msg = res.stderr.strip() if res.stderr else "Unknown git clone error"
+                    app.logger.warning(f"⚠️ Auto-clone failed for '{repo_slug}': {err_msg}")
+                    if os.path.exists(target_dir) and not os.path.exists(os.path.join(target_dir, ".git")):
+                        shutil.rmtree(target_dir, ignore_errors=True)
+            except Exception as e:
+                app.logger.warning(f"⚠️ Exception during auto-clone of '{repo_slug}': {e}")
+                if os.path.exists(target_dir) and not os.path.exists(os.path.join(target_dir, ".git")):
+                    shutil.rmtree(target_dir, ignore_errors=True)
+
     return None
 
 @app.route('/artifacts/<repo_owner>/<repo_name>/<rev>/<path:file_path>', methods=['GET'])
@@ -1924,17 +1953,18 @@ def extract_metrics_and_plots_paths(dvc_yaml_data):
             add_path(item, stage_name, artifact_type)
             
     def add_path(p, stage_name, artifact_type):
-        if "${" in p:
+        norm_p = os.path.normpath(p).replace('\\', '/')
+        if "${" in norm_p:
             # Transform to regex pattern
             # e.g., "artifacts/metrics-${item}.json" -> "^artifacts/metrics-.*\.json$"
-            pattern_str = re.escape(p)
+            pattern_str = re.escape(norm_p)
             pattern_str = re.sub(r'\\\$\\\{[^}]+\\\}', '.*', pattern_str)
             try:
                 pattern_info.append((re.compile(f"^{pattern_str}$"), stage_name, artifact_type))
-            except Exception:
-                pass
+            except Exception as e:
+                app.logger.warning(f"Failed to compile regex for pattern {norm_p}: {e}")
         else:
-            path_info[p] = {"stage": stage_name, "type": artifact_type}
+            path_info[norm_p] = {"stage": stage_name, "type": artifact_type}
 
     if isinstance(dvc_yaml_data, dict):
         stages = dvc_yaml_data.get("stages", {})
@@ -1961,14 +1991,72 @@ def extract_metrics_and_plots_paths(dvc_yaml_data):
 
 def is_matching_artifact(file_path, path_info, pattern_info):
     """Check if file_path is a declared artifact. Returns (stage, type) or None."""
-    if file_path in path_info:
-        info = path_info[file_path]
+    norm_path = os.path.normpath(file_path).replace('\\', '/')
+    if norm_path in path_info:
+        info = path_info[norm_path]
         return info["stage"], info["type"]
     for pat, stage_name, art_type in pattern_info:
-        if pat.match(file_path):
+        if pat.match(norm_path):
             return stage_name, art_type
     return None
 
+def _collect_paths(item, paths_set):
+    """Recursively collect all path strings from a metrics/plots declaration."""
+    if not item:
+        return
+    if isinstance(item, list):
+        for x in item:
+            _collect_paths(x, paths_set)
+    elif isinstance(item, dict):
+        for k in item.keys():
+            if isinstance(k, str):
+                paths_set.add(os.path.normpath(k).replace('\\', '/'))
+    elif isinstance(item, str):
+        paths_set.add(os.path.normpath(item).replace('\\', '/'))
+
+def _classify_artifact_type(file_path, path_info, pattern_info,
+                            declared_metrics_paths, declared_plots_paths):
+    """Determine if a file is a metric, plot, or not an artifact.
+    
+    Uses multiple strategies:
+    1. Exact match in path_info (non-foreach paths from dvc.yaml)
+    2. Regex match in pattern_info (foreach paths from dvc.yaml)  
+    3. Check if the path matches any declared metric/plot template after variable resolution (${...})
+    
+    Returns: "metric", "plot", or None (STRICT: no heuristic fallback by extension).
+    """
+    norm_path = os.path.normpath(file_path).replace('\\', '/')
+
+    # Strategy 1: Exact match from dvc.yaml (non-foreach stages)
+    if norm_path in path_info:
+        return path_info[norm_path]["type"]
+    
+    # Strategy 2: Regex pattern match (foreach stages)
+    for pat, stage_name, art_type in pattern_info:
+        if pat.match(norm_path):
+            return art_type
+    
+    # Strategy 3: Check if file_path matches any declared template ${...}
+    for mp in declared_metrics_paths:
+        mp_norm = os.path.normpath(mp).replace('\\', '/')
+        if "${" in mp_norm:
+            parts = mp_norm.split("${")
+            prefix = parts[0]
+            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
+            if norm_path.startswith(prefix) and norm_path.endswith(suffix):
+                return "metric"
+    
+    for pp in declared_plots_paths:
+        pp_norm = os.path.normpath(pp).replace('\\', '/')
+        if "${" in pp_norm:
+            parts = pp_norm.split("${")
+            prefix = parts[0]
+            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
+            if norm_path.startswith(prefix) and norm_path.endswith(suffix):
+                return "plot"
+    
+    # STRICT: Return None if not declared in dvc.yaml
+    return None
 
 def extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data):
     """Extract all metrics/plots artifacts from dvc.lock using dvc.yaml for type classification.
@@ -1983,7 +2071,6 @@ def extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data):
     path_info, pattern_info = extract_metrics_and_plots_paths(dvc_yaml_data)
     
     # 2. Also build a set of all metrics/plots paths declared in dvc.yaml 
-    #    for stages WITHOUT foreach (these have no ${} and are exact paths)
     declared_metrics_paths = set()
     declared_plots_paths = set()
     if isinstance(dvc_yaml_data, dict):
@@ -2024,12 +2111,15 @@ def extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data):
             if not isinstance(out_entry, dict):
                 continue
             file_path = out_entry.get("path")
-            if not file_path or file_path in seen_paths:
+            if not file_path:
+                continue
+            norm_file_path = os.path.normpath(file_path).replace('\\', '/')
+            if norm_file_path in seen_paths:
                 continue
             
             # Classify: is this path a metric or plot?
             artifact_type = _classify_artifact_type(
-                file_path, path_info, pattern_info,
+                norm_file_path, path_info, pattern_info,
                 declared_metrics_paths, declared_plots_paths
             )
             
@@ -2037,67 +2127,196 @@ def extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data):
                 # Clean stage name: "step_foo@tomplay" -> "step_foo"
                 clean_stage = stage_name.split("@")[0] if "@" in stage_name else stage_name
                 artifacts.append({
-                    "path": file_path,
+                    "path": norm_file_path,
                     "stage": clean_stage,
                     "artifact_type": artifact_type
                 })
-                seen_paths.add(file_path)
+                seen_paths.add(norm_file_path)
     
     return artifacts
 
-def _collect_paths(item, paths_set):
-    """Recursively collect all path strings from a metrics/plots declaration."""
-    if not item:
-        return
-    if isinstance(item, list):
-        for x in item:
-            _collect_paths(x, paths_set)
-    elif isinstance(item, dict):
-        for k in item.keys():
-            if isinstance(k, str):
-                paths_set.add(k)
-    elif isinstance(item, str):
-        paths_set.add(item)
-
-def _classify_artifact_type(file_path, path_info, pattern_info,
-                            declared_metrics_paths, declared_plots_paths):
-    """Determine if a file is a metric, plot, or not an artifact.
-    
-    Uses multiple strategies:
-    1. Exact match in path_info (non-foreach paths from dvc.yaml)
-    2. Regex match in pattern_info (foreach paths from dvc.yaml)  
-    3. Check if the path matches any declared metric/plot template after variable resolution
-    
-    Returns: "metric", "plot", or None
+def fetch_dvc_file_distributed(repo, rev, file_path, job_info=None):
     """
-    # Strategy 1: Exact match from dvc.yaml (non-foreach stages)
-    if file_path in path_info:
-        return path_info[file_path]["type"]
+    Fetch a DVC metadata file (dvc.yaml, dvc.lock, *.dvc) using distributed P2P resolution.
     
-    # Strategy 2: Regex pattern match (foreach stages)
-    for pat, stage_name, art_type in pattern_info:
-        if pat.match(file_path):
-            return art_type
+    Order of resolution:
+    1. Local job filesystem / git on headnode (if is_local=1 and local_repo_path exists).
+    2. Worker P2P HTTP API (if job ran on worker with online service_url).
+    3. Headnode Git clone in REPOS_DIR (with fetch using GITHUB_PAT).
+    4. Auto-clone into REPOS_DIR via find_local_repo if needed.
     
-    # Strategy 3: Check if file_path could match any declared template
-    # by checking if it matches after removing the variable part
-    for mp in declared_metrics_paths:
-        if "${" in mp:
-            # Build a simple prefix/suffix match
-            parts = mp.split("${")
-            prefix = parts[0]
-            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
-            if file_path.startswith(prefix) and file_path.endswith(suffix):
-                return "metric"
+    Returns: string content or None
+    """
+    norm_file_path = os.path.normpath(file_path).replace('\\', '/')
     
-    for pp in declared_plots_paths:
-        if "${" in pp:
-            parts = pp.split("${")
-            prefix = parts[0]
-            suffix = parts[-1].split("}")[-1] if "}" in parts[-1] else ""
-            if file_path.startswith(prefix) and file_path.endswith(suffix):
-                return "plot"
-    
+    # 1. Local job check
+    if job_info and job_info.get('is_local') == 1:
+        local_path = job_info.get('local_repo_path')
+        if local_path and os.path.exists(local_path):
+            app.logger.info(f"📁 [P2P Resolution] Reading {norm_file_path} directly from local_repo_path: {local_path}")
+            direct_file = os.path.join(local_path, norm_file_path)
+            if os.path.exists(direct_file) and os.path.isfile(direct_file):
+                try:
+                    with open(direct_file, 'r', encoding='utf-8') as f:
+                        return f.read()
+                except Exception as e:
+                    app.logger.warning(f"Failed to read local file {direct_file}: {e}")
+            if rev and os.path.exists(os.path.join(local_path, ".git")):
+                try:
+                    res = subprocess.run(
+                        ["git", "show", f"{rev}:{norm_file_path}"],
+                        cwd=local_path, capture_output=True, text=True, timeout=5
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        return res.stdout
+                except Exception as e:
+                    app.logger.warning(f"git show {rev}:{norm_file_path} failed in {local_path}: {e}")
+
+    # 2. Worker P2P HTTP API check
+    worker_url = None
+    if job_info and job_info.get('service_url') and job_info.get('worker_status') == 'online':
+        worker_url = job_info['service_url']
+    elif job_info and job_info.get('worker_id'):
+        try:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT service_url, status FROM workers WHERE worker_id = ?", (job_info['worker_id'],))
+                w_row = cursor.fetchone()
+                if w_row and w_row['status'] == 'online':
+                    worker_url = w_row['service_url']
+        except Exception as e:
+            app.logger.warning(f"Failed to query worker {job_info.get('worker_id')} status: {e}")
+
+    if not worker_url:
+        try:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT DISTINCT w.service_url
+                    FROM jobs j
+                    JOIN workers w ON j.worker_id = w.worker_id
+                    WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
+                    ORDER BY j.finished_at DESC LIMIT 1
+                ''', (repo,))
+                w_row = cursor.fetchone()
+                if w_row:
+                    worker_url = w_row['service_url']
+        except Exception as e:
+            app.logger.warning(f"Failed to find online worker for repo {repo}: {e}")
+
+    if worker_url:
+        rev_param = f"&rev={rev}" if rev else ""
+        url = f"{worker_url}/api/worker/dvc/get?repo={repo}{rev_param}&path={norm_file_path}"
+        app.logger.info(f"🌐 [P2P Resolution] Querying worker {worker_url} for {norm_file_path}@{rev or 'HEAD'}")
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and resp.text.strip():
+                return resp.text
+            else:
+                app.logger.info(f"Worker {worker_url} returned status {resp.status_code} for {norm_file_path}")
+        except Exception as e:
+            app.logger.warning(f"Worker {worker_url} P2P request failed for {norm_file_path}: {e}")
+
+    # 3. Headnode Git clone fallback (with auto-clone if needed)
+    local_repo_path = find_local_repo(repo)
+    if local_repo_path:
+        pat = os.environ.get("GITHUB_PAT") or os.environ.get("GH_TOKEN")
+        if pat:
+            new_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
+            try:
+                subprocess.run(["git", "remote", "set-url", "origin", new_url], cwd=local_repo_path, capture_output=True, timeout=5)
+            except Exception:
+                pass
+        try:
+            subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+        except Exception as e:
+            app.logger.warning(f"git fetch failed in {local_repo_path}: {e}")
+
+        refs_to_try = []
+        if rev:
+            refs_to_try.extend([rev, f"origin/{rev}"])
+        refs_to_try.extend(["origin/main", "HEAD"])
+
+        for ref in refs_to_try:
+            try:
+                res = subprocess.run(
+                    ["git", "show", f"{ref}:{norm_file_path}"],
+                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout
+            except Exception as e:
+                pass
+
+    return None
+
+def parse_dvc_metadata(yaml_content, target_path):
+    """Resilient DVC metadata parser for extracting md5 and size of target_path."""
+    if not yaml_content:
+        return None
+    norm_target_path = os.path.normpath(target_path).replace('\\', '/')
+    target_base = os.path.basename(norm_target_path)
+    try:
+        data = yaml.safe_load(yaml_content)
+        if isinstance(data, dict):
+            if 'outs' in data and isinstance(data['outs'], list):
+                for out in data['outs']:
+                    if isinstance(out, dict):
+                        p = os.path.normpath(out.get('path', '')).replace('\\', '/')
+                        if p == norm_target_path or os.path.basename(p) == target_base:
+                            return {'md5': out.get('md5'), 'size': out.get('size')}
+            if 'stages' in data and isinstance(data['stages'], dict):
+                for stage in data['stages'].values():
+                    if isinstance(stage, dict):
+                        for out_key in ('outs', 'metrics', 'plots'):
+                            outs = stage.get(out_key, [])
+                            if isinstance(outs, list):
+                                for out in outs:
+                                    if isinstance(out, dict):
+                                        p = os.path.normpath(out.get('path', '')).replace('\\', '/')
+                                        if p == norm_target_path or os.path.basename(p) == target_base:
+                                            return {'md5': out.get('md5'), 'size': out.get('size')}
+                                    elif isinstance(out, str):
+                                        p = os.path.normpath(out).replace('\\', '/')
+                                        if p == norm_target_path or os.path.basename(p) == target_base:
+                                            return {'md5': None, 'size': None}
+    except Exception as e:
+        app.logger.warning(f"Failed to parse DVC yaml content via yaml.safe_load: {e}")
+
+    # Regex/line fallback
+    blocks = []
+    current_block = {}
+    in_outs = False
+    for line in yaml_content.splitlines():
+        line_strip = line.strip()
+        if not line_strip:
+            continue
+        if line_strip.startswith('outs:') or line_strip.startswith('metrics:') or line_strip.startswith('plots:'):
+            in_outs = True
+            continue
+        elif in_outs and len(line) - len(line.lstrip()) == 0:
+            in_outs = False
+        if in_outs or 'outs' in line_strip or 'metrics' in line_strip or 'plots' in line_strip:
+            if line_strip.startswith('-') or line_strip.startswith('path:'):
+                if current_block and 'path' in current_block:
+                    blocks.append(current_block)
+                    current_block = {}
+            if ':' in line_strip:
+                parts = line_strip.split(':', 1)
+                key = parts[0].strip().replace('-', '').strip()
+                val = parts[1].strip().strip('"').strip("'")
+                if key in ['path', 'md5', 'size']:
+                    current_block[key] = val
+    if current_block and 'path' in current_block:
+        blocks.append(current_block)
+        
+    for b in blocks:
+        p = os.path.normpath(b.get('path', '')).replace('\\', '/')
+        if p == norm_target_path or os.path.basename(p) == target_base or norm_target_path.endswith('/' + p):
+            return {
+                'md5': b.get('md5'),
+                'size': int(b['size']) if b.get('size') and str(b['size']).isdigit() else None
+            }
     return None
 
 
@@ -2136,147 +2355,143 @@ def api_latest_artifacts(repo):
     branch_filter = request.args.get('branches', '').strip()
     selected_branches = [b.strip() for b in branch_filter.split(',') if b.strip()] if branch_filter else None
 
-    local_repo_path = find_local_repo(repo)
-    if not local_repo_path:
-        app.logger.warning(f"Local repo path not found for {repo}")
-        return jsonify([])
-
+    # Fetch latest job info per branch from DB
+    jobs_by_branch = {}
+    all_branches = set()
     try:
-        # 0. Ensure we have the latest state from remote
-        subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT j.job_id, j.branch, j.commit_hash, j.status, j.worker_id, j.is_local, j.local_repo_path, j.created_at, j.finished_at,
+                       w.service_url, w.status as worker_status
+                FROM jobs j
+                LEFT JOIN workers w ON j.worker_id = w.worker_id
+                WHERE j.repo = ?
+                ORDER BY j.created_at DESC
+            ''', (repo,))
+            for row in cursor.fetchall():
+                j = dict(row)
+                b = j.get('branch')
+                if b:
+                    all_branches.add(b)
+                    if b not in jobs_by_branch:
+                        jobs_by_branch[b] = j
+    except Exception as e:
+        app.logger.warning(f"Failed to fetch jobs for repo {repo}: {e}")
 
-        # 1. Determine which branches to scan
-        branches_to_scan = []
+    # Always include main/master
+    if 'main' not in all_branches:
+        all_branches.add('main')
+
+    branches_to_scan = sorted(list(all_branches))
+    if selected_branches:
+        branches_to_scan = [b for b in branches_to_scan if b in selected_branches]
+        if not branches_to_scan:
+            branches_to_scan = selected_branches
+
+    # Headnode local repo (if available, do git fetch to refresh refs and file dates)
+    local_repo_path = find_local_repo(repo)
+    if local_repo_path:
+        pat = os.environ.get("GITHUB_PAT") or os.environ.get("GH_TOKEN")
+        if pat:
+            new_url = f"https://x-access-token:{pat}@github.com/{repo}.git"
+            try:
+                subprocess.run(["git", "remote", "set-url", "origin", new_url], cwd=local_repo_path, capture_output=True, timeout=5)
+            except Exception:
+                pass
         try:
-            with get_db_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT DISTINCT branch
-                    FROM jobs
-                    WHERE repo = ? AND status IN ('completed', 'running', 'assigned', 'failed')
-                          AND branch IS NOT NULL
-                ''', (repo,))
-                db_branches = [row['branch'] for row in cursor.fetchall()]
-                branches_to_scan = db_branches
-        except Exception:
-            pass
+            subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+        except Exception as e:
+            app.logger.warning(f"git fetch failed in {local_repo_path}: {e}")
 
-        # Always include main/master as fallback
-        if 'main' not in branches_to_scan:
-            branches_to_scan.append('main')
+    best_artifacts = {}  # norm_path -> {artifact_data, date, branch}
 
-        # Apply branch filter if specified
-        if selected_branches:
-            branches_to_scan = [b for b in branches_to_scan if b in selected_branches]
-            if not branches_to_scan:
-                branches_to_scan = selected_branches  # Use directly if no DB match
+    for branch in branches_to_scan:
+        job_info = jobs_by_branch.get(branch)
+        rev = job_info.get('commit_hash') or branch if job_info else branch
 
-        # 2. For each branch, read dvc.lock from the latest Git HEAD (origin/<branch>)
-        #    This captures intermediate watchdog commits, not just the DB-recorded commit.
-        best_artifacts = {}  # path -> {artifact_data, date, branch}
+        # Distributed P2P retrieval of dvc.yaml and dvc.lock
+        dvc_yaml_str = fetch_dvc_file_distributed(repo, rev, "dvc.yaml", job_info)
+        dvc_lock_str = fetch_dvc_file_distributed(repo, rev, "dvc.lock", job_info)
 
-        for branch in branches_to_scan:
+        dvc_yaml_data = {}
+        if dvc_yaml_str:
+            try:
+                dvc_yaml_data = yaml.safe_load(dvc_yaml_str) or {}
+            except Exception as e:
+                app.logger.warning(f"Failed to parse dvc.yaml for {repo}@{branch}: {e}")
+
+        dvc_lock_data = {}
+        if dvc_lock_str:
+            try:
+                dvc_lock_data = yaml.safe_load(dvc_lock_str) or {}
+            except Exception as e:
+                app.logger.warning(f"Failed to parse dvc.lock for {repo}@{branch}: {e}")
+
+        if not dvc_yaml_data and not dvc_lock_data:
+            continue
+
+        artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
+        if not artifacts:
+            continue
+
+        branch_date = job_info.get('created_at') if job_info else None
+        file_dates = {}
+
+        if local_repo_path:
             ref = f"origin/{branch}"
-
-            # Verify the ref exists
             res_check = subprocess.run(
                 ["git", "rev-parse", "--verify", ref],
                 cwd=local_repo_path, capture_output=True, text=True, timeout=5
             )
-            if res_check.returncode != 0:
-                continue
-
-            # Read dvc.yaml at this ref (for artifact type classification)
-            dvc_yaml_data = {}
-            try:
-                res_yaml = subprocess.run(
-                    ["git", "show", f"{ref}:dvc.yaml"],
-                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
-                )
-                if res_yaml.returncode == 0 and res_yaml.stdout.strip():
-                    dvc_yaml_data = yaml.safe_load(res_yaml.stdout) or {}
-            except Exception:
-                pass
-
-            # Read dvc.lock at this ref (source of truth for resolved artifact paths)
-            dvc_lock_data = {}
-            try:
-                res_lock = subprocess.run(
-                    ["git", "show", f"{ref}:dvc.lock"],
-                    cwd=local_repo_path, capture_output=True, text=True, timeout=10
-                )
-                if res_lock.returncode == 0 and res_lock.stdout.strip():
-                    dvc_lock_data = yaml.safe_load(res_lock.stdout) or {}
-            except Exception:
-                pass
-
-            if not dvc_yaml_data and not dvc_lock_data:
-                continue
-
-            # Extract artifacts from this branch
-            artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
-            if not artifacts:
-                continue
-
-            # Get the date of the latest commit that touched dvc.lock on this branch
-            branch_date = None
-            try:
+            if res_check.returncode == 0:
                 res_date = subprocess.run(
                     ["git", "log", ref, "-1", "--format=%aI", "--", "dvc.lock"],
                     cwd=local_repo_path, capture_output=True, text=True, timeout=5
                 )
                 if res_date.returncode == 0 and res_date.stdout.strip():
                     branch_date = res_date.stdout.strip()
-            except Exception:
-                pass
 
-            # Get per-file last-modified dates for this branch
-            file_dates = {}
-            try:
                 res_all = subprocess.run(
                     ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
                     cwd=local_repo_path, capture_output=True, text=True, timeout=15
                 )
                 if res_all.returncode == 0:
-                    current_date = None
+                    curr_d = None
                     for line in res_all.stdout.splitlines():
                         line = line.strip()
                         if not line:
                             continue
                         if line.startswith("COMMIT_DATE:"):
-                            current_date = line[len("COMMIT_DATE:"):]
-                        elif current_date and line not in file_dates:
-                            file_dates[line] = current_date
-            except Exception:
-                pass
+                            curr_d = line[len("COMMIT_DATE:"):]
+                        elif curr_d:
+                            norm_l = os.path.normpath(line).replace('\\', '/')
+                            if norm_l not in file_dates:
+                                file_dates[norm_l] = curr_d
 
-            # For each artifact, keep the most recent version across branches
-            for artifact in artifacts:
-                path = artifact["path"]
-                artifact_date = file_dates.get(path, branch_date)
+        for artifact in artifacts:
+            norm_path = os.path.normpath(artifact["path"]).replace('\\', '/')
+            artifact_date = file_dates.get(norm_path, branch_date)
 
-                if path not in best_artifacts or (artifact_date and (
-                    not best_artifacts[path]["created_at"] or
-                    artifact_date > best_artifacts[path]["created_at"]
-                )):
-                    best_artifacts[path] = {
-                        "path": path,
-                        "is_dir": False,
-                        "size": 0,
-                        "isout": True,
-                        "created_at": artifact_date,
-                        "stage": artifact["stage"],
-                        "artifact_type": artifact["artifact_type"],
-                        "branch": branch
-                    }
+            if norm_path not in best_artifacts or (artifact_date and (
+                not best_artifacts[norm_path]["created_at"] or
+                artifact_date > best_artifacts[norm_path]["created_at"]
+            )):
+                best_artifacts[norm_path] = {
+                    "path": norm_path,
+                    "is_dir": False,
+                    "size": 0,
+                    "isout": True,
+                    "created_at": artifact_date,
+                    "stage": artifact["stage"],
+                    "artifact_type": artifact["artifact_type"],
+                    "branch": branch
+                }
 
-        files = list(best_artifacts.values())
-        print(f"[Artifacts] Returning {len(files)} artifacts for {repo} (scanned {len(branches_to_scan)} branches)", flush=True)
-        return jsonify(files)
+    files = list(best_artifacts.values())
+    app.logger.info(f"[Artifacts] Returning {len(files)} artifacts for {repo} (scanned {len(branches_to_scan)} branches)")
+    return jsonify(files)
 
-    except Exception as e:
-        app.logger.error(f"Error listing latest artifacts from local Git for {repo}: {e}")
-        return jsonify([])
 
 @app.route('/api/projects/<path:repo>/artifact/history', methods=['GET'])
 def api_artifact_history(repo):
@@ -2287,32 +2502,34 @@ def api_artifact_history(repo):
     if not file_path:
         return jsonify({"error": "Missing 'path' parameter"}), 400
 
-    local_repo_path = find_local_repo(repo)
-    if not local_repo_path:
-        return jsonify({"error": "Repository not cloned on headnode"}), 404
+    norm_file_path = os.path.normpath(file_path).replace('\\', '/')
 
-    # Fetch completed runs (all branches — cross-branch history)
+    # Fetch completed runs from DB with worker routing info
     runs = []
     try:
         with get_db_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT job_id, branch, commit_hash, created_at, status 
-                FROM jobs 
-                WHERE repo = ? AND status = 'completed' AND commit_hash IS NOT NULL
-                ORDER BY created_at DESC
+                SELECT j.job_id, j.branch, j.commit_hash, j.created_at, j.status,
+                       j.worker_id, j.is_local, j.local_repo_path,
+                       w.service_url, w.status as worker_status
+                FROM jobs j
+                LEFT JOIN workers w ON j.worker_id = w.worker_id
+                WHERE j.repo = ? AND j.status = 'completed' AND j.commit_hash IS NOT NULL
+                ORDER BY j.created_at DESC
             ''', (repo,))
             runs = [dict(row) for row in cursor.fetchall()]
-    except Exception:
-        pass
+    except Exception as e:
+        app.logger.warning(f"Failed to fetch completed runs for repo {repo}: {e}")
 
     if not runs:
         return jsonify([])
 
-    # Map commit titles
+    # Map commit titles if local repo available
+    local_repo_path = find_local_repo(repo)
     hashes = [run['commit_hash'] for run in runs if run.get('commit_hash')]
     title_map = {}
-    if hashes:
+    if local_repo_path and hashes:
         try:
             res = subprocess.run(
                 ["git", "--no-pager", "show", "-s", "--format=%H|%s"] + hashes,
@@ -2328,83 +2545,22 @@ def api_artifact_history(repo):
             pass
 
     history = []
-    
-    # Resilient line-by-line YAML parser
-    def parse_dvc_metadata(yaml_content, target_path):
-        try:
-            import yaml
-            data = yaml.safe_load(yaml_content)
-            if data:
-                if 'outs' in data:
-                    for out in data['outs']:
-                        if out.get('path') == os.path.basename(target_path) or out.get('path') == target_path:
-                            return {'md5': out.get('md5'), 'size': out.get('size')}
-                if 'stages' in data:
-                    for stage in data['stages'].values():
-                        if 'outs' in stage:
-                            for out in stage['outs']:
-                                if out.get('path') == target_path or out.get('path') == os.path.basename(target_path):
-                                    return {'md5': out.get('md5'), 'size': out.get('size')}
-        except Exception:
-            pass
-
-        # Regex/line fallback
-        blocks = []
-        current_block = {}
-        in_outs = False
-        for line in yaml_content.splitlines():
-            line_strip = line.strip()
-            if not line_strip:
-                continue
-            if line_strip.startswith('outs:'):
-                in_outs = True
-                continue
-            elif in_outs and len(line) - len(line.lstrip()) == 0:
-                in_outs = False
-            if in_outs or 'outs' in line_strip:
-                if line_strip.startswith('-') or line_strip.startswith('path:'):
-                    if current_block and 'path' in current_block:
-                        blocks.append(current_block)
-                        current_block = {}
-                if ':' in line_strip:
-                    parts = line_strip.split(':', 1)
-                    key = parts[0].strip().replace('-', '').strip()
-                    val = parts[1].strip().strip('"').strip("'")
-                    if key in ['path', 'md5', 'size']:
-                        current_block[key] = val
-        if current_block and 'path' in current_block:
-            blocks.append(current_block)
-            
-        for b in blocks:
-            p = b.get('path', '')
-            if p == target_path or p == os.path.basename(target_path) or target_path.endswith('/' + p):
-                return {
-                    'md5': b.get('md5'),
-                    'size': int(b['size']) if b.get('size') and b['size'].isdigit() else None
-                }
-        return None
 
     for run in runs:
         commit = run['commit_hash']
         metadata = None
-        
-        # Try direct .dvc file
-        dvc_file_path = file_path + ".dvc"
-        try:
-            res = subprocess.run(["git", "show", f"{commit}:{dvc_file_path}"], cwd=local_repo_path, capture_output=True, text=True)
-            if res.returncode == 0:
-                metadata = parse_dvc_metadata(res.stdout, file_path)
-        except Exception:
-            pass
 
-        # Try dvc.lock
+        # Try direct .dvc file via distributed P2P
+        dvc_file_path = norm_file_path + ".dvc"
+        dvc_file_content = fetch_dvc_file_distributed(repo, commit, dvc_file_path, run)
+        if dvc_file_content:
+            metadata = parse_dvc_metadata(dvc_file_content, norm_file_path)
+
+        # Try dvc.lock via distributed P2P
         if not metadata:
-            try:
-                res = subprocess.run(["git", "show", f"{commit}:dvc.lock"], cwd=local_repo_path, capture_output=True, text=True)
-                if res.returncode == 0:
-                    metadata = parse_dvc_metadata(res.stdout, file_path)
-            except Exception:
-                pass
+            dvc_lock_content = fetch_dvc_file_distributed(repo, commit, "dvc.lock", run)
+            if dvc_lock_content:
+                metadata = parse_dvc_metadata(dvc_lock_content, norm_file_path)
 
         if metadata and metadata.get('md5'):
             history.append({
