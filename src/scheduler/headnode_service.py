@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import threading
+import concurrent.futures
 import re
 import json
 import yaml
@@ -2378,13 +2379,134 @@ def api_project_branches(repo):
     return jsonify(branches)
 
 
+# Caching Thread-Safe & Rate Limiting for Artifacts
+commit_artifacts_cache = {}
+commit_artifacts_lock = threading.Lock()
+MAX_COMMIT_CACHE_SIZE = 500
+
+latest_artifacts_cache = {}
+latest_artifacts_lock = threading.Lock()
+LATEST_ARTIFACTS_TTL = 15.0
+
+last_git_fetch_time = {}
+git_fetch_lock = threading.Lock()
+GIT_FETCH_MIN_INTERVAL = 60.0
+
+
+def _extract_branch_artifacts(branch, job_info, repo, local_repo_path):
+    """
+    Extract artifacts for a single branch, using commit-level caching if rev is an immutable SHA.
+    """
+    rev = (job_info.get('commit_hash') if job_info else None) or branch
+    is_sha = bool((job_info and job_info.get('commit_hash') and job_info.get('commit_hash') == rev) or (rev and re.fullmatch(r'[0-9a-fA-F]{40}', rev)))
+    cache_key = f"{repo}::{rev}"
+
+    if is_sha:
+        with commit_artifacts_lock:
+            if cache_key in commit_artifacts_cache:
+                cached_artifacts, cached_date = commit_artifacts_cache[cache_key]
+                res = []
+                for art in cached_artifacts:
+                    norm_p = os.path.normpath(art["path"]).replace('\\', '/')
+                    res.append({
+                        "path": norm_p,
+                        "is_dir": False,
+                        "size": 0,
+                        "isout": True,
+                        "created_at": cached_date,
+                        "stage": art["stage"],
+                        "artifact_type": art["artifact_type"],
+                        "branch": branch
+                    })
+                return res
+
+    # Distributed P2P retrieval of dvc.yaml and dvc.lock
+    dvc_yaml_str = fetch_dvc_file_distributed(repo, rev, "dvc.yaml", job_info)
+    dvc_lock_str = fetch_dvc_file_distributed(repo, rev, "dvc.lock", job_info)
+
+    dvc_yaml_data = {}
+    if dvc_yaml_str:
+        try:
+            dvc_yaml_data = yaml.safe_load(dvc_yaml_str) or {}
+        except Exception as e:
+            app.logger.warning(f"Failed to parse dvc.yaml for {repo}@{branch}: {e}")
+
+    dvc_lock_data = {}
+    if dvc_lock_str:
+        try:
+            dvc_lock_data = yaml.safe_load(dvc_lock_str) or {}
+        except Exception as e:
+            app.logger.warning(f"Failed to parse dvc.lock for {repo}@{branch}: {e}")
+
+    if not dvc_yaml_data and not dvc_lock_data:
+        return []
+
+    artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
+    if not artifacts:
+        return []
+
+    branch_date = job_info.get('created_at') if job_info else None
+    if local_repo_path:
+        ref = f"origin/{branch}"
+        res_check = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=local_repo_path, capture_output=True, text=True, timeout=5
+        )
+        if res_check.returncode == 0:
+            res_date = subprocess.run(
+                ["git", "log", ref, "-1", "--format=%aI", "--", "dvc.lock"],
+                cwd=local_repo_path, capture_output=True, text=True, timeout=5
+            )
+            if res_date.returncode == 0 and res_date.stdout.strip():
+                branch_date = res_date.stdout.strip()
+
+    if is_sha:
+        with commit_artifacts_lock:
+            if len(commit_artifacts_cache) >= MAX_COMMIT_CACHE_SIZE:
+                first_key = next(iter(commit_artifacts_cache))
+                commit_artifacts_cache.pop(first_key, None)
+            commit_artifacts_cache[cache_key] = (artifacts, branch_date)
+
+    branch_artifacts = []
+    for artifact in artifacts:
+        norm_path = os.path.normpath(artifact["path"]).replace('\\', '/')
+        branch_artifacts.append({
+            "path": norm_path,
+            "is_dir": False,
+            "size": 0,
+            "isout": True,
+            "created_at": branch_date,
+            "stage": artifact["stage"],
+            "artifact_type": artifact["artifact_type"],
+            "branch": branch
+        })
+
+    return branch_artifacts
+
+
 @app.route('/api/projects/<path:repo>/artifacts/latest', methods=['GET'])
 def api_latest_artifacts(repo):
     if 'user' not in session:
         return jsonify({"error": "Unauthorized"}), 401
 
+    is_force = request.args.get('force', '').lower() in ['true', '1'] or request.args.get('refresh', '').lower() in ['true', '1']
+
     # Optional branch filter from query param (comma-separated)
     branch_filter = request.args.get('branches', '').strip()
+    cache_key = f"{repo}::{branch_filter}"
+
+    if not is_force:
+        now = time.time()
+        with latest_artifacts_lock:
+            if cache_key in latest_artifacts_cache:
+                cached_time, cached_data = latest_artifacts_cache[cache_key]
+                if now - cached_time < LATEST_ARTIFACTS_TTL:
+                    app.logger.info(f"[Artifacts] Returning {len(cached_data)} cached artifacts for {repo} (cache hit)")
+                    return jsonify(cached_data)
+    else:
+        with latest_artifacts_lock:
+            latest_artifacts_cache.pop(cache_key, None)
+
     selected_branches = [b.strip() for b in branch_filter.split(',') if b.strip()] if branch_filter else None
 
     # Fetch latest job info per branch from DB
@@ -2421,7 +2543,7 @@ def api_latest_artifacts(repo):
         if not branches_to_scan:
             branches_to_scan = selected_branches
 
-    # Headnode local repo (if available, do git fetch to refresh refs and file dates)
+    # Headnode local repo (if available, do rate-limited git fetch to refresh refs and file dates)
     local_repo_path = find_local_repo(repo)
     if local_repo_path:
         pat = os.environ.get("GITHUB_PAT") or os.environ.get("GH_TOKEN")
@@ -2431,96 +2553,57 @@ def api_latest_artifacts(repo):
                 subprocess.run(["git", "remote", "set-url", "origin", new_url], cwd=local_repo_path, capture_output=True, timeout=5)
             except Exception:
                 pass
-        try:
-            subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
-        except Exception as e:
-            app.logger.warning(f"git fetch failed in {local_repo_path}: {e}")
 
-    best_artifacts = {}  # norm_path -> {artifact_data, date, branch}
+        should_fetch = is_force
+        if not should_fetch:
+            now = time.time()
+            with git_fetch_lock:
+                last_fetch = last_git_fetch_time.get(repo, 0)
+                if now - last_fetch >= GIT_FETCH_MIN_INTERVAL:
+                    should_fetch = True
 
-    for branch in branches_to_scan:
-        job_info = jobs_by_branch.get(branch)
-        rev = job_info.get('commit_hash') or branch if job_info else branch
-
-        # Distributed P2P retrieval of dvc.yaml and dvc.lock
-        dvc_yaml_str = fetch_dvc_file_distributed(repo, rev, "dvc.yaml", job_info)
-        dvc_lock_str = fetch_dvc_file_distributed(repo, rev, "dvc.lock", job_info)
-
-        dvc_yaml_data = {}
-        if dvc_yaml_str:
+        if should_fetch:
             try:
-                dvc_yaml_data = yaml.safe_load(dvc_yaml_str) or {}
+                subprocess.run(["git", "fetch", "--all", "--prune"], cwd=local_repo_path, capture_output=True, timeout=15)
+                with git_fetch_lock:
+                    last_git_fetch_time[repo] = time.time()
             except Exception as e:
-                app.logger.warning(f"Failed to parse dvc.yaml for {repo}@{branch}: {e}")
+                app.logger.warning(f"git fetch failed in {local_repo_path}: {e}")
 
-        dvc_lock_data = {}
-        if dvc_lock_str:
+    # Parallel multi-branch extraction
+    branch_results = []
+    max_workers = min(8, len(branches_to_scan) or 1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_branch = {
+            executor.submit(_extract_branch_artifacts, branch, jobs_by_branch.get(branch), repo, local_repo_path): branch
+            for branch in branches_to_scan
+        }
+        for future in concurrent.futures.as_completed(future_to_branch):
+            branch = future_to_branch[future]
             try:
-                dvc_lock_data = yaml.safe_load(dvc_lock_str) or {}
+                b_artifacts = future.result()
+                if b_artifacts:
+                    branch_results.extend(b_artifacts)
             except Exception as e:
-                app.logger.warning(f"Failed to parse dvc.lock for {repo}@{branch}: {e}")
+                app.logger.warning(f"Failed to extract artifacts for branch {branch}: {e}")
 
-        if not dvc_yaml_data and not dvc_lock_data:
-            continue
+    best_artifacts = {}  # norm_path -> artifact_dict
+    for item in branch_results:
+        norm_path = item["path"]
+        artifact_date = item.get("created_at")
 
-        artifacts = extract_artifacts_from_lock(dvc_lock_data, dvc_yaml_data)
-        if not artifacts:
-            continue
-
-        branch_date = job_info.get('created_at') if job_info else None
-        file_dates = {}
-
-        if local_repo_path:
-            ref = f"origin/{branch}"
-            res_check = subprocess.run(
-                ["git", "rev-parse", "--verify", ref],
-                cwd=local_repo_path, capture_output=True, text=True, timeout=5
-            )
-            if res_check.returncode == 0:
-                res_date = subprocess.run(
-                    ["git", "log", ref, "-1", "--format=%aI", "--", "dvc.lock"],
-                    cwd=local_repo_path, capture_output=True, text=True, timeout=5
-                )
-                if res_date.returncode == 0 and res_date.stdout.strip():
-                    branch_date = res_date.stdout.strip()
-
-                res_all = subprocess.run(
-                    ["git", "log", ref, "--format=COMMIT_DATE:%aI", "--name-only", "--diff-filter=ACMR", "--"],
-                    cwd=local_repo_path, capture_output=True, text=True, timeout=15
-                )
-                if res_all.returncode == 0:
-                    curr_d = None
-                    for line in res_all.stdout.splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if line.startswith("COMMIT_DATE:"):
-                            curr_d = line[len("COMMIT_DATE:"):]
-                        elif curr_d:
-                            norm_l = os.path.normpath(line).replace('\\', '/')
-                            if norm_l not in file_dates:
-                                file_dates[norm_l] = curr_d
-
-        for artifact in artifacts:
-            norm_path = os.path.normpath(artifact["path"]).replace('\\', '/')
-            artifact_date = file_dates.get(norm_path, branch_date)
-
-            if norm_path not in best_artifacts or (artifact_date and (
-                not best_artifacts[norm_path]["created_at"] or
-                artifact_date > best_artifacts[norm_path]["created_at"]
-            )):
-                best_artifacts[norm_path] = {
-                    "path": norm_path,
-                    "is_dir": False,
-                    "size": 0,
-                    "isout": True,
-                    "created_at": artifact_date,
-                    "stage": artifact["stage"],
-                    "artifact_type": artifact["artifact_type"],
-                    "branch": branch
-                }
+        if norm_path not in best_artifacts or (artifact_date and (
+            not best_artifacts[norm_path]["created_at"] or
+            artifact_date > best_artifacts[norm_path]["created_at"]
+        )):
+            best_artifacts[norm_path] = item
 
     files = list(best_artifacts.values())
+
+    # Cache latest artifacts response
+    with latest_artifacts_lock:
+        latest_artifacts_cache[cache_key] = (time.time(), files)
+
     app.logger.info(f"[Artifacts] Returning {len(files)} artifacts for {repo} (scanned {len(branches_to_scan)} branches)")
     return jsonify(files)
 

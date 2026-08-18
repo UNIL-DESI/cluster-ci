@@ -979,6 +979,9 @@
         .fade-refresh {
             animation: fadeSlideIn 0.3s ease;
         }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .spin-icon { display: inline-block; animation: spin 1s linear infinite; }
     </style>
 </head>
 <body class="bg-light">
@@ -1103,6 +1106,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Global navigation sequence & abort controller for project isolation
+        let navigationSeq = 0;
+        let projectAbortController = null;
+
         // ===== Theme Switcher Logic =====
         function updateThemeIcon(theme) {
             const icon = document.getElementById('theme-toggle-icon');
@@ -1688,6 +1695,11 @@
         }
 
         async function loadProjects() {
+            if (projectAbortController) {
+                projectAbortController.abort();
+                projectAbortController = null;
+            }
+            navigationSeq++;
             currentState = { view: 'root', repo: null, jobId: null };
             updateBreadcrumb();
             container.innerHTML = '<div class="col-12 text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
@@ -1929,6 +1941,17 @@
         }
 
         async function loadRuns(repo) {
+            if (projectAbortController) projectAbortController.abort();
+            projectAbortController = new AbortController();
+            const currentSeq = ++navigationSeq;
+
+            window.allRuns = [];
+            window._artifactFiles = [];
+            window._selectedBranch = null;
+            window.latestCommitHash = 'main';
+            window._availableBranches = [];
+            window._activeStageFilters = new Set();
+
             currentState = { view: 'project', repo: repo, jobId: null };
             updateBreadcrumb();
             
@@ -1968,6 +1991,14 @@
                                             <i class="bi bi-folder2-open text-primary"></i> Explorateur d'Artefacts Actuels
                                         </h5>
                                         <div class="d-flex align-items-center gap-2">
+                                            <button class="btn btn-sm btn-outline-secondary rounded-pill d-flex align-items-center gap-1" 
+                                                    type="button" id="artifact-refresh-btn" 
+                                                    onclick="refreshProjectArtifacts()" 
+                                                    title="Forcer la ré-extraction et vider le cache pour ce projet" 
+                                                    style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
+                                                <i class="bi bi-arrow-clockwise" id="artifact-refresh-icon"></i>
+                                                <span id="artifact-refresh-label">Actualiser</span>
+                                            </button>
                                             <div class="dropdown">
                                                 <button class="btn btn-sm btn-outline-primary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-branch-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
                                                     <i class="bi bi-diagram-2"></i> Toutes les branches
@@ -2033,18 +2064,20 @@
                 });
             }
             // Preload artifacts in background so they're ready when user clicks the tab
-            loadProjectArtifacts(repo);
+            loadProjectArtifacts(repo, false, projectAbortController.signal);
 
             const runsList = document.getElementById('runs-list');
 
             try {
-                const resp = await fetch(`/api/projects/${repo}/runs`);
+                const resp = await fetch(`/api/projects/${repo}/runs`, { signal: projectAbortController.signal });
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 if (!resp.ok) {
                     const contentType = resp.headers.get('content-type');
                     let error = 'Internal Server Error'; try { if (contentType && contentType.includes('application/json')) { const data = await resp.json(); error = data.error || data.message || error; } else { error = 'Server returned ' + resp.status + ' (' + resp.statusText + ')'; } } catch(e) { console.error('Error parsing failure response:', e); error = 'Parse Error: ' + e.message; }
                     throw new Error(error || 'Failed to load runs');
                 }
                 const runs = await resp.json();
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 window.allRuns = runs;
 
                 if (runs.length === 0) {
@@ -2158,12 +2191,35 @@
                     runsList.appendChild(col);
                 });
             } catch (err) {
+                if (err.name === 'AbortError') return;
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 runsList.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error loading runs: ${err.message}</div></div>`;
             }
         }
 
-        async function loadProjectArtifacts(repo) {
+        async function refreshProjectArtifacts() {
+            const btn = document.getElementById('artifact-refresh-btn');
+            const icon = document.getElementById('artifact-refresh-icon');
+            const label = document.getElementById('artifact-refresh-label');
+            if (icon) icon.classList.add('spin-icon');
+            if (label) label.textContent = 'Actualisation...';
+            if (btn) btn.disabled = true;
+
+            try {
+                if (currentState.repo) {
+                    await loadProjectArtifacts(currentState.repo, true);
+                }
+            } finally {
+                if (icon) icon.classList.remove('spin-icon');
+                if (label) label.textContent = 'Actualiser';
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function loadProjectArtifacts(repo, isForce = false, signal = null) {
+            const currentSeq = navigationSeq;
             const container = document.getElementById('artifacts-tree-container');
+            if (!container) return;
             container.innerHTML = `
                 <div class="text-center py-5">
                     <div class="spinner-border text-primary" role="status"></div>
@@ -2171,20 +2227,33 @@
                 </div>
             `;
 
+            const effectiveSignal = signal || (projectAbortController ? projectAbortController.signal : null);
+
             // Load available branches for the selector (non-blocking)
-            loadBranches(repo);
+            loadBranches(repo, effectiveSignal);
 
             try {
-                // Build URL with optional branch filter
+                // Build URL with optional branch filter and force refresh parameter
                 let url = `/api/projects/${repo}/artifacts/latest`;
+                const params = new URLSearchParams();
                 if (window._selectedBranch) {
-                    url += `?branches=${encodeURIComponent(window._selectedBranch)}`;
+                    params.append('branches', window._selectedBranch);
                 }
-                const resp = await fetch(url);
+                if (isForce) {
+                    params.append('force', 'true');
+                }
+                const queryString = params.toString();
+                if (queryString) {
+                    url += `?${queryString}`;
+                }
+
+                const resp = await fetch(url, effectiveSignal ? { signal: effectiveSignal } : undefined);
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 if (!resp.ok) {
                     throw new Error('Impossible de charger les fichiers DVC les plus récents.');
                 }
                 const files = await resp.json();
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 
                 if (!files || files.length === 0) {
                     container.innerHTML = `
@@ -2229,9 +2298,11 @@
                 window._artifactFiles = files;
                 window._artifactSortMode = window._artifactSortMode || 'tree';
 
-                renderArtifactView(files, window._artifactSortMode);
+                renderArtifactView(files, window._artifactSortMode, repo, latestCommitHash);
 
             } catch (err) {
+                if (err.name === 'AbortError') return;
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 container.innerHTML = `
                     <div class="alert alert-danger d-flex align-items-center gap-2">
                         <i class="bi bi-exclamation-triangle-fill"></i>
@@ -2245,11 +2316,14 @@
         window._selectedBranch = null;
         window._availableBranches = [];
 
-        async function loadBranches(repo) {
+        async function loadBranches(repo, signal = null) {
+            const currentSeq = navigationSeq;
             try {
-                const resp = await fetch(`/api/projects/${repo}/branches`);
+                const resp = await fetch(`/api/projects/${repo}/branches`, signal ? { signal } : undefined);
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 if (!resp.ok) return;
                 const branches = await resp.json();
+                if (currentSeq !== navigationSeq || currentState.repo !== repo) return;
                 window._availableBranches = branches;
 
                 const menu = document.getElementById('branch-dropdown-menu');
@@ -2270,6 +2344,7 @@
 
                 menu.innerHTML = html;
             } catch (e) {
+                if (e.name === 'AbortError') return;
                 console.error('Failed to load branches:', e);
             }
         }
@@ -2314,11 +2389,15 @@
             return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};border:1px solid var(--border-color);" title="Branche: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
         }
 
-        function renderArtifactView(files, mode) {
+        function renderArtifactView(files, mode, repo = null, commitHash = null) {
             const container = document.getElementById('artifacts-tree-container');
+            if (!container) return;
+            const targetRepo = repo || (currentState && currentState.repo) || '';
+            const rev = commitHash || window.latestCommitHash || (currentState && currentState.commitHash) || 'main';
+
             if (!mode || mode === 'tree') {
                 const treeRoot = buildTreeFromPaths(files);
-                container.innerHTML = renderTreeNode(treeRoot);
+                container.innerHTML = renderTreeNode(treeRoot, 0, targetRepo, rev);
                 return;
             }
 
@@ -2333,8 +2412,7 @@
                 case 'date-asc':  sorted.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || '')); break;
             }
 
-            const [owner, name] = currentState.repo.split('/');
-            const rev = window.latestCommitHash || 'main';
+            const [owner, name] = targetRepo.split('/');
 
             container.innerHTML = sorted.map(f => {
                 const fileName = f.path.split('/').pop();
@@ -2370,7 +2448,7 @@
         function sortArtifacts(mode) {
             window._artifactSortMode = mode;
             if (window._artifactFiles) {
-                renderArtifactView(window._artifactFiles, mode);
+                renderArtifactView(window._artifactFiles, mode, currentState.repo, window.latestCommitHash);
                 // Update button label
                 const labels = {'path-asc':'Path A→Z','path-desc':'Path Z→A','name-asc':'Nom A→Z','name-desc':'Nom Z→A','date-desc':'Récent','date-asc':'Ancien'};
                 const btn = document.getElementById('artifact-sort-btn');
@@ -2420,7 +2498,10 @@
             return root;
         }
 
-        function renderTreeNode(node, depth = 0) {
+        function renderTreeNode(node, depth = 0, repo = null, commitHash = null) {
+            const targetRepo = repo || (currentState && currentState.repo) || '';
+            const rev = commitHash || window.latestCommitHash || (currentState && currentState.commitHash) || 'main';
+
             if (!node.isDir) {
                 const ext = node.name.split('.').pop().toLowerCase();
                 let icon = 'bi-file-earmark-text';
@@ -2429,8 +2510,7 @@
                 else if (['json', 'yaml', 'yml'].includes(ext)) icon = 'bi-file-earmark-code';
 
                 const sizeStr = node.size ? formatBytes(node.size) : (node.createdAt ? new Date(node.createdAt).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—');
-                const [owner, name] = currentState.repo.split('/');
-                const rev = window.latestCommitHash || 'main';
+                const [owner, name] = targetRepo.split('/');
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;
 
                 const stageBadge = node.stage ? `<span class="badge rounded-pill ms-2" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: ${node.artifactType === 'metric' ? 'var(--primary-light)' : node.artifactType === 'plot' ? 'var(--success-light)' : 'var(--bg-subtle)'}; color: ${node.artifactType === 'metric' ? 'var(--primary)' : node.artifactType === 'plot' ? 'var(--success)' : 'var(--text-secondary)'}; border: 1px solid var(--border-color);">${escapeHtml(node.stage)}</span>` : '';
@@ -2459,7 +2539,7 @@
                     if (!a.isDir && b.isDir) return 1;
                     return a.name.localeCompare(b.name);
                 })
-                .map(child => renderTreeNode(child, depth + 1))
+                .map(child => renderTreeNode(child, depth + 1, targetRepo, rev))
                 .join('');
 
             if (node.name === 'Root') {
