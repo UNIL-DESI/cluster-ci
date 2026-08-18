@@ -1249,7 +1249,7 @@
                 container.innerHTML = data.configs.map((cfg, idx) => {
                     const fileName = cfg.path.split('/').pop();
                     const folderPath = cfg.path.includes('/') ? cfg.path.substring(0, cfg.path.lastIndexOf('/')) : '';
-                    const stagesBadges = cfg.stages.map(s => `<span class="badge bg-primary bg-opacity-10 text-primary rounded-pill" style="font-size: 0.7rem; font-weight: 500;">${escapeHtml(s)}</span>`).join(' ');
+                    const stagesBadges = cfg.stages.map(s => `<span class="badge rounded-pill" style="font-size: 0.7rem; font-weight: 500; padding: 2px 8px; background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border);">${escapeHtml(s)}</span>`).join(' ');
 
                     return `
                         <div class="card border mb-2" style="background: var(--bg-card); border-color: var(--border-color) !important;">
