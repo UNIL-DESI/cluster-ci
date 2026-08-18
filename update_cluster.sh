@@ -135,7 +135,7 @@ sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@
 
 # Force-update dvc-viewer on the headnode globally
 echo "👁️ Updating dvc-viewer on headnode..."
-sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export PATH=\"/home/$HEADNODE_USER/.local/bin:/home/$HEADNODE_USER/.cargo/bin:\$PATH\"; uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git >/dev/null 2>&1 || true"
+sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export PATH=\"/home/$HEADNODE_USER/.local/bin:/home/$HEADNODE_USER/.cargo/bin:/usr/local/bin:/usr/bin:/bin\"; uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git >/dev/null 2>&1 || true"
 
 # Restart worker service on headnode if installed (dual-mode)
 echo "🔄 Checking for worker service on headnode..."
