@@ -135,11 +135,12 @@ sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@
 
 # Force-update dvc-viewer on the headnode globally
 echo "👁️ Updating dvc-viewer on headnode..."
-sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export PATH=\"/home/$HEADNODE_USER/.local/bin:/home/$HEADNODE_USER/.cargo/bin:/usr/local/bin:/usr/bin:/bin\"; uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git >/dev/null 2>&1 || true"
+sleep 2
+sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "export PATH=\"/home/$HEADNODE_USER/.local/bin:/home/$HEADNODE_USER/.cargo/bin:/usr/local/bin:/usr/bin:/bin\"; uv tool upgrade dvc-viewer >/dev/null 2>&1 || uv tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git >/dev/null 2>&1 || true" || true
 
 # Restart worker service on headnode if installed (dual-mode)
 echo "🔄 Checking for worker service on headnode..."
-sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "if systemctl is-enabled cluster-worker 2>/dev/null | grep -q enabled; then echo '🔄 Restarting worker service on headnode...'; sudo systemctl restart cluster-worker; echo '✅ Worker service restarted.'; else echo 'ℹ️ No worker service on headnode (headnode-only mode).'; fi"
+sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$HEADNODE_USER@$HEADNODE_IP" "if systemctl is-enabled cluster-worker 2>/dev/null | grep -q enabled; then echo '🔄 Restarting worker service on headnode...'; sudo systemctl restart cluster-worker; echo '✅ Worker service restarted.'; else echo 'ℹ️ No worker service on headnode (headnode-only mode).'; fi" || true
 
 # Retrieve CLUSTER_TOKEN from headnode for local tests
 echo "🔑 Retrieving security Token from headnode..."
