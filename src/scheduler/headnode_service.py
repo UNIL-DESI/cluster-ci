@@ -1574,14 +1574,14 @@ def cleanup_inactive_viewers():
         # 2. Cleanup remote viewers (local metadata registry only, process self-destructs on worker)
         to_delete_remote = []
         with remote_viewers_lock:
-            for repo_name, viewer in remote_viewers.items():
+            for repo_name, viewer in list(remote_viewers.items()):
                 # 45 seconds timeout is very safe since worker dvc-viewer self-destructs in 15 seconds of inactivity.
-                if now - viewer['last_access'] > 45:
-                    print(f"Removing inactive remote dvc-viewer registry entry for {repo_name} (worker {viewer['worker_url']}, port {viewer['port']})")
+                if now - viewer.get('last_access', 0) > 45:
+                    print(f"Removing inactive remote dvc-viewer registry entry for {repo_name} (worker {viewer.get('worker_url')}, port {viewer.get('port')})")
                     to_delete_remote.append(repo_name)
                     
             for repo_name in to_delete_remote:
-                del remote_viewers[repo_name]
+                remote_viewers.pop(repo_name, None)
 
 def periodic_clean_ghosts():
     """Background task to periodically clean ghost jobs."""
@@ -1721,69 +1721,95 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
     # When no rev is specified, the worker will fetch latest and use origin/main.
     # This ensures we always show the latest state, not a stale job commit.
 
+    cached_viewer = None
     with remote_viewers_lock:
         if repo_full_name in remote_viewers:
             viewer = remote_viewers[repo_full_name]
             if viewer.get('rev') == rev:
                 viewer['last_access'] = time.time()
-                parsed = urlparse(viewer['worker_url'])
-                target_host = parsed.hostname
-                target_url = f"http://{target_host}:{viewer['port']}/{path}"
-                base_href = f"/view/{owner}/{repo}/" if path == '' else None
-                
-                res = proxy_request(target_url, base_href=base_href)
-                if isinstance(res, tuple) and len(res) == 2 and res[1] == 502:
-                    app.logger.warning(f"Remote viewer for {repo_full_name} on {viewer['worker_url']} is unreachable. Will recreate.")
-                else:
-                    return res
+                cached_viewer = dict(viewer)
+            else:
+                remote_viewers.pop(repo_full_name, None)
 
-            if repo_full_name in remote_viewers:
-                del remote_viewers[repo_full_name]
+    if cached_viewer:
+        parsed = urlparse(cached_viewer['worker_url'])
+        target_host = parsed.hostname
+        target_url = f"http://{target_host}:{cached_viewer['port']}/{path}"
+        base_href = f"/view/{owner}/{repo}/" if path == '' else None
+        
+        res = proxy_request(target_url, base_href=base_href)
+        is_error = False
+        if isinstance(res, tuple) and len(res) == 2 and res[1] == 502:
+            is_error = True
+        elif isinstance(res, Response) and res.status_code == 502:
+            is_error = True
 
-        # Smart worker selection based on cache locality
-        with get_db_conn() as conn:
-            cursor = conn.cursor()
-            # 1. Try to find the last online worker that ran a job for this repo
+        if is_error:
+            app.logger.warning(f"Remote viewer for {repo_full_name} on {cached_viewer['worker_url']} is unreachable. Purging entry and recreating.")
+            with remote_viewers_lock:
+                remote_viewers.pop(repo_full_name, None)
+        else:
+            return res
+
+    # Smart worker selection based on cache locality
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        # 1. Try to find the last online worker that ran a job for this repo
+        cursor.execute('''
+            SELECT w.worker_id, w.service_url
+            FROM jobs j
+            JOIN workers w ON j.worker_id = w.worker_id
+            WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
+            ORDER BY j.finished_at DESC LIMIT 1
+        ''', (repo_full_name,))
+        worker = cursor.fetchone()
+
+        # 2. Otherwise, fall back to any online worker
+        if not worker:
             cursor.execute('''
-                SELECT w.worker_id, w.service_url
-                FROM jobs j
-                JOIN workers w ON j.worker_id = w.worker_id
-                WHERE j.repo = ? AND w.status = 'online' AND w.service_url IS NOT NULL
-                ORDER BY j.finished_at DESC LIMIT 1
-            ''', (repo_full_name,))
+                SELECT worker_id, service_url
+                FROM workers
+                WHERE status = 'online' AND service_url IS NOT NULL
+                LIMIT 1
+            ''')
             worker = cursor.fetchone()
 
-            # 2. Otherwise, fall back to any online worker
-            if not worker:
-                cursor.execute('''
-                    SELECT worker_id, service_url
-                    FROM workers
-                    WHERE status = 'online' AND service_url IS NOT NULL
-                    LIMIT 1
-                ''')
-                worker = cursor.fetchone()
+    if not worker:
+        return "No online worker available to host the historical visualizer. Please start a worker first.", 503
 
-        if not worker:
-            return "No online worker available to host the historical visualizer. Please start a worker first.", 503
+    worker_id = worker['worker_id']
+    worker_url = worker['service_url']
 
-        worker_id = worker['worker_id']
-        worker_url = worker['service_url']
+    app.logger.info(f"Requesting worker {worker_url} to start historical dvc-viewer for {repo_full_name} at revision {rev}")
+    try:
+        resp = requests.post(
+            f"{worker_url}/api/worker/dvc-viewer/start",
+            json={"repo": repo_full_name, "rev": rev},
+            timeout=60
+        )
+        if resp.status_code != 200:
+            with remote_viewers_lock:
+                remote_viewers.pop(repo_full_name, None)
+            err_detail = ""
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, dict) and "error" in err_json:
+                    err_detail = err_json["error"]
+                else:
+                    err_detail = resp.text
+            except Exception:
+                err_detail = resp.text
+            app.logger.error(f"Failed to start historical dvc-viewer on worker {worker_url} (HTTP {resp.status_code}): {err_detail}")
+            return f"Failed to start historical dvc-viewer on worker: {err_detail}", 502
+        
+        data_resp = resp.json()
+        port = data_resp.get('port')
+        if not port:
+            with remote_viewers_lock:
+                remote_viewers.pop(repo_full_name, None)
+            return "Failed to start historical dvc-viewer: worker did not return an access port", 502
 
-        app.logger.info(f"Requesting worker {worker_url} to start historical dvc-viewer for {repo_full_name} at revision {rev}")
-        try:
-            resp = requests.post(
-                f"{worker_url}/api/worker/dvc-viewer/start",
-                json={"repo": repo_full_name, "rev": rev},
-                timeout=60
-            )
-            if resp.status_code != 200:
-                return f"Failed to start historical dvc-viewer on worker: {resp.text}", 502
-            
-            data_resp = resp.json()
-            port = data_resp.get('port')
-            if not port:
-                return "Failed to start historical dvc-viewer: worker did not return an access port", 500
-
+        with remote_viewers_lock:
             remote_viewers[repo_full_name] = {
                 'worker_id': worker_id,
                 'worker_url': worker_url,
@@ -1792,15 +1818,21 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
                 'rev': rev
             }
 
-            parsed = urlparse(worker_url)
-            target_host = parsed.hostname
-            target_url = f"http://{target_host}:{port}/{path}"
-            base_href = f"/view/{owner}/{repo}/" if path == '' else None
-            return proxy_request(target_url, base_href=base_href)
+        parsed = urlparse(worker_url)
+        target_host = parsed.hostname
+        target_url = f"http://{target_host}:{port}/{path}"
+        base_href = f"/view/{owner}/{repo}/" if path == '' else None
+        res = proxy_request(target_url, base_href=base_href)
+        if (isinstance(res, tuple) and len(res) == 2 and res[1] == 502) or (isinstance(res, Response) and res.status_code == 502):
+            with remote_viewers_lock:
+                remote_viewers.pop(repo_full_name, None)
+        return res
 
-        except Exception as e:
-            app.logger.error(f"Error calling worker to start dvc-viewer: {e}")
-            return f"Failed to reach worker to start dvc-viewer: {str(e)}", 502
+    except Exception as e:
+        with remote_viewers_lock:
+            remote_viewers.pop(repo_full_name, None)
+        app.logger.error(f"Error calling worker {worker_url} to start dvc-viewer for {repo_full_name}: {e}")
+        return f"Failed to reach worker to start dvc-viewer: {str(e)}", 502
 
 def proxy_request(target_url, base_href=None):
     """Simple proxy that forwards the request to the target_url.
