@@ -1378,7 +1378,7 @@
 <p>To push code and interact with your repository on GitHub, ensure your public SSH key is registered under your personal GitHub settings:</p>
 <ol>
 <li>Generate a secure key pair if you do not have one:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ed25519<span class="w"> </span>-C<span class="w"> </span><span class="s2">&quot;your_email@example.com&quot;</span>
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ed25519<span class="w"> </span>-C<span class="w"> </span><span class="s2">"your_email@example.com"</span>
 </span></code></pre></div></li>
 <li>Add your public key (<code>~/.ssh/id_ed25519.pub</code>) to your GitHub account: <strong>Settings -&gt; SSH and GPG keys -&gt; New SSH Key</strong>.</li>
 </ol>
@@ -1395,7 +1395,7 @@
 <h3 id="how-secrets-are-injected">How Secrets Are Injected</h3>
 <p><strong>All Repository Secrets you define are automatically injected as environment variables</strong> inside the Docker container when your pipeline runs on the cluster. For example, if you create a secret named <code>HF_TOKEN</code>, your Python code can access it via:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">hf_token</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;HF_TOKEN&quot;</span><span class="p">]</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">hf_token</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"HF_TOKEN"</span><span class="p">]</span>
 </span></code></pre></div>
 <p>The injected workflow (<code>cluster-ci.yml</code>) passes all secrets to the cluster using <code>ALL_GITHUB_SECRETS: ${{ toJSON(secrets) }}</code>, and the orchestrator (<code>submit_job.py</code>) parses and injects each secret as an environment variable in the execution container. The only secret excluded from injection is <code>GITHUB_TOKEN</code>, which is automatically managed by GitHub.</p>
 <hr />

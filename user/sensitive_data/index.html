@@ -1517,7 +1517,7 @@ Contact <strong>Henri Jamet</strong> (<a href="mailto:henri.jamet@unil.ch"><code
 <p>Copy or clone your research repository into your user home directory on the Headnode (<code>/home/&lt;username&gt;/</code>).</p>
 <p>You can copy files from your local workstation using <code>scp</code> or <code>rsync</code>:
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Example: Syncing a local project folder to the Headnode</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rsync<span class="w"> </span>-avz<span class="w"> </span>--exclude<span class="w"> </span><span class="s1">&#39;.venv&#39;</span><span class="w"> </span>./my-sensitive-project<span class="w"> </span>&lt;username&gt;@130.223.73.209:/home/&lt;username&gt;/
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>rsync<span class="w"> </span>-avz<span class="w"> </span>--exclude<span class="w"> </span><span class="s1">'.venv'</span><span class="w"> </span>./my-sensitive-project<span class="w"> </span>&lt;username&gt;@130.223.73.209:/home/&lt;username&gt;/
 </span></code></pre></div></p>
 <p>Navigate to your project folder on the Headnode:
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>/home/&lt;username&gt;/my-sensitive-project

@@ -1590,7 +1590,7 @@ This enables the unprivileged cluster agent user to restart systemd services and
 <p>To facilitate distributed computing and peer-to-peer (P2P) artifact sharing, the cluster workers require passwordless SSH communication between each other.</p>
 <ul>
 <li><strong>Key Generation</strong>: During worker provisioning, a standard RSA key pair without a passphrase is created:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>rsa<span class="w"> </span>-b<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/id_rsa<span class="w"> </span>-N<span class="w"> </span><span class="s2">&quot;&quot;</span>
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>rsa<span class="w"> </span>-b<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/id_rsa<span class="w"> </span>-N<span class="w"> </span><span class="s2">""</span>
 </span></code></pre></div></li>
 <li><strong>Authorization Distribution</strong>: The public key (<code>~/.ssh/id_rsa.pub</code>) of each worker must be appended to the <code>~/.ssh/authorized_keys</code> file of all other workers in the cluster.</li>
 <li><strong>Host Key Verification</strong>: To prevent interactive prompts blocking automated jobs, add the hostkeys or configure <code>StrictHostKeyChecking accept-new</code> in the worker configuration:

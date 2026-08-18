@@ -1130,7 +1130,7 @@
 <h2 id="4-implementation-completed-2026-04-13">4. Implementation Completed (2026-04-13)</h2>
 <p>The <code>src/runner/run_research_pipeline.sh</code> orchestrator was modified to dynamically source <code>.env</code> and <code>.env.secrets</code> using:
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">set</span><span class="w"> </span>-a
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">source</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$BASE_DIR</span><span class="s2">/.env&quot;</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">source</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_DIR</span><span class="s2">/.env"</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">set</span><span class="w"> </span>+a
 </span></code></pre></div>
 This ensures that all variables (such as <code>GCP_CREDENTIALS</code> or <code>GCP_TOKEN</code>) are exported to child processes, specifically <code>dvc repro</code>.</p>

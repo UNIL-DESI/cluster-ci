@@ -2,170 +2,170 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/concurrency_management/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_architecture/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_dashboard/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_preflight/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_scheduler/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_security/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_tasks/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/index_vllm/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/admin/administration/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/admin/infrastructure_internals/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/architecture/docker_arm_strategy/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/architecture/resilient_logging/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/architecture/zombie_prevention/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/dashboard/explorer_premium/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/preflight/scanner_logic/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/scheduler/deployment_and_reconciliation_protocol/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/scheduler/physical_resource_reconciliation/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/scheduler/resilience_and_chaos_testing/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/security/risk_analysis/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/client_script/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/concurrency_management/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/deploy_local_cluster/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/dvc_auth/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/fix_p2p_and_cancellation_logs/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/ghost_jobs_fix/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/global_timeout/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/jit_gc/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/oom_cgroups_detection/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/optimize_git_and_dvc_sync/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/rescue_and_robustness_runner/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/tasks/setup_orchestrator/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/ci_queue/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/client/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/configuration/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/containers/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/dashboard/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/dvc/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/onboarding/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/sensitive_data/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/user/support/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://UNIL-DESI.github.io/cluster-ci/vllm/abi_fix/</loc>
-         <lastmod>2026-08-14</lastmod>
+         <lastmod>2026-08-18</lastmod>
     </url>
 </urlset>
