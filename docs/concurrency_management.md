@@ -38,8 +38,8 @@ Used for production pipelines. A new submission **does not cancel** the running 
 In `.github/workflows/cluster-ci.yml`:
 ```yaml
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.actor }}-${{ github.ref_name }}
+  cancel-in-progress: false
 ```
 
 The concurrency group is scoped per branch (`github.ref`), ensuring that different branches/PRs never interfere with each other. The actual non-cancellation logic is handled at the application level in `submit_job.py`.

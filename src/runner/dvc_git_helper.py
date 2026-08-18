@@ -661,19 +661,28 @@ def sync_metrics():
         subprocess.run(['git', 'config', 'user.email', 'bot@cluster-ci.io'], check=True)
         subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
 
-        # Push all accumulated local commits robustly
-        log_info("Pushing all accumulated local commits to origin...")
+        # Determine the target branch name robustly
         try:
-            subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
-            log_success("All changes pushed successfully.")
+            current_branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], text=True).strip()
+            if current_branch == "HEAD":
+                # Fallback if detached: check environment or default to main
+                current_branch = os.environ.get("TARGET_BRANCH", "main")
+        except Exception:
+            current_branch = os.environ.get("TARGET_BRANCH", "main")
+
+        # Push all accumulated local commits robustly
+        log_info(f"Pushing all accumulated local commits to origin on branch '{current_branch}'...")
+        try:
+            subprocess.run(['git', 'push', 'origin', f'HEAD:{current_branch}'], check=True, capture_output=True, text=True, timeout=60)
+            log_success(f"All changes pushed successfully to {current_branch}.")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             log_warn(f"Initial push failed, attempting reconciliation (rebase): {getattr(e, 'stderr', '') or e}")
             try:
                 # Attempt to pull with rebase to handle remote changes
-                subprocess.run(['git', 'pull', '--rebase', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
+                subprocess.run(['git', 'pull', '--rebase', 'origin', current_branch], check=True, capture_output=True, text=True, timeout=60)
                 log_info("Rebase successful, retrying push...")
-                subprocess.run(['git', 'push', 'origin', 'HEAD'], check=True, capture_output=True, text=True, timeout=60)
-                log_success("All changes pushed successfully after reconciliation.")
+                subprocess.run(['git', 'push', 'origin', f'HEAD:{current_branch}'], check=True, capture_output=True, text=True, timeout=60)
+                log_success(f"All changes pushed successfully to {current_branch} after reconciliation.")
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as rebase_err:
                 log_warn(f"Reconciliation failed: {getattr(rebase_err, 'stderr', '') or rebase_err}")
                 # Abort rebase if it's still in progress to leave the repo in a clean state

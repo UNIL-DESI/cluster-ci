@@ -288,8 +288,28 @@ def check_gh_auth():
 
 def get_current_user():
     """Retrieve GitHub username."""
-    res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
-    return res.stdout.strip()
+    try:
+        res = subprocess.run(["gh", "api", "user", "-q", ".login"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+        if res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    # Fallback to gh auth status
+    try:
+        res = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        match = re.search(r"account\s+([A-Za-z0-9_-]+)", res.stdout + " " + res.stderr)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    # Fallback to git config
+    try:
+        res = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return "hjamet"
 
 def get_repo_full_name():
     """Find the GitHub repository name from remote origin URL."""

@@ -11,6 +11,23 @@ CLI_TARGET_REPO=$1
 CLI_TARGET_BRANCH=$2
 CLI_GH_TOKEN="${3:-$GH_TOKEN}"
 
+# Log utilities defined early to support logs during early setup/delegation steps.
+function log_info() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ℹ️  $1"
+}
+
+function log_warn() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ⚠️  $1"
+}
+
+function log_success() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ✅ $1"
+}
+
+function log_error() {
+    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
+}
+
 # Capture the caller's commit hash before changing directory
 if [ -z "$CALLER_COMMIT_SHA" ]; then
     if [ -n "$GITHUB_SHA" ]; then
@@ -22,15 +39,25 @@ fi
 export CALLER_COMMIT_SHA
 
 if [ "$CLI_TARGET_BRANCH" = "cluster-run" ]; then
-    echo "Detecting original draft branch for tag cluster-run in caller repository..."
-    git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" --quiet || true
-    DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
-    if [ -n "$DRAFT_BRANCH" ]; then
-        echo "Resolved draft branch: $DRAFT_BRANCH"
-        CLI_TARGET_BRANCH="$DRAFT_BRANCH"
+    log_info "Detecting origin branch for tag cluster-run..."
+    git fetch origin "+refs/heads/*:refs/remotes/origin/*" --quiet || true
+    
+    # 1. First priority: Real branches containing this commit (main, master, feature/..., dev)
+    REAL_BRANCH=$(git branch -r --contains HEAD 2>/dev/null | grep -v 'origin/HEAD' | grep -v 'origin/cluster-run' | grep -v 'origin/cluster-draft/' | head -n 1 | sed -e 's/^[[:space:]]*origin\///' | xargs)
+    
+    if [ -n "$REAL_BRANCH" ]; then
+        log_info "Resolved real target branch: $REAL_BRANCH"
+        CLI_TARGET_BRANCH="$REAL_BRANCH"
     else
-        echo "Error: Failed to resolve original draft branch for tag cluster-run. Cannot proceed." >&2
-        exit 1
+        # 2. Second priority: If only present on a draft branch (shadow run via CLI cluster-run)
+        DRAFT_BRANCH=$(git branch -r --contains HEAD 2>/dev/null | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+        if [ -n "$DRAFT_BRANCH" ]; then
+            log_info "Resolved draft branch: $DRAFT_BRANCH"
+            CLI_TARGET_BRANCH="$DRAFT_BRANCH"
+        else
+            log_info "Fallback branch: main"
+            CLI_TARGET_BRANCH="main"
+        fi
     fi
 fi
 
@@ -52,23 +79,6 @@ if [ -f "$BASE_DIR/.env.secrets" ]; then
     source "$BASE_DIR/.env.secrets" || true
     set +a
 fi
-
-# Log utilities defined early to support logs during early setup/delegation steps.
-function log_info() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ℹ️  $1"
-}
-
-function log_warn() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ⚠️  $1"
-}
-
-function log_success() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ✅ $1"
-}
-
-function log_error() {
-    echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
-}
 
 TARGET_REPO=${CLI_TARGET_REPO:-$TARGET_REPO}
 TARGET_BRANCH=${CLI_TARGET_BRANCH:-$TARGET_BRANCH}
@@ -312,10 +322,10 @@ else
     # Force fetching latest references (explicitly specify branch mapping to origin/branch
     # as GitHub Actions conditional fetch sometimes omits it)
     if [ "$TARGET_BRANCH" = "cluster-run" ]; then
-        log_info "Triggered by tag 'cluster-run'. Fetching tag reference and draft branches..."
+        log_info "Triggered by tag 'cluster-run'. Fetching tag reference and origin branches..."
         for i in {1..5}; do
             if git fetch origin "+refs/tags/cluster-run:refs/tags/cluster-run"; then
-                git fetch origin "+refs/heads/cluster-draft/*:refs/remotes/origin/cluster-draft/*" || true
+                git fetch origin "+refs/heads/*:refs/remotes/origin/*" --quiet || true
                 break
             fi
             log_warn "Failed to fetch tag cluster-run (attempt $i/5). Retrying in 5 seconds..."
@@ -329,18 +339,26 @@ else
         git checkout -f "refs/tags/cluster-run"
         git reset --hard "refs/tags/cluster-run"
 
-        # Detect the original draft branch associated with this commit
-        log_info "Detecting draft branch associated with tag cluster-run..."
-        # Allow git branch to output branches containing HEAD
-        DRAFT_BRANCH=$(git branch -r --contains HEAD | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
-        if [ -n "$DRAFT_BRANCH" ]; then
-            log_info "Detected draft branch: $DRAFT_BRANCH"
-            TARGET_BRANCH="$DRAFT_BRANCH"
-            # Reset and check out the local branch tracking the remote draft branch
+        # Detect the origin branch associated with this commit
+        log_info "Detecting origin branch associated with tag cluster-run..."
+        REAL_BRANCH=$(git branch -r --contains HEAD 2>/dev/null | grep -v 'origin/HEAD' | grep -v 'origin/cluster-run' | grep -v 'origin/cluster-draft/' | head -n 1 | sed -e 's/^[[:space:]]*origin\///' | xargs)
+        if [ -n "$REAL_BRANCH" ]; then
+            log_info "Detected real branch: $REAL_BRANCH"
+            TARGET_BRANCH="$REAL_BRANCH"
             git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
             git reset --hard "origin/$TARGET_BRANCH"
         else
-            log_warn "No draft branch containing this commit was found on origin. Running directly on detached tag cluster-run."
+            DRAFT_BRANCH=$(git branch -r --contains HEAD 2>/dev/null | grep -o 'origin/cluster-draft/[^ ]*' | head -n 1 | sed 's|origin/||')
+            if [ -n "$DRAFT_BRANCH" ]; then
+                log_info "Detected draft branch: $DRAFT_BRANCH"
+                TARGET_BRANCH="$DRAFT_BRANCH"
+                git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+                git reset --hard "origin/$TARGET_BRANCH"
+            else
+                log_info "Fallback branch: main"
+                TARGET_BRANCH="main"
+                git checkout -f -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH" 2>/dev/null || git checkout -f "refs/tags/cluster-run"
+            fi
         fi
     else
         log_info "Synchronizing remote reference origin/$TARGET_BRANCH..."

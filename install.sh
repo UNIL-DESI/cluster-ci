@@ -251,8 +251,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: \${{ github.workflow }}-\${{ github.ref }}
-  cancel-in-progress: true
+  group: \${{ github.workflow }}-\${{ github.actor }}-\${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   execute-on-cluster:
