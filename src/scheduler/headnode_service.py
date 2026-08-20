@@ -88,7 +88,7 @@ def check_token():
 @app.before_request
 def require_token():
     # Only protect API endpoints that workers or users use to modify state
-    protected_endpoints = ['register_worker', 'submit_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
+    protected_endpoints = ['register_worker', 'submit_job', 'submit_maintenance_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
     if request.endpoint in protected_endpoints:
         if not check_token():
             return jsonify({"error": "Unauthorized"}), 401
@@ -373,6 +373,64 @@ def maintenance_off():
     MAINTENANCE_MODE = False
     return jsonify({"status": "ok", "maintenance": False})
 
+@app.route('/submit_maintenance_job', methods=['POST'])
+def submit_maintenance_job():
+    if request.is_json:
+        data = request.get_json() or {}
+    else:
+        data = request.form.to_dict() if request.form else {}
+
+    target_repo = data.get('target_repo') or data.get('repo') or 'UNIL-DESI/cluster-ci'
+    branch = data.get('branch') or 'main'
+    username = data.get('username')
+    if not username and 'user' in session:
+        username = session.get('user', {}).get('login')
+    if not username:
+        username = 'admin'
+
+    description = data.get('description') or 'Cluster Maintenance Barrier & Node Update'
+    max_runtime_hours = float(data.get('max_runtime_hours', 1.0))
+    env_vars = data.get('env_vars') or {}
+    if isinstance(env_vars, str):
+        try:
+            env_vars = json.loads(env_vars)
+        except Exception:
+            env_vars = {'description': env_vars}
+    if isinstance(env_vars, dict):
+        env_vars.setdefault('description', description)
+        env_vars['is_maintenance'] = True
+        env_vars['job_type'] = 'maintenance'
+
+    job_id = str(uuid.uuid4())
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO jobs (
+                job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb,
+                max_runtime_hours, exposed_port, custom_web_app, gh_run_id,
+                required_hashes, gh_token, env_vars, username, allowed_workers,
+                status, is_local, job_type, is_maintenance
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 'maintenance', 1)
+        ''', (
+            job_id, target_repo, branch, None, 0.0, 0.0,
+            max_runtime_hours, None, 0, None,
+            json.dumps([]), None, json.dumps(env_vars), username, None
+        ))
+        conn.commit()
+
+    app.logger.info(f"🛠️ [MAINTENANCE] Queued maintenance job {job_id} for {target_repo}@{branch} by {username}")
+    return jsonify({
+        "job_id": job_id,
+        "status": "pending",
+        "job_type": "maintenance",
+        "is_maintenance": 1,
+        "repo": target_repo,
+        "branch": branch,
+        "message": "Maintenance barrier queued successfully"
+    }), 201
+
 @app.route('/register_worker', methods=['POST'])
 def register_worker():
     data = request.json
@@ -526,6 +584,11 @@ def submit_job():
     custom_web_app = data.get('custom_web_app', False)
     if isinstance(custom_web_app, str):
         custom_web_app = custom_web_app.lower() in ['true', '1']
+    job_type = data.get('job_type', 'compute')
+    is_maintenance_val = data.get('is_maintenance', False)
+    is_maintenance = 1 if (is_maintenance_val and str(is_maintenance_val).lower() in ['true', '1']) or job_type == 'maintenance' else 0
+    if is_maintenance:
+        job_type = 'maintenance'
     allowed_workers = data.get('allowed_workers')  # List of hostnames to restrict execution
     if isinstance(allowed_workers, str):
         try:
@@ -676,12 +739,12 @@ def submit_job():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, status, is_local, local_archive_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_archive_path))
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, status, is_local, local_archive_path, job_type, is_maintenance)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_archive_path, job_type, is_maintenance))
         conn.commit()
 
-    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0})
+    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0, "job_type": job_type, "is_maintenance": is_maintenance})
 
 @app.route('/workers', methods=['GET'])
 def list_workers():
@@ -721,7 +784,7 @@ def scheduler_status():
         
         for w in workers_list:
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at, is_local
+                SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at, is_local, job_type, is_maintenance
                 FROM jobs
                 WHERE worker_id = ? AND status IN ('running', 'assigned')
                 LIMIT 1
@@ -732,12 +795,12 @@ def scheduler_status():
             else:
                 w['active_job'] = None
                 
-        # 2. Fetch the pending queue ordered by FIFO priority
+        # 2. Fetch the pending queue ordered by priority (maintenance first, then FIFO)
         cursor.execute('''
-            SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local
+            SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local, job_type, is_maintenance
             FROM jobs
             WHERE status = 'pending'
-            ORDER BY created_at ASC
+            ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
         ''')
         pending_queue = [dict(row) for row in cursor.fetchall()]
         
@@ -1241,7 +1304,7 @@ def api_list_runs(repo):
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT job_id, branch, status, commit_hash, created_at, started_at, finished_at, exit_code, custom_web_app, is_local
+            SELECT job_id, branch, status, commit_hash, created_at, started_at, finished_at, exit_code, custom_web_app, is_local, job_type, is_maintenance
             FROM jobs
             WHERE repo = ?
             ORDER BY created_at DESC
@@ -1426,18 +1489,18 @@ def api_queue():
     try:
         with get_db_conn() as conn:
             cursor = conn.cursor()
-            # Fetch pending jobs
+            # Fetch pending jobs ordered by priority (maintenance first, then FIFO)
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local
+                SELECT job_id, repo, branch, username, ram_required_gb, status, created_at, is_local, job_type, is_maintenance
                 FROM jobs
                 WHERE status = 'pending'
-                ORDER BY created_at ASC
+                ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
             ''')
             pending_jobs = [dict(row) for row in cursor.fetchall()]
 
             # Fetch running/assigned jobs for reason computation
             cursor.execute('''
-                SELECT job_id, repo, branch, username, ram_required_gb, status, worker_id
+                SELECT job_id, repo, branch, username, ram_required_gb, status, worker_id, job_type, is_maintenance
                 FROM jobs
                 WHERE status IN ('running', 'assigned')
             ''')
@@ -1451,32 +1514,52 @@ def api_queue():
             ''')
             workers = [dict(row) for row in cursor.fetchall()]
 
+        running_maint = any(aj.get('job_type') == 'maintenance' or aj.get('is_maintenance') == 1 for aj in active_jobs)
+
         # Compute wait reason for each pending job
         for job in pending_jobs:
             reasons = []
-            job_repo = job['repo']
-            job_branch = job['branch'] or ''
+            is_maint = (job.get('job_type') == 'maintenance' or job.get('is_maintenance') == 1)
 
-            # Check branch exclusivity (another job running/assigned on same repo+branch)
-            branch_blocked = any(
-                aj['repo'] == job_repo and aj['branch'] == job_branch
-                for aj in active_jobs
-            )
-            if branch_blocked:
-                reasons.append("branch_exclusivity")
-
-            # Check resource availability (no worker with enough RAM)
-            ram_required = job.get('ram_required_gb', 0)
-            # Workers currently free (not running any active job)
-            busy_worker_ids = {aj['worker_id'] for aj in active_jobs if aj.get('worker_id')}
-            free_workers = [w for w in workers if w['worker_id'] not in busy_worker_ids]
-            compatible_free = [w for w in free_workers if (w['total_ram_gb'] - 2.0) >= ram_required]
-
-            if not compatible_free:
-                if not free_workers:
-                    reasons.append("no_free_workers")
+            if is_maint:
+                active_compute = [aj for aj in active_jobs if aj.get('job_type') != 'maintenance' and not aj.get('is_maintenance')]
+                if active_compute:
+                    reasons.append("draining_nodes")
                 else:
-                    reasons.append("insufficient_ram")
+                    reasons.append("ready_for_maintenance")
+            else:
+                if running_maint:
+                    reasons.append("maintenance_barrier")
+                else:
+                    has_maint_ahead = any(
+                        (pj.get('job_type') == 'maintenance' or pj.get('is_maintenance') == 1)
+                        for pj in pending_jobs if pj['created_at'] <= job['created_at'] and pj['job_id'] != job['job_id']
+                    )
+                    if has_maint_ahead:
+                        reasons.append("maintenance_barrier")
+
+                job_repo = job['repo']
+                job_branch = job['branch'] or ''
+
+                # Check branch exclusivity (another job running/assigned on same repo+branch)
+                branch_blocked = any(
+                    aj['repo'] == job_repo and aj['branch'] == job_branch
+                    for aj in active_jobs
+                )
+                if branch_blocked:
+                    reasons.append("branch_exclusivity")
+
+                # Check resource availability (no worker with enough RAM)
+                ram_required = job.get('ram_required_gb', 0)
+                busy_worker_ids = {aj['worker_id'] for aj in active_jobs if aj.get('worker_id')}
+                free_workers = [w for w in workers if w['worker_id'] not in busy_worker_ids]
+                compatible_free = [w for w in free_workers if (w['total_ram_gb'] - 2.0) >= ram_required]
+
+                if not compatible_free:
+                    if not free_workers:
+                        reasons.append("no_free_workers")
+                    else:
+                        reasons.append("insufficient_ram")
 
             job['wait_reasons'] = reasons if reasons else ["scheduling"]
 

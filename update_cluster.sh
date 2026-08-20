@@ -3,11 +3,34 @@ set -e
 
 # Parse flags
 ADD_WORKER=false
+FORCE_MODE=false
+QUEUE_MODE=true
+
 for arg in "$@"; do
     case $arg in
         --add-worker) ADD_WORKER=true ;;
+        --force) FORCE_MODE=true; QUEUE_MODE=false ;;
+        --queue) QUEUE_MODE=true; FORCE_MODE=false ;;
     esac
 done
+
+# If not in force mode, delegate to Python CLI for sovereign drainage barrier queue
+if [ "$FORCE_MODE" = false ]; then
+    if command -v python3 &>/dev/null; then
+        PYTHON_BIN="python3"
+    elif command -v python &>/dev/null; then
+        PYTHON_BIN="python"
+    else
+        PYTHON_BIN=""
+    fi
+
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+    if [ -n "$PYTHON_BIN" ] && [ -f "$SCRIPT_DIR/scripts/cluster_update.py" ]; then
+        echo "📋 Submitting maintenance job to queue (Drainage Barrier Mode)..."
+        echo "💡 (To bypass queue and force immediate SSH update, use: ./update_cluster.sh --force)"
+        exec "$PYTHON_BIN" "$SCRIPT_DIR/scripts/cluster_update.py" --queue "$@"
+    fi
+fi
 
 ENV_FILE=".env"
 

@@ -83,6 +83,8 @@ def init_db():
             p2p_url TEXT,
             gh_token TEXT,
             custom_web_app INTEGER DEFAULT 0,
+            job_type TEXT DEFAULT 'compute',
+            is_maintenance INTEGER DEFAULT 0,
             FOREIGN KEY (worker_id) REFERENCES workers (worker_id)
         )
     ''')
@@ -180,6 +182,18 @@ def init_db():
     # local_archive_path migration (headnode storage path for uploaded source archive)
     try:
         cursor.execute('ALTER TABLE jobs ADD COLUMN local_archive_path TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    # job_type migration (e.g. 'compute', 'maintenance')
+    try:
+        cursor.execute("ALTER TABLE jobs ADD COLUMN job_type TEXT DEFAULT 'compute'")
+    except sqlite3.OperationalError:
+        pass
+
+    # is_maintenance migration (boolean flag: 1 for maintenance jobs)
+    try:
+        cursor.execute('ALTER TABLE jobs ADD COLUMN is_maintenance INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
 

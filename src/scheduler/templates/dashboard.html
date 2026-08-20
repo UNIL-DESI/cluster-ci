@@ -467,6 +467,16 @@
         .badge-danger-premium { background-color: var(--danger-light); color: var(--danger); }
         .badge-warning-premium { background-color: var(--warning-light); color: var(--warning); }
         .badge-primary-premium { background-color: var(--primary-light); color: var(--primary); }
+        .badge-maintenance-premium {
+            background-color: rgba(168, 85, 247, 0.15);
+            color: #9333ea;
+            border: 1px solid rgba(168, 85, 247, 0.35);
+        }
+        [data-theme="dark"] .badge-maintenance-premium {
+            background-color: rgba(168, 85, 247, 0.25);
+            color: #c084fc;
+            border: 1px solid rgba(168, 85, 247, 0.5);
+        }
 
         /* Preview styles */
         #preview-content img {
@@ -1736,18 +1746,20 @@
                         const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
                         const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
                         const launchDate = startedAt ? startedAt.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+                        const isMaintenance = run.job_type === 'maintenance' || run.is_maintenance;
 
                         col.innerHTML = `
-                            <div class="active-run-card p-3 fade-refresh">
+                            <div class="active-run-card p-3 fade-refresh" style="${isMaintenance ? 'border-left: 4px solid #9333ea;' : ''}">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div class="d-flex align-items-center gap-3" onclick="navigateToProject('${run.repo}')" style="cursor: pointer;">
-                                        <div class="active-run-status"></div>
+                                        <div class="active-run-status" style="${isMaintenance ? 'background: #9333ea; box-shadow: 0 0 8px rgba(147, 51, 234, 0.6);' : ''}"></div>
                                         <div>
                                             <div class="d-flex align-items-center gap-2 mb-1">
-                                                <h6 class="mb-0" style="color: var(--primary); font-weight: 700;">${escapeHtml(run.repo)}</h6>
+                                                <h6 class="mb-0" style="color: ${isMaintenance ? '#9333ea' : 'var(--primary)'}; font-weight: 700;">${escapeHtml(run.repo)}</h6>
                                                 ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at + 'Z'}">${elapsedStr}</span>` : ''}
                                             </div>
                                             <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                ${isMaintenance ? '<span class="badge-premium badge-maintenance-premium"><i class="bi bi-tools me-1"></i>🛠️ Maintenance Barrier</span>' : ''}
                                                 <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
                                                 ${run.is_local ? '<span class="badge-premium" style="background:var(--info-light);color:var(--info);"><i class="bi bi-house-door-fill me-1"></i>LOCAL</span>' : ''}
                                                 <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
@@ -1763,9 +1775,7 @@
                                         <button class="btn btn-outline-primary btn-action" onclick="showLogs('${run.job_id}')">
                                             <i class="bi bi-terminal"></i> Logs
                                         </button>
-                                        <a href="${viewerUrl}" class="btn btn-primary btn-action" target="_blank">
-                                            <i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Web App' : 'DVC-Viewer'}
-                                        </a>
+                                        ${isMaintenance ? '' : `<a href="${viewerUrl}" class="btn btn-primary btn-action" target="_blank"><i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Web App' : 'DVC-Viewer'}</a>`}
                                     </div>
                                 </div>
                             </div>
@@ -1801,11 +1811,15 @@
                                 const col = document.createElement('div');
                                 col.className = 'col-12 full-width mb-2';
 
+                                const isMaintenance = job.job_type === 'maintenance' || job.is_maintenance;
                                 const reasons = job.wait_reasons || ['scheduling'];
                                 const reasonLabels = {
                                     'branch_exclusivity': '<i class="bi bi-lock-fill text-primary me-1"></i>Un run est déjà actif sur cette branche',
                                     'no_free_workers': '<i class="bi bi-hdd-network text-danger me-1"></i>Toutes les machines sont occupées',
                                     'insufficient_ram': '<i class="bi bi-memory text-danger me-1"></i>Aucune machine libre avec assez de RAM',
+                                    'draining_nodes': '<i class="bi bi-shield-lock-fill text-warning me-1"></i>Drainage des nœuds en cours (attente fin des calculs)',
+                                    'ready_for_maintenance': '<i class="bi bi-play-circle-fill text-success me-1"></i>Nœuds drainés, démarrage de la mise à jour',
+                                    'maintenance_barrier': '<i class="bi bi-cone-striped text-warning me-1"></i>En attente de la barrière de maintenance',
                                     'scheduling': '<i class="bi bi-clock text-secondary me-1"></i>En cours de planification...'
                                 };
                                 const reasonsHtml = reasons.map(r => `<span class="badge bg-light text-dark border me-1 py-1 px-2" style="font-size: 0.78rem;">${reasonLabels[r] || r}</span>`).join('');
@@ -1821,16 +1835,17 @@
                                 const cancelBtn = isOwnJob ? `<button class="btn btn-outline-danger btn-sm ms-2" onclick="event.stopPropagation(); stopJob('${job.job_id}')" title="Annuler ce job"><i class="bi bi-x-circle"></i> Annuler</button>` : '';
 
                                 col.innerHTML = `
-                                    <div class="card shadow-sm border-warning" style="background-color: var(--bg-card); border-left: 4px solid var(--warning);">
+                                    <div class="card shadow-sm" style="background-color: var(--bg-card); border-left: 4px solid ${isMaintenance ? '#9333ea' : 'var(--warning)'};">
                                         <div class="card-body py-2 px-3 d-flex justify-content-between align-items-center">
                                             <div>
-                                                <div class="d-flex align-items-center gap-2 mb-1">
-                                                    <span class="spinner-grow spinner-grow-sm text-warning" style="width: 0.6rem; height: 0.6rem;" role="status"></span>
+                                                <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                                                    <span class="spinner-grow spinner-grow-sm ${isMaintenance ? 'text-primary' : 'text-warning'}" style="width: 0.6rem; height: 0.6rem; ${isMaintenance ? 'color: #9333ea !important;' : ''}" role="status"></span>
                                                     <strong class="text-dark">${escapeHtml(repoShort)}</strong>
                                                     <span class="text-muted small">@${escapeHtml(job.branch || '?')}</span>
+                                                    ${isMaintenance ? '<span class="badge-premium badge-maintenance-premium ms-1"><i class="bi bi-tools me-1"></i>🛠️ Maintenance Barrier</span>' : ''}
                                                     ${job.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.75rem;">🏠 LOCAL</span>' : ''}
                                                     <span class="text-muted small">par <strong>${escapeHtml(job.username || '?')}</strong></span>
-                                                    <span class="badge bg-secondary rounded-pill">${job.ram_required_gb || 0} GB</span>
+                                                    ${!isMaintenance ? `<span class="badge bg-secondary rounded-pill">${job.ram_required_gb || 0} GB</span>` : ''}
                                                 </div>
                                                 <div>${reasonsHtml}</div>
                                             </div>
@@ -2107,16 +2122,17 @@
                             hour: '2-digit', minute: '2-digit', second: '2-digit'
                         }).replace(',', '');
 
+                        const isMaintenance = run.job_type === 'maintenance' || run.is_maintenance;
                         col.innerHTML = `
-                            <div class="card shadow-sm active-run-card">
+                            <div class="card shadow-sm active-run-card" style="${isMaintenance ? 'border-left: 4px solid #9333ea;' : ''}">
                                 <div class="card-body d-flex justify-content-between align-items-center">
                                     <div>
-                                        <h5 class="card-title text-primary mb-1">
+                                        <h5 class="card-title mb-1" style="color: ${isMaintenance ? '#9333ea' : 'var(--primary)'};">
                                             <span class="spinner-grow spinner-grow-sm me-2" role="status" aria-hidden="true"></span>
-                                            Run from ${runDate}
+                                            ${isMaintenance ? '🛠️ Maintenance Barrier from ' + runDate : 'Run from ' + runDate}
                                         </h5>
                                         <p class="card-text text-muted mb-0">
-                                            Branch: <strong>${escapeHtml(run.branch)}</strong> ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);">🏠 LOCAL</span>' : ''} | Job ID: ${run.job_id.substring(0,8)}...
+                                            Branch: <strong>${escapeHtml(run.branch)}</strong> ${isMaintenance ? '<span class="badge ms-1" style="background:rgba(168,85,247,0.15);color:#9333ea;font-size:0.75rem;"><i class="bi bi-tools me-1"></i>MAINTENANCE</span>' : ''} ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);">🏠 LOCAL</span>' : ''} | Job ID: ${run.job_id.substring(0,8)}...
                                         </p>
                                     </div>
                                     <div class="d-flex gap-2">
@@ -2126,9 +2142,7 @@
                                         <button class="btn btn-outline-primary" onclick="showLogs('${run.job_id}')">
                                             <i class="bi bi-terminal"></i> View Logs
                                         </button>
-                                        <a href="${viewerUrl}" class="btn btn-primary" target="_blank">
-                                            <i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Open Web Application' : 'Open Live DVC-Viewer'}
-                                        </a>
+                                        ${isMaintenance ? '' : `<a href="${viewerUrl}" class="btn btn-primary" target="_blank"><i class="bi bi-broadcast"></i> ${run.custom_web_app ? 'Open Web Application' : 'Open Live DVC-Viewer'}</a>`}
                                     </div>
                                 </div>
                             </div>
@@ -2148,12 +2162,13 @@
                     const col = document.createElement('div');
                     col.className = 'col';
 
+                    const isMaintenance = run.job_type === 'maintenance' || run.is_maintenance;
                     const card = document.createElement('div');
                     card.className = 'card h-100 explorer-item shadow-sm';
                     card.onclick = () => navigateToRun(run.job_id, run.status, repo, run.branch, run.commit_hash, run.created_at);
 
                     const icon = document.createElement('i');
-                    icon.className = 'bi bi-folder-fill explorer-icon folder-icon';
+                    icon.className = isMaintenance ? 'bi bi-tools explorer-icon text-purple' : 'bi bi-folder-fill explorer-icon folder-icon';
 
                     const title = document.createElement('h6');
                     title.className = 'card-title mb-1';
@@ -2167,7 +2182,7 @@
                     const statusClass = run.status === 'completed' ? 'text-success' : 'text-danger';
                     const statusIcon = run.status === 'completed' ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill';
                     statusDiv.className = statusClass + ' mb-2';
-                    statusDiv.innerHTML = `<i class="bi ${statusIcon}"></i> ${escapeHtml(run.status)} ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.7rem;">🏠 LOCAL</span>' : ''}`;
+                    statusDiv.innerHTML = `<i class="bi ${statusIcon}"></i> ${escapeHtml(run.status)} ${isMaintenance ? '<span class="badge ms-1" style="background:rgba(168,85,247,0.15);color:#9333ea;font-size:0.7rem;"><i class="bi bi-tools me-1"></i>MAINTENANCE</span>' : ''} ${run.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.7rem;">🏠 LOCAL</span>' : ''}`;
 
                     const logsBtn = document.createElement('button');
                     logsBtn.className = 'btn btn-link btn-sm p-0 mb-2 d-block mx-auto text-decoration-none';

@@ -22,4 +22,5 @@ dev = [
 
 [project.scripts]
 cluster-run = "cluster.cluster_run:main"
+cluster-update = "cluster.cluster_update:main"
 

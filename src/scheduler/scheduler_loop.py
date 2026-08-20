@@ -3,6 +3,9 @@ import json
 import requests
 import os
 import socket
+import subprocess
+import sys
+import shutil
 import datetime as dt
 from datetime import datetime
 from persistence import get_db_conn, init_db
@@ -70,108 +73,240 @@ def cancel_job_cleanly(job_id, exit_code=-15):
 
     return True
 
+def orchestrate_cluster_update(job):
+    """
+    Executes the cluster update orchestration when a maintenance barrier activates:
+    1. Runs update routines for workers/headnode (e.g., scripts/cluster_update.py or update_cluster.sh).
+    2. Monitors online workers to ensure they recover, restart their agents, and report active heartbeats.
+    3. Returns True on success, False on fatal failure.
+    """
+    job_id = job['job_id']
+    target_repo = job.get('repo') or 'UNIL-DESI'
+    branch = job.get('branch') or 'main'
+    logger.info(f"🛠️ [MAINTENANCE ORCHESTRATION] Starting node update orchestration for job {job_id} ({target_repo}@{branch})...")
+    
+    update_success = True
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    update_script_py = os.path.join(base_dir, "scripts", "cluster_update.py")
+    update_script_sh = os.path.join(base_dir, "update_cluster.sh")
+    
+    try:
+        if os.path.exists(update_script_py):
+            logger.info(f"🛠️ [MAINTENANCE] Executing update via {update_script_py} (force execution mode)...")
+            cmd = [sys.executable, update_script_py, "--force", "--target-repo", target_repo, "--branch", branch]
+            proc = subprocess.run(cmd, cwd=base_dir, capture_output=True, text=True, timeout=600)
+            logger.info(f"🛠️ [MAINTENANCE] Update process exited with code {proc.returncode}")
+            if proc.returncode != 0:
+                logger.warning(f"🛠️ [MAINTENANCE] Update stderr: {proc.stderr[:500]}")
+        elif os.path.exists(update_script_sh):
+            logger.info(f"🛠️ [MAINTENANCE] Executing update via {update_script_sh}...")
+            if shutil.which("bash"):
+                proc = subprocess.run(["bash", update_script_sh, "--force"], cwd=base_dir, capture_output=True, text=True, timeout=600)
+                logger.info(f"🛠️ [MAINTENANCE] Update script exited with code {proc.returncode}")
+    except Exception as ex:
+        logger.error(f"🛠️ [MAINTENANCE] Error executing cluster update: {ex}")
+        update_success = False
+
+    # 2. Verification phase: verify online workers return and send heartbeats
+    logger.info("🛠️ [MAINTENANCE] Verifying worker node recovery and fresh heartbeats...")
+    verification_timeout = 90  # seconds
+    start_verify = time.time()
+    all_workers_healthy = False
+    
+    while time.time() - start_verify < verification_timeout:
+        try:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT COUNT(*) FROM workers
+                    WHERE status = 'online' AND last_seen >= datetime('now', '-30 seconds')
+                ''')
+                active_heartbeats = cursor.fetchone()[0]
+                if active_heartbeats > 0:
+                    logger.info(f"✅ [MAINTENANCE] {active_heartbeats} online worker(s) reporting active heartbeats.")
+                    all_workers_healthy = True
+                    break
+        except Exception as e:
+            logger.error(f"Error checking worker heartbeats during maintenance: {e}")
+        time.sleep(5)
+        
+    return update_success or all_workers_healthy
+
 def schedule_jobs():
     """
     Loop to assign PENDING jobs to available Workers using First-Fit (Bin-Packing).
+    Includes sovereign drainage barrier for maintenance jobs.
     """
     while True:
         try:
-                expired_jobs = []
-                pending_jobs = []
-                workers = []
+            expired_jobs = []
+            pending_jobs = []
+            workers = []
 
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+
+                # 0. Ghost Workers cleanup: mark stale workers as offline
+                # Workers send heartbeats every 10s. If we haven't heard from one
+                # in 120s (12 missed heartbeats), it's dead/frozen.
+                cursor.execute('''
+                    UPDATE workers SET status = 'offline'
+                    WHERE status = 'online' AND last_seen < datetime('now', '-120 seconds')
+                ''')
+                if cursor.rowcount > 0:
+                    logger.warning(f"Marked {cursor.rowcount} ghost worker(s) as offline")
+                conn.commit()
+
+                # 1. Cleanup orphaned running/assigned jobs (workers that died/timed out)
+                cursor.execute('''
+                    UPDATE jobs
+                    SET status = 'failed', exit_code = COALESCE(exit_code, -99)
+                    WHERE status IN ('running', 'assigned') 
+                    AND worker_id IN (
+                        SELECT worker_id FROM workers 
+                        WHERE status = 'offline' OR last_seen < datetime('now', '-300 seconds')
+                    )
+                ''')
+                conn.commit()
+
+                # 1.5. Sovereign Watchdog: Find running or assigned jobs exceeding max runtime
+                cursor.execute('''
+                    SELECT job_id, repo, branch, status, started_at, created_at, max_runtime_hours
+                    FROM jobs
+                    WHERE status IN ('running', 'assigned')
+                ''')
+                active_jobs = [dict(row) for row in cursor.fetchall()]
+                
+                for job in active_jobs:
+                    job_id = job['job_id']
+                    max_hours = job['max_runtime_hours'] or 24.0
+                    start_time_str = job['started_at'] or job['created_at']
+                    if not start_time_str:
+                        continue
+                    try:
+                        # SQLite timestamps are in UTC
+                        start_t = datetime.strptime(start_time_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                        now_utc = dt.datetime.utcnow()
+                        elapsed_seconds = (now_utc - start_t).total_seconds()
+                        limit_seconds = (max_hours * 3600) + 300  # plus 5 minutes grace margin
+                        
+                        if elapsed_seconds > limit_seconds:
+                            logger.warning(f"Watchdog: Job {job_id} ({job['repo']}@{job['branch']}) has exceeded its max runtime of {max_hours} hours. (Elapsed: {elapsed_seconds/3600:.2f} hours)")
+                            expired_jobs.append(job_id)
+                    except Exception as ex:
+                        logger.error(f"Watchdog parsing error for job {job_id}: {ex}")
+
+                # Check if a maintenance job is currently RUNNING
+                cursor.execute('''
+                    SELECT * FROM jobs
+                    WHERE status = 'running' AND (job_type = 'maintenance' OR is_maintenance = 1)
+                    LIMIT 1
+                ''')
+                running_maintenance = cursor.fetchone()
+
+                # 2. Fetch pending jobs ordered by priority (maintenance first, then FIFO)
+                cursor.execute('''
+                    SELECT * FROM jobs
+                    WHERE status = "pending"
+                    ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
+                ''')
+                pending_jobs = [dict(row) for row in cursor.fetchall()]
+
+                # 3. Fetch online workers that are NOT already busy
+                # Worker agents are single-threaded: they block in execute_job()
+                # and cannot poll for new jobs until the current one finishes.
+                # We must exclude workers that have a running or assigned job.
+                cursor.execute('''
+                    SELECT * FROM workers
+                    WHERE status = "online"
+                    AND last_seen >= datetime('now', '-60 seconds')
+                    AND worker_id NOT IN (
+                        SELECT worker_id FROM jobs
+                        WHERE status IN ('running', 'assigned')
+                        AND worker_id IS NOT NULL
+                    )
+                    ORDER BY total_ram_gb DESC
+                ''')
+                workers = [dict(row) for row in cursor.fetchall()]
+
+            # Cancel expired jobs cleanly outside the main connection transaction to prevent SQLite locks
+            for job_id in expired_jobs:
+                try:
+                    logger.warning(f"Watchdog: Forcefully cancelling expired job {job_id}")
+                    cancel_job_cleanly(job_id, exit_code=-15)
+                except Exception as e:
+                    logger.error(f"Watchdog failed to cancel job {job_id}: {e}")
+
+            if running_maintenance:
+                logger.info(f"🚧 [MAINTENANCE] Maintenance job {running_maintenance['job_id']} is currently running. Normal scheduling paused.")
+                time.sleep(5)
+                continue
+
+            if not pending_jobs:
+                time.sleep(5)
+                continue
+
+            # Check if head of queue is a MAINTENANCE job (Drainage Barrier)
+            head_job = pending_jobs[0]
+            is_maintenance_job = (head_job.get('job_type') == 'maintenance' or head_job.get('is_maintenance') == 1)
+
+            if is_maintenance_job:
+                maint_job_id = head_job['job_id']
+                # Check active compute jobs on cluster
                 with get_db_conn() as conn:
                     cursor = conn.cursor()
-
-                    # 0. Ghost Workers cleanup: mark stale workers as offline
-                    # Workers send heartbeats every 10s. If we haven't heard from one
-                    # in 120s (12 missed heartbeats), it's dead/frozen.
                     cursor.execute('''
-                        UPDATE workers SET status = 'offline'
-                        WHERE status = 'online' AND last_seen < datetime('now', '-120 seconds')
+                        SELECT COUNT(*) FROM jobs
+                        WHERE status IN ('running', 'assigned')
+                        AND (job_type != 'maintenance' OR job_type IS NULL)
+                        AND (is_maintenance = 0 OR is_maintenance IS NULL)
                     ''')
-                    if cursor.rowcount > 0:
-                        logger.warning(f"Marked {cursor.rowcount} ghost worker(s) as offline")
-                    conn.commit()
+                    active_compute_jobs = cursor.fetchone()[0]
 
-                    # 1. Cleanup orphaned running/assigned jobs (workers that died/timed out)
+                if active_compute_jobs > 0:
+                    logger.info(
+                        f"🚧 [DRAINAGE BARRIER] Maintenance job {maint_job_id} holding queue: "
+                        f"waiting for {active_compute_jobs} active compute job(s) to finish draining on nodes..."
+                    )
+                    # Freeze assignment of any new jobs
+                    time.sleep(5)
+                    continue
+
+                # Drainage complete! All machines are idle (0 active compute jobs).
+                logger.info(f"🚧 [DRAINAGE BARRIER] All nodes drained (0 active jobs). Switching maintenance job {maint_job_id} to RUNNING...")
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
                     cursor.execute('''
                         UPDATE jobs
-                        SET status = 'failed', exit_code = COALESCE(exit_code, -99)
-                        WHERE status IN ('running', 'assigned') 
-                        AND worker_id IN (
-                            SELECT worker_id FROM workers 
-                            WHERE status = 'offline' OR last_seen < datetime('now', '-300 seconds')
-                        )
-                    ''')
+                        SET status = 'running', started_at = CURRENT_TIMESTAMP
+                        WHERE job_id = ? AND status = 'pending'
+                    ''', (maint_job_id,))
                     conn.commit()
 
-                    # 1.5. Sovereign Watchdog: Find running or assigned jobs exceeding max runtime
+                # Trigger worker/cluster update orchestration
+                success = orchestrate_cluster_update(head_job)
+                
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    final_status = 'completed' if success else 'failed'
+                    exit_code = 0 if success else 1
                     cursor.execute('''
-                        SELECT job_id, repo, branch, status, started_at, created_at, max_runtime_hours
-                        FROM jobs
-                        WHERE status IN ('running', 'assigned')
-                    ''')
-                    active_jobs = [dict(row) for row in cursor.fetchall()]
-                    
-                    for job in active_jobs:
-                        job_id = job['job_id']
-                        max_hours = job['max_runtime_hours'] or 24.0
-                        start_time_str = job['started_at'] or job['created_at']
-                        if not start_time_str:
-                            continue
-                        try:
-                            # SQLite timestamps are in UTC
-                            start_t = datetime.strptime(start_time_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
-                            now_utc = dt.datetime.utcnow()
-                            elapsed_seconds = (now_utc - start_t).total_seconds()
-                            limit_seconds = (max_hours * 3600) + 300  # plus 5 minutes grace margin
-                            
-                            if elapsed_seconds > limit_seconds:
-                                logger.warning(f"Watchdog: Job {job_id} ({job['repo']}@{job['branch']}) has exceeded its max runtime of {max_hours} hours. (Elapsed: {elapsed_seconds/3600:.2f} hours)")
-                                expired_jobs.append(job_id)
-                        except Exception as ex:
-                            logger.error(f"Watchdog parsing error for job {job_id}: {ex}")
+                        UPDATE jobs
+                        SET status = ?, exit_code = ?, finished_at = CURRENT_TIMESTAMP
+                        WHERE job_id = ?
+                    ''', (final_status, exit_code, maint_job_id))
+                    conn.commit()
+                
+                logger.info(f"🏁 [MAINTENANCE] Maintenance job {maint_job_id} finished ({final_status}, exit code: {exit_code}). Resuming regular scheduler loop.")
+                time.sleep(2)
+                continue
 
-                    # 2. Fetch pending jobs ordered by creation time
-                    cursor.execute('SELECT * FROM jobs WHERE status = "pending" ORDER BY created_at ASC')
-                    pending_jobs = [dict(row) for row in cursor.fetchall()]
+            if not workers:
+                logger.warning("No online workers available.")
+                time.sleep(5)
+                continue
 
-                    # 3. Fetch online workers that are NOT already busy
-                    # Worker agents are single-threaded: they block in execute_job()
-                    # and cannot poll for new jobs until the current one finishes.
-                    # We must exclude workers that have a running or assigned job.
-                    cursor.execute('''
-                        SELECT * FROM workers
-                        WHERE status = "online"
-                        AND last_seen >= datetime('now', '-60 seconds')
-                        AND worker_id NOT IN (
-                            SELECT worker_id FROM jobs
-                            WHERE status IN ('running', 'assigned')
-                            AND worker_id IS NOT NULL
-                        )
-                        ORDER BY total_ram_gb DESC
-                    ''')
-                    workers = [dict(row) for row in cursor.fetchall()]
-
-                # Cancel expired jobs cleanly outside the main connection transaction to prevent SQLite locks
-                for job_id in expired_jobs:
-                    try:
-                        logger.warning(f"Watchdog: Forcefully cancelling expired job {job_id}")
-                        cancel_job_cleanly(job_id, exit_code=-15)
-                    except Exception as e:
-                        logger.error(f"Watchdog failed to cancel job {job_id}: {e}")
-
-                if not pending_jobs:
-                    time.sleep(5)
-                    continue
-
-                if not workers:
-                    logger.warning("No online workers available.")
-                    time.sleep(5)
-                    continue
-
-                for job in pending_jobs:
+            for job in pending_jobs:
                     job_id = job['job_id']
                     ram_required = job['ram_required_gb']
                     vram_required = job.get('vram_required_gb') or 0

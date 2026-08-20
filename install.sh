@@ -460,6 +460,29 @@ EOF
 python "%~dp0cluster-run" %*
 EOF
 
+    # 6.5 Install cluster-update CLI
+    echo "🛠️  Installing cluster-update CLI..."
+    if [ -f "$(dirname "$0")/src/cluster/cluster_update.py" ]; then
+        cp "$(dirname "$0")/src/cluster/cluster_update.py" "$HOME/.local/bin/cluster-update"
+    else
+        curl -sSL "$RAW_URL/src/cluster/cluster_update.py" -o "$HOME/.local/bin/cluster-update"
+    fi
+
+    sed -i.bak 's/\r$//' "$HOME/.local/bin/cluster-update" 2>/dev/null || true
+    rm -f "$HOME/.local/bin/cluster-update.bak"
+
+    if [ "$LOCAL_PYTHON" = "python" ]; then
+        sed -i.bak '1s/python3/python/' "$HOME/.local/bin/cluster-update" 2>/dev/null || true
+        rm -f "$HOME/.local/bin/cluster-update.bak"
+    fi
+
+    chmod +x "$HOME/.local/bin/cluster-update"
+
+    cat << 'EOF' > "$HOME/.local/bin/cluster-update.cmd"
+@echo off
+python "%~dp0cluster-update" %*
+EOF
+
 
     # Add ~/.local/bin to PATH if not already there
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
