@@ -82,6 +82,15 @@ Triggers a direct local run on the Headnode without pushing to GitHub or creatin
 ```bash
 cluster-run --local
 ```
+The default label is `default`. Distinct labels submit independent jobs that
+can run or wait in the scheduler concurrently:
+```bash
+cluster-run --local --label experiment-a
+cluster-run --local --label experiment-b
+```
+Submitting the same label again replaces only that user's earlier active job
+with the same label. Use separate project directories for concurrent CLI
+invocations so local state and downloaded results do not overlap.
 *   Ingests current directory directly from the Headnode local filesystem (`130.223.73.209`).
 *   Performs fail-fast validation (`HTTP 400`) before job placement.
 *   Runs inside isolated Docker container with real-time local log streaming and direct metrics sync.
