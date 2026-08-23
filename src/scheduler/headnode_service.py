@@ -32,6 +32,7 @@ import zipfile
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
+from cluster.local_job_identity import local_job_branch, normalize_local_label
 
 load_dotenv()
 
@@ -75,6 +76,14 @@ oauth.register(
 FREE_SPACE_THRESHOLD_GB = 100
 CLUSTER_TOKEN = os.environ.get("CLUSTER_TOKEN")
 MAINTENANCE_MODE = False
+LOCAL_SUBMISSION_LOCK = threading.Lock()
+
+
+@app.teardown_request
+def release_local_submission_lock(_exception=None):
+    """Release the local submit critical section even when a request fails."""
+    if request.environ.pop("cluster_ci_local_submission_lock", False):
+        LOCAL_SUBMISSION_LOCK.release()
 
 def check_token():
     if not CLUSTER_TOKEN:
@@ -608,11 +617,12 @@ def submit_job():
     local_archive_path = None
 
     if is_local:
-        # Local job mode: assign local-draft/{username} branch and save source archive
-        if username:
-            branch = f"local-draft/{username}"
-        elif not branch or not branch.startswith("local-draft/"):
-            branch = "local-draft/anonymous"
+        # The server owns local-job identity; never trust a client-supplied branch.
+        try:
+            local_label = normalize_local_label(data.get('local_label'))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        branch = local_job_branch(username, local_label)
 
         gh_run_id = None  # No GitHub Action associated with local jobs
 
@@ -627,6 +637,12 @@ def submit_job():
         local_archive_path = archive_dest
 
         required_hashes = []
+
+        # Keep replacement lookup + cancellation + insertion atomic with respect
+        # to other local submissions handled by this scheduler process. Uploads
+        # remain parallel because the lock starts only after source ingestion.
+        LOCAL_SUBMISSION_LOCK.acquire()
+        request.environ["cluster_ci_local_submission_lock"] = True
     else:
         # Standard GHA / Git mode: Shallow clone to get dvc.lock
         required_hashes = []
@@ -659,8 +675,8 @@ def submit_job():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # 1. AUTO-CANCELLATION: Automatically cancel active jobs according to branch category
-    # - Draft branches (cluster-draft/* or local-draft/*): Cancel active draft jobs
-    #   for the same USERNAME — one active draft run per user at a time.
+    # - Local draft branches: replace only the same user's job with the same label.
+    # - Git-backed draft branches: preserve the existing one-draft-run-per-user policy.
     # - Non-draft branches (main, feature/*, etc.): Only cancel PENDING jobs on the same repo+branch.
     jobs_to_cancel = []
     cancel_reasons = {}  # job_id -> reason string for tracing
@@ -670,21 +686,21 @@ def submit_job():
         try:
             with get_db_conn() as conn:
                 cursor = conn.cursor()
-                if branch.startswith("local-draft/"):
+                if is_local:
                     if username:
                         cursor.execute('''
                             SELECT job_id, repo, branch, username, status FROM jobs
-                            WHERE username = ? AND branch LIKE 'local-draft/%'
+                            WHERE username = ? AND branch = ?
                             AND status IN ('pending', 'assigned', 'running')
-                        ''', (username,))
+                        ''', (username, branch))
                         active_jobs = cursor.fetchall()
-                        app.logger.info(f"📋 [AUTO-CANCEL] Local draft mode: found {len(active_jobs)} active local draft job(s) for user={username}")
+                        app.logger.info(f"📋 [AUTO-CANCEL] Local draft mode: found {len(active_jobs)} active local draft job(s) for user={username}, label={local_label}")
                         for aj in active_jobs:
                             aj_id = aj['job_id']
                             aj_repo = aj['repo'] or '?'
                             aj_status = aj['status']
                             jobs_to_cancel.append(aj_id)
-                            cancel_reasons[aj_id] = f"local_draft:same_user (user={username}, repo={aj_repo}, status={aj_status})"
+                            cancel_reasons[aj_id] = f"local_draft:same_user_and_label (user={username}, label={local_label}, repo={aj_repo}, status={aj_status})"
                 elif branch.startswith("cluster-draft/"):
                     if username:
                         cursor.execute('''
@@ -744,7 +760,10 @@ def submit_job():
         ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_archive_path, job_type, is_maintenance))
         conn.commit()
 
-    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0, "job_type": job_type, "is_maintenance": is_maintenance})
+    response = {"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0, "job_type": job_type, "is_maintenance": is_maintenance}
+    if is_local:
+        response.update({"branch": branch, "local_label": local_label})
+    return jsonify(response)
 
 @app.route('/workers', methods=['GET'])
 def list_workers():

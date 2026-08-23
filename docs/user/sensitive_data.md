@@ -80,6 +80,18 @@ cluster-run --local
 
 The CLI will detect that it is operating in Direct Headnode Mode, bypass GitHub Actions, and stream execution logs directly to your SSH terminal session.
 
+The command uses the label `default` when no label is specified. Give
+independent jobs distinct labels so they can run or wait concurrently:
+
+```bash
+cluster-run --local --label summary-a
+cluster-run --local --label summary-b
+```
+
+Submitting the same label again replaces only your earlier active job with
+that label. Use a separate project directory for every concurrent invocation
+to keep local state and returned results isolated.
+
 ---
 
 ## 4. Technical Architecture: How `cluster-run --local` Operates

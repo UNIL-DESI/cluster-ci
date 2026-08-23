@@ -4,7 +4,15 @@ This document describes how Cluster-CI handles GitHub Actions job concurrency an
 
 ## Concurrency Model
 
-Cluster-CI uses a **dual-mode concurrency strategy** based on branch type:
+Cluster-CI uses a concurrency strategy based on submission mode and branch type:
+
+### Local Jobs (`cluster-run --local`) — Replace by Label
+
+The default local label is `default`. A new local submission cancels an active
+local job only when both the username and label match. Different labels remain
+running or pending in the normal scheduler queue. Concurrent CLI invocations
+must use separate project directories so their local state and results do not
+overlap.
 
 ### Draft Branches (`cluster-draft/*`) — Aggressive Cancel
 
@@ -12,7 +20,7 @@ Used by `cluster-run` for fast iteration. A new submission **immediately cancels
 
 - GHA: `cancel-in-progress: true` → kills the old workflow run instantly.
 - `submit_job.py`: signal handler propagates full cancellation to the worker.
-- Headnode: auto-cancels all active jobs matching the same user or draft branch.
+- Headnode: auto-cancels active Git-backed draft jobs for the same user.
 - Worker: receives `/cancel/<job_id>` → eradicates process tree, purges VRAM, frees RAM.
 
 ### Non-Draft Branches (`main`, `feature/*`, etc.) — Detach & Queue
@@ -75,6 +83,8 @@ On every `/submit_job` call, the headnode scans active jobs and applies cancella
 
 | Branch Type | Pending | Assigned | Running |
 |-------------|---------|----------|---------|
+| Local, same user + label | ✅ Cancel | ✅ Cancel | ✅ Cancel |
+| Local, different label | ❌ Preserve | ❌ Preserve | ❌ Preserve |
 | `cluster-draft/*` | ✅ Cancel | ✅ Cancel | ✅ Cancel |
 | Non-draft (`main`, etc.) | ✅ Cancel | ❌ Preserve | ❌ Preserve |
 

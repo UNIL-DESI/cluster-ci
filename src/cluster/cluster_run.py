@@ -39,6 +39,28 @@ _LAST_WAS_TQDM = False
 TQDM_REGEX = re.compile(r"\d+%%\s*\|[█░■□▊▋▌▍▎▏\s\-]*\|?\s*\d+/\d+\s*\[\d+:\d+")
 _LAST_SYNC_ERROR_TIME = 0
 
+DEFAULT_LOCAL_LABEL = "default"
+_LOCAL_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def normalize_local_label(label=None):
+    """Validate a local-job label while keeping the standalone CLI portable."""
+    if label is None:
+        return DEFAULT_LOCAL_LABEL
+    if not isinstance(label, str) or not _LOCAL_LABEL_RE.fullmatch(label):
+        raise ValueError(
+            "Local job labels must be 1-64 characters and contain only "
+            "letters, numbers, underscores, or hyphens; the first character "
+            "must be a letter or number."
+        )
+    return label
+
+
+def local_job_branch(username, label=None):
+    normalized_label = normalize_local_label(label)
+    base = f"local-draft/{username or 'anonymous'}"
+    return base if normalized_label == DEFAULT_LOCAL_LABEL else f"{base}/{normalized_label}"
+
 
 
 # Log redirection settings
@@ -1642,7 +1664,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
         time.sleep(2)
 
 
-def local_run():
+def local_run(label=None):
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
     global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE
 
@@ -1672,10 +1694,11 @@ def local_run():
     config = parse_cluster_ci_config(".")
     repo = get_repo_full_name()
     username = get_local_username()
-    BRANCH = f"local-draft/{username}"
+    label = normalize_local_label(label)
+    BRANCH = local_job_branch(username, label)
     COMMIT_SHA = "local-snapshot"
 
-    print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (repo: {repo}, branch: {BRANCH})")
+    print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (label: {label}, repo: {repo}, branch: {BRANCH})")
 
     archive_path = package_local_source(".")
     source_transfer_id = None
@@ -1704,6 +1727,7 @@ def local_run():
         "custom_web_app": config["custom_web_app"],
         "allowed_workers": config["allowed_workers"],
         "is_local": True,
+        "local_label": label,
         "source_transfer_id": source_transfer_id,
     }
 
@@ -1774,8 +1798,18 @@ def main():
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view' or 'cancel'")
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
+    parser.add_argument("--label", default=None,
+                        help="Local job label; submitting the same label replaces its previous active job")
 
     args = parser.parse_args()
+
+    if args.label is not None and not args.local:
+        parser.error("--label can only be used with --local")
+    if args.local:
+        try:
+            args.label = normalize_local_label(args.label)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     check_dependencies(require_gh=not args.local if args.command is None else True)
 
@@ -1917,7 +1951,7 @@ def main():
         # Submit run
         if args.local:
             try:
-                local_run()
+                local_run(args.label)
             finally:
                 cleanup()
         else:

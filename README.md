@@ -50,6 +50,7 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 |---|---|
 | `cluster-run` | Soumet un job et streame en temps réel et en direct les logs d'exécution ligne par ligne dans votre terminal d'origine sans perte |
 | `cluster-run --local` | Exécution directe sur Headnode pour données sensibles/confidentielles (zéro push GitHub, ingestion locale, validation HTTP 400) |
+| `cluster-run --local --label <nom>` | Soumet un job local indépendant ; seul un job actif avec le même utilisateur et le même label est remplacé |
 | `cluster-run --background` | Soumet un job sans bloquer le terminal |
 | `cluster-run list` | Liste les runs récents |
 | `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
@@ -58,6 +59,11 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 
 > [!NOTE]
 > Pour traiter des données confidentielles ou soumises à un NDA sans aucun upload vers GitHub, consultez le guide **[Sensitive Data & Local Execution](docs/user/sensitive_data.md)**.
+
+Le label local par défaut est `default`. Des labels distincts permettent à
+plusieurs jobs locaux de s'exécuter ou d'attendre dans la file simultanément.
+Utilisez un dossier de projet distinct par invocation concurrente afin d'isoler
+les fichiers d'état et les résultats locaux.
 
 **Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions. Les logs complets sont redirigés dans un dossier local `.cluster-ci-logs/` (automatiquement exclu via `.gitignore`), avec affichage intégral en console et duplication complète dans un fichier de logs local (avec rotation automatique conservant uniquement les 5 fichiers les plus récents). Pour éviter tout bruit visuel inutile dans la console, les fichiers d'infrastructure internes (les fichiers sous `.dvc-viewer/hashes/` et `dvc.lock`) sont rapatriés de manière totalement silencieuse, tandis que seuls les métriques et plots utilisateur sont listés explicitement à la complétion.
 
@@ -224,4 +230,3 @@ cluster-ci/
 - [x] Fix Runner : Blocage infini du runner sur la phase sync après échec d'un stage (ajout de timeouts sur watchdog cleanup, git push/pull et docker exec sync)
 - [x] Job Execution Timeout : Passage de la limite de temps de GitHub Actions de 6h à 24h (via `timeout-minutes: 1440` dans le workflow et dans `install.sh`)
 - [ ] [Ordonnancement multi-GPU : Support multi-slot et isolation matérielle GPU](https://github.com/UNIL-DESI/cluster-ci/issues/110)
-
