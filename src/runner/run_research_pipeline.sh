@@ -918,11 +918,11 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 120 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && timeout -k 10 120 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 if [ "$IS_LOCAL" = "1" ]; then
     log_info "Local mode: returning declared DVC outputs to the headnode..."
-    if ! timeout 610 docker exec "${MAIN_CONTAINER_NAME}" bash -c "timeout -k 10 600 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync-local-results"; then
+    if ! timeout 610 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && timeout -k 10 600 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync-local-results"; then
         log_error "Local result archive synchronization failed."
         if [ "$EXEC_RET" -eq 0 ]; then
             EXEC_RET=74
