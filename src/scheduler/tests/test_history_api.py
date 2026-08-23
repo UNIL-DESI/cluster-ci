@@ -84,7 +84,8 @@ def run_history_test_logic(client):
     assert runs[1]['job_id'] == "job1"
 
     # 4. Test /api/runs/<job_id>/files (with Mocking subprocess)
-    with patch('subprocess.run') as mock_run:
+    with patch('headnode_service.find_local_repo', return_value=None), \
+         patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=json.dumps([{"path": "data.csv", "isout": True}])

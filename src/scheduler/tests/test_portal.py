@@ -51,7 +51,7 @@ class TestPortalAndProxy(unittest.TestCase):
     def test_dashboard_renders_login_template(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'Cluster-CI Portal', response.data)
+        self.assertIn(b'<title>Cluster-CI Login</title>', response.data)
 
     def test_view_project_redirects_when_not_logged_in(self):
         # Let's try to fetch what exactly is in the url_map for view_project
