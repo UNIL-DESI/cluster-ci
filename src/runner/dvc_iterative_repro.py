@@ -166,6 +166,10 @@ def main():
         if ret.returncode != 0:
             clear_status()
             print(f"❌ Stage {stage} failed with code {ret.returncode}")
+            if os.environ.get("IS_LOCAL") == "1":
+                print("🏠 Local mode: skipping Git commit and push.")
+                sys.exit(ret.returncode)
+
             print(f"💾 Committing and pushing failure state to GitHub...")
             subprocess.run(["git", "add", "."], check=False)
             status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
