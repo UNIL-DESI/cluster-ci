@@ -166,7 +166,14 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     exit $SUBMIT_RET
 fi
 
-REPO_WORK_DIR="repositories/$TARGET_REPO"
+# Normal workspace and volume names stay unchanged.
+WORKSPACE_KEY="$TARGET_REPO"
+VIEWER_BIND_ADDRESS="0.0.0.0"
+if [ "$IS_LOCAL" = "1" ]; then
+    WORKSPACE_KEY="_local/$TARGET_REPO"
+    VIEWER_BIND_ADDRESS="127.0.0.1"
+fi
+REPO_WORK_DIR="repositories/$WORKSPACE_KEY"
 
 # Graceful kill with timeout fallback to SIGKILL
 _kill_with_timeout() {
@@ -221,7 +228,7 @@ fi
 log_info "Scanning for zombie containers (JIT Zombie GC)..."
 python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-zombie-gc
 python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-gc
-python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-running "$TARGET_REPO"
+python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-running "$WORKSPACE_KEY"
 
 function cleanup_job_resources() {
     log_info "Cleaning up job resources for ${JOB_ID}..."
@@ -256,7 +263,7 @@ function cleanup_job_resources() {
     # Kill pipeline siblings (gpu_watchdog.sh survives when only tee PID is killed)
     pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
     pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
-    python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$TARGET_REPO" "$BASE_DIR/repositories/$TARGET_REPO"
+    python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$WORKSPACE_KEY" "$BASE_DIR/$REPO_WORK_DIR"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
 }
@@ -506,7 +513,7 @@ if [ -n "$CLUSTER_CI_SECRETS_FILE" ] && [ -f "$CLUSTER_CI_SECRETS_FILE" ]; then
 fi
 
 # Create a volume for the user's home to avoid redownloading dvc every time and to keep uv/pip caches
-HOME_CACHE_VOLUME="cluster-ci-home-$(echo "$TARGET_REPO" | tr '/' '-')"
+HOME_CACHE_VOLUME="cluster-ci-home-$(echo "$WORKSPACE_KEY" | tr '/' '-')"
 if ! docker volume inspect "$HOME_CACHE_VOLUME" >/dev/null 2>&1; then
     docker volume create "$HOME_CACHE_VOLUME" >/dev/null
 fi
@@ -529,7 +536,7 @@ if [ -n "$EXPOSED_PORT" ]; then
     fi
     VIEWER_PORT=$EXPOSED_PORT
     log_info "Using explicit EXPOSED_PORT from .cluster-ci: $VIEWER_PORT"
-    DOCKER_PORT_MAPPING="-p 0.0.0.0:$VIEWER_PORT:$VIEWER_PORT"
+    DOCKER_PORT_MAPPING="-p $VIEWER_BIND_ADDRESS:$VIEWER_PORT:$VIEWER_PORT"
     log_info "Main container will expose port $VIEWER_PORT (Web Application mode)"
 else
     VIEWER_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
@@ -775,7 +782,7 @@ fi
 log_info "Preventive cleanup of DVC lock file..."
 docker_exec "rm -f .dvc/tmp/lock"
 
-if [ -n "$DVC_REMOTE_P2P_URL" ]; then
+if [ "$IS_LOCAL" != "1" ] && [ -n "$DVC_REMOTE_P2P_URL" ]; then
     log_info "Data Plane: Configuring dynamic P2P remote to $DVC_REMOTE_P2P_URL..."
     PEER_REMOTE_URL="$DVC_REMOTE_P2P_URL/$TARGET_REPO/.dvc/cache/files/md5"
 
@@ -829,7 +836,7 @@ else
         --entrypoint "" \
         -v "$(pwd):/workspace" -w /workspace \
         -v "$HOME_CACHE_VOLUME:/home/user" \
-        -p "0.0.0.0:$VIEWER_PORT:$VIEWER_PORT" \
+        -p "$VIEWER_BIND_ADDRESS:$VIEWER_PORT:$VIEWER_PORT" \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
         --ipc=host \

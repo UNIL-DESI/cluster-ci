@@ -1,4 +1,5 @@
 import time
+import hmac
 import requests
 import os
 import sys
@@ -19,7 +20,7 @@ import tempfile
 import shutil
 import signal
 import datetime
-from flask import Flask, jsonify, send_from_directory, send_file, request, Response
+from flask import abort, Flask, jsonify, send_from_directory, send_file, request, Response
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -454,9 +455,10 @@ def execute_job(job):
     env["CLUSTER_CI_MODE"] = "executor"
     env["JOB_ID"] = job_id
     env["LOGS_DIR"] = LOGS_DIR
+    env["IS_LOCAL"] = "1" if job.get("is_local") else "0"
     if job.get('is_local'):
         logger.info(f"Injecting IS_LOCAL=1 for job {job_id}")
-        env["IS_LOCAL"] = "1"
+    workspace_key = "_local/" + repo if job.get("is_local") else repo
     commit_hash = job.get('commit_hash')
     if commit_hash:
         logger.info(f"Injecting CALLER_COMMIT_SHA for job {job_id}: {commit_hash}")
@@ -501,7 +503,7 @@ def execute_job(job):
 
     try:
         # Delete stale port file from previous runs
-        port_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-viewer-port")
+        port_file = os.path.join(REPOS_DIR, workspace_key, ".cluster-ci-viewer-port")
         if os.path.exists(port_file):
             try:
                 os.remove(port_file)
@@ -622,7 +624,7 @@ def execute_job(job):
 
             # Try to report dynamic viewer port if not already done
             if not port_reported:
-                port_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-viewer-port")
+                port_file = os.path.join(REPOS_DIR, workspace_key, ".cluster-ci-viewer-port")
                 if os.path.exists(port_file):
                     try:
                         with open(port_file, 'r') as f:
@@ -638,7 +640,7 @@ def execute_job(job):
 
         # Try to extract the commit hash from the job's directory
         commit_hash = None
-        commit_file = os.path.join(REPOS_DIR, repo, ".cluster-ci-commit")
+        commit_file = os.path.join(REPOS_DIR, workspace_key, ".cluster-ci-commit")
         if os.path.exists(commit_file):
             try:
                 with open(commit_file, 'r') as f:
@@ -722,6 +724,8 @@ def drain_pending_syncs():
         return
 
     for project_name, data in registry.items():
+        if project_name.startswith("_local/"):
+            continue  # Local workspaces are evicted without uploading.
         if data.get("sync_status") == "pending":
             logger.info(f"Project {project_name} has pending sync. Checking headnode space...")
             try:
@@ -769,6 +773,69 @@ def drain_pending_syncs():
 
 # Webhook server
 app = Flask(__name__)
+
+def valid_cluster_token():
+    return bool(CLUSTER_TOKEN) and hmac.compare_digest(
+        request.headers.get('Authorization', '').encode(),
+        f'Bearer {CLUSTER_TOKEN}'.encode(),
+    )
+
+
+def workspace_path(repo, local=False):
+    """Resolve a repository within its mode's namespace, including symlinks."""
+    parts = repo.split('/')
+    if len(parts) != 2 or any(p in {'', '.', '..', '_local'} for p in parts):
+        abort(400)
+    root = os.path.realpath(os.path.join(REPOS_DIR, '_local') if local else REPOS_DIR)
+    path = os.path.realpath(os.path.join(root, repo))
+    if os.path.commonpath([root, path]) != root:
+        abort(400)
+    if not local and os.path.commonpath([os.path.realpath(os.path.join(REPOS_DIR, '_local')), path]) == os.path.realpath(os.path.join(REPOS_DIR, '_local')):
+        abort(400)
+    return path
+
+
+@app.before_request
+def require_local_file_token():
+    local = request.args.get('local') == '1'
+    protected = request.endpoint == 'local_viewer_proxy'
+    if request.endpoint in {'worker_dvc_get', 'worker_dvc_list', 'start_dvc_viewer'}:
+        protected = protected or local
+    if request.endpoint == 'fetch_artifact':
+        path = os.path.realpath(os.path.join(REPOS_DIR, request.view_args['file_path']))
+        relative = os.path.relpath(path, os.path.realpath(REPOS_DIR))
+        protected = relative.split(os.sep)[0] in {'_local', '_local_uploads', '_local_results', '_local_transfers'}
+    if protected and not valid_cluster_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.route('/api/worker/local/view/<owner>/<repo>/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+@app.route('/api/worker/local/view/<owner>/<repo>/<path:path>', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+def local_viewer_proxy(owner, repo, path):
+    """Keep local viewers on loopback; expose them only through this token check."""
+    root = workspace_path(f'{owner}/{repo}', local=True)
+    try:
+        with open(os.path.join(root, '.cluster-ci-viewer-port')) as handle:
+            port = int(handle.read().strip())
+        if not 1024 <= port <= 65535:
+            abort(400)
+        response = requests.request(
+            request.method, f'http://127.0.0.1:{port}/{path}', params=request.args,
+            data=request.get_data(), headers={'Content-Type': request.content_type} if request.content_type else {},
+            stream=True, timeout=10, allow_redirects=False,
+        )
+        def generate():
+            try:
+                yield from response.iter_content(65536)
+            finally:
+                response.close()
+        excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
+        return Response(generate(), status=response.status_code, headers={
+            k: v for k, v in response.headers.items() if k.lower() not in excluded
+        })
+    except (OSError, ValueError, requests.RequestException):
+        return jsonify({"error": "Local viewer unavailable"}), 502
+
 
 def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
     """Background thread function to clean up Docker containers, purge host Ollama VRAM,
@@ -1157,7 +1224,7 @@ def start_dvc_viewer():
     if not repo:
         return jsonify({"error": "Missing 'repo' parameter"}), 400
 
-    repo_path = os.path.join(REPOS_DIR, repo)
+    repo_path = workspace_path(repo, local=request.args.get('local') == '1')
     if not os.path.exists(repo_path):
         return jsonify({"error": f"Repository '{repo}' not found on this worker"}), 404
 
@@ -1165,14 +1232,24 @@ def start_dvc_viewer():
     repo_safe = repo.replace('/', '-')
     rev_short = (rev or 'main')[:12]
     worktree_name = f"dvc-viewer-{repo_safe}-{rev_short}"
-    worktree_dir = f"/tmp/{worktree_name}"
+    local = request.args.get('local') == '1'
+    worktree_dir = repo_path if local else f"/tmp/{worktree_name}"
     target_rev = rev or "origin/main"
 
     with dvc_viewer_lock:
         proc = None
         try:
             # 1. Prepare worktree & DVC cache (with Fast-Path and defensive fallback)
-            prepare_dvc_worktree(repo_path, worktree_dir, target_rev)
+            if local:
+                try:
+                    with open(os.path.join(repo_path, '.cluster-ci-viewer-port')) as handle:
+                        existing_port = int(handle.read().strip())
+                    with socket.create_connection(('127.0.0.1', existing_port), timeout=0.5):
+                        return jsonify({'status': 'ok', 'port': existing_port})
+                except (OSError, ValueError):
+                    pass
+            else:
+                prepare_dvc_worktree(repo_path, worktree_dir, target_rev)
 
             # 2. Start dvc-viewer in the isolated worktree
             port = get_free_port()
@@ -1184,7 +1261,7 @@ def start_dvc_viewer():
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
             dvc_viewer_bin = get_executable("dvc-viewer")
-            cmd = [dvc_viewer_bin, "--port", str(port), "--host", "0.0.0.0"]
+            cmd = [dvc_viewer_bin, "--port", str(port), "--host", "127.0.0.1" if request.args.get("local") == "1" else "0.0.0.0"]
 
             proc = subprocess.Popen(
                 cmd,
@@ -1218,9 +1295,13 @@ def start_dvc_viewer():
                     proc.terminate()
                 except Exception:
                     pass
-                safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
+                if not local:
+                    safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
                 return jsonify({"error": "dvc-viewer failed to start or open port"}), 500
 
+            if local:
+                with open(os.path.join(repo_path, '.cluster-ci-viewer-port'), 'w') as handle:
+                    handle.write(str(port))
             logger.info(f"Historical dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
             return jsonify({"status": "ok", "port": port})
 
@@ -1231,7 +1312,8 @@ def start_dvc_viewer():
                     proc.terminate()
                 except Exception:
                     pass
-            safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
+            if not local:
+                safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
             return jsonify({"error": str(e)}), 500
 
 @app.route('/api/worker/dvc/list', methods=['GET'])
@@ -1240,9 +1322,23 @@ def worker_dvc_list():
     rev = request.args.get('rev')
     if not repo: return jsonify({"error": "Missing repo"}), 400
 
-    repo_path = os.path.join(REPOS_DIR, repo)
+    repo_path = workspace_path(repo, local=request.args.get('local') == '1')
     if not os.path.exists(repo_path):
         return jsonify({"error": "Repository not found on this worker"}), 404
+
+    if request.args.get('local') == '1':
+        directory = os.path.realpath(os.path.join(repo_path, request.args.get('path', '')))
+        if os.path.commonpath([repo_path, directory]) != repo_path:
+            abort(400)
+        if not os.path.isdir(directory):
+            return jsonify({"error": "Directory not found"}), 404
+        files = []
+        for entry in os.scandir(directory):
+            if entry.name in {'.git', '.dvc'} or entry.is_symlink():
+                continue
+            files.append({'path': entry.name, 'is_dir': entry.is_dir(),
+                          'size': entry.stat().st_size, 'isout': True})
+        return jsonify(files)
 
     cmd = [DVC_CMD, "list", ".", "--dvc-only", "--json"]
     if rev: cmd += ["--rev", rev]
@@ -1262,9 +1358,18 @@ def worker_dvc_get():
     file_path = request.args.get('path')
     if not repo or not file_path: return jsonify({"error": "Missing repo or path"}), 400
 
-    repo_path = os.path.join(REPOS_DIR, repo)
+    repo_path = workspace_path(repo, local=request.args.get('local') == '1')
     if not os.path.exists(repo_path):
         return jsonify({"error": "Repository not found on this worker"}), 404
+
+    resolved_file = os.path.realpath(os.path.join(repo_path, file_path))
+    if os.path.commonpath([repo_path, resolved_file]) != repo_path:
+        abort(400)
+    if request.args.get('local') == '1':
+        # Local pseudo revisions are run labels, not Git commits. Never fetch a remote.
+        if os.path.isfile(resolved_file):
+            return send_file(resolved_file, as_attachment=request.args.get('inline') != 'true')
+        return jsonify({"error": "Local file not found"}), 404
 
     tmp_dir = tempfile.mkdtemp()
     try:

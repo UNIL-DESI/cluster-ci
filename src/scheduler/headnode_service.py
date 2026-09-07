@@ -8,7 +8,7 @@ socket.getaddrinfo = new_getaddrinfo
 # Set a global timeout for all socket operations to prevent infinite hangs
 socket.setdefaulttimeout(20.0)
 
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template, send_file
+from flask import abort, Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template, send_file
 from persistence import init_db, get_db_conn
 from authlib.integrations.flask_client import OAuth
 import uuid
@@ -25,11 +25,12 @@ import re
 import json
 import yaml
 import hashlib
+import hmac
 import tempfile
 import io
 import base64
 import zipfile
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -85,10 +86,83 @@ def check_token():
     token = auth_header.split(" ")[1]
     return token == CLUSTER_TOKEN
 
+def local_token_valid():
+    return bool(CLUSTER_TOKEN) and hmac.compare_digest(
+        request.headers.get('Authorization', '').encode(), f'Bearer {CLUSTER_TOKEN}'.encode()
+    )
+
+
+def local_session_proof():
+    key = app.secret_key
+    if isinstance(key, str):
+        key = key.encode()
+    return hmac.new(key, f'local-files:{CLUSTER_TOKEN}'.encode(), hashlib.sha256).hexdigest()
+
+
+def local_files_authorized():
+    return local_token_valid() or bool(CLUSTER_TOKEN and 'user' in session and hmac.compare_digest(
+        str(session.get('local_files', '')).encode(), local_session_proof().encode()
+    ))
+
+
+def require_local_files():
+    if local_files_authorized():
+        return None
+    if 'user' in session and request.accept_mimetypes.accept_html:
+        return render_template('local_access.html'), 401
+    return jsonify({"error": "Cluster token required for local files"}), 401
+
+
+@app.route('/local-access', methods=['GET', 'POST'])
+def local_access():
+    if 'user' not in session:
+        return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        token = request.form.get('cluster_token', '')
+        if CLUSTER_TOKEN and hmac.compare_digest(token.encode(), CLUSTER_TOKEN.encode()):
+            session['local_files'] = local_session_proof()
+            return redirect(url_for('dashboard'))
+        return render_template('local_access.html', error=True), 401
+    return render_template('local_access.html')
+
+
+def is_local_revision(repo, rev):
+    if rev and (rev.startswith('local-') or rev.startswith('local-draft/')):
+        return True
+    with get_db_conn() as conn:
+        row = conn.execute(
+            'SELECT is_local FROM jobs WHERE repo = ? AND (commit_hash = ? OR branch = ?) ORDER BY created_at DESC LIMIT 1',
+            (repo, rev, rev),
+        ).fetchone()
+    return bool(row and row['is_local'])
+
+
+def local_worker(repo):
+    with get_db_conn() as conn:
+        row = conn.execute(
+            "SELECT w.service_url FROM jobs j JOIN workers w ON j.worker_id = w.worker_id "
+            "WHERE j.repo = ? AND j.is_local = 1 AND w.status = 'online' ORDER BY j.created_at DESC LIMIT 1",
+            (repo,),
+        ).fetchone()
+    return row['service_url'] if row else None
+
+
+def local_worker_get(repo, endpoint, **params):
+    worker = local_worker(repo)
+    if not worker:
+        return jsonify({"error": "Local workspace worker unavailable"}), 404
+    target = worker + endpoint + '?' + urlencode(dict(repo=repo, local='1', **params))
+    return proxy_request(target, local_worker_api=True)
+
+
 @app.before_request
 def require_token():
     # Only protect API endpoints that workers or users use to modify state
     protected_endpoints = ['register_worker', 'submit_job', 'submit_maintenance_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
+    local_transfers = {'download_code', 'sync_results', 'get_job_results', 'create_local_transfer',
+                       'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer'}
+    if request.endpoint in local_transfers and not local_token_valid():
+        return jsonify({"error": "Unauthorized"}), 401
     if request.endpoint in protected_endpoints:
         if not check_token():
             return jsonify({"error": "Unauthorized"}), 401
@@ -1091,8 +1165,15 @@ REPOS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path
 def find_local_repo(repo_slug, auto_clone=True):
     """Find the local clone of a repo, handling owner name mismatches.
     If not found locally and repo_slug is in owner/repo format, attempts auto-cloning."""
+    parts = repo_slug.split('/')
+    if len(parts) != 2 or any(part in {'', '.', '..', '_local'} for part in parts):
+        return None
     # Try exact match first
-    exact = os.path.join(REPOS_DIR, repo_slug)
+    exact = os.path.realpath(os.path.join(REPOS_DIR, repo_slug))
+    root = os.path.realpath(REPOS_DIR)
+    protected = os.path.realpath(os.path.join(REPOS_DIR, '_local'))
+    if os.path.commonpath([root, exact]) != root or os.path.commonpath([protected, exact]) == protected:
+        return None
     if os.path.exists(exact) and os.path.exists(os.path.join(exact, ".git")):
         return exact
     
@@ -1103,6 +1184,9 @@ def find_local_repo(repo_slug, auto_clone=True):
             if owner_dir.startswith('_'):  # Skip _tmp_artifacts etc.
                 continue
             candidate = os.path.join(REPOS_DIR, owner_dir, repo_name)
+            resolved = os.path.realpath(candidate)
+            if os.path.commonpath([root, resolved]) != root or os.path.commonpath([protected, resolved]) == protected:
+                continue
             if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, ".git")):
                 return candidate
 
@@ -1145,7 +1229,17 @@ def artifacts(repo_owner, repo_name, rev, file_path):
       2. Proxy to any online worker that has run jobs for this repo (P2P)
       3. Fallback: local DVC extraction on headnode (requires remote storage)
     """
+    if repo_owner in {'_local', '.', '..'} or repo_name in {'.', '..'}:
+        abort(400)
+    if os.path.isabs(file_path) or '..' in file_path.replace('\\', '/').split('/'):
+        abort(400)
     repo_slug = f"{repo_owner}/{repo_name}"
+    if is_local_revision(repo_slug, rev):
+        denied = require_local_files()
+        if denied is not None:
+            return denied
+        return local_worker_get(repo_slug, '/api/worker/dvc/get', path=file_path,
+                                inline=request.args.get('inline', 'false'))
 
     # --- Strategy 1 & 2: P2P Worker Proxy (Primary Path) ---
     # Workers have DVC caches from executing jobs — no remote storage needed.
@@ -1367,13 +1461,15 @@ def api_get_run_logs(job_id):
 def api_run_files(job_id):
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT repo, commit_hash, branch FROM jobs WHERE job_id = ?', (job_id,))
+        cursor.execute('SELECT repo, commit_hash, branch, is_local FROM jobs WHERE job_id = ?', (job_id,))
         job = cursor.fetchone()
 
     if not job:
         return jsonify({"error": "Job not found"}), 404
 
     repo = job['repo']
+    if job['is_local']:
+        return local_worker_get(repo, '/api/worker/dvc/list', path=request.args.get('path', ''))
     commit_hash = job['commit_hash']
     branch = job['branch'] or 'main'
 
@@ -1603,6 +1699,7 @@ def authorize():
 
 @app.route('/logout')
 def logout():
+    session.pop('local_files', None)
     session.pop('user', None)
     session.pop('token', None)
     return redirect(url_for('dashboard'))
@@ -1679,6 +1776,12 @@ def periodic_clean_ghosts():
         except Exception as e:
             app.logger.error(f"Error in background clean_ghosts: {e}")
 
+@app.route('/local-view/<owner>/<repo>/')
+@app.route('/local-view/<owner>/<repo>/<path:path>')
+def view_local_project(owner, repo, path=''):
+    return view_project(owner, repo, path)
+
+
 @app.route('/view/<owner>/<repo>/')
 @app.route('/view/<owner>/<repo>/<path:path>')
 def view_project(owner, repo, path=''):
@@ -1686,6 +1789,29 @@ def view_project(owner, repo, path=''):
         return redirect(url_for('dashboard'), code=302)
 
     repo_full_name = f"{owner}/{repo}"
+    requested_rev = request.args.get('rev')
+    with get_db_conn() as conn:
+        active = conn.execute(
+            "SELECT is_local FROM jobs WHERE repo = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            (repo_full_name,),
+        ).fetchone()
+    local_view = request.path.startswith('/local-view/') or request.args.get('local') == '1' or (is_local_revision(repo_full_name, requested_rev) if requested_rev else bool(active and active['is_local']))
+    if local_view:
+        denied = require_local_files()
+        if denied is not None:
+            return denied
+        worker = local_worker(repo_full_name)
+        if not worker:
+            return "Local workspace worker unavailable", 404
+        if not path:
+            response = requests.post(
+                worker + '/api/worker/dvc-viewer/start?local=1', json={'repo': repo_full_name},
+                headers={'Authorization': f'Bearer {CLUSTER_TOKEN}'}, timeout=60, allow_redirects=False,
+            )
+            if response.status_code != 200:
+                return "Local viewer unavailable", 502
+        return proxy_request(f'{worker}/api/worker/local/view/{owner}/{repo}/{path}',
+                             base_href=f'/local-view/{owner}/{repo}/', local_worker_api=True)
 
     # --- Case 1: Live (Running on a worker) ---
     with get_db_conn() as conn:
@@ -1694,7 +1820,7 @@ def view_project(owner, repo, path=''):
             SELECT w.service_url, j.viewer_port
             FROM jobs j
             JOIN workers w ON j.worker_id = w.worker_id
-            WHERE j.repo = ? AND j.status = 'running'
+            WHERE j.repo = ? AND j.status = 'running' AND COALESCE(j.is_local, 0) = 0
             ORDER BY j.started_at DESC LIMIT 1
         ''', (repo_full_name,))
         job = cursor.fetchone()
@@ -1918,7 +2044,7 @@ h1 {{ font-size: 1.25rem; margin: 0; color: #38bdf8; }}
         app.logger.error(f"Error calling worker {worker_url} to start dvc-viewer for {repo_full_name}: {e}")
         return f"Failed to reach worker to start dvc-viewer: {str(e)}", 502
 
-def proxy_request(target_url, base_href=None):
+def proxy_request(target_url, base_href=None, local_worker_api=False):
     """Simple proxy that forwards the request to the target_url.
 
     Args:
@@ -1927,13 +2053,17 @@ def proxy_request(target_url, base_href=None):
                    This fixes relative URL resolution when the viewer is served
                    behind a reverse proxy at a sub-path.
     """
+    outgoing_headers = {key: value for key, value in request.headers if key != 'Host'}
+    if local_worker_api:
+        outgoing_headers.pop('Cookie', None)
+        outgoing_headers['Authorization'] = f'Bearer {CLUSTER_TOKEN}' if CLUSTER_TOKEN else ''
     try:
         resp = requests.request(
             method=request.method,
             url=target_url,
-            headers={key: value for (key, value) in request.headers if key != 'Host'},
+            headers=outgoing_headers,
             data=request.get_data(),
-            cookies=request.cookies,
+            cookies={} if local_worker_api else request.cookies,
             allow_redirects=False,
             params=request.args,
             stream=True,
@@ -1969,6 +2099,14 @@ def proxy_request(target_url, base_href=None):
 
 @app.route('/api/projects/<path:repo>/run/<commit>/hydra-params', methods=['GET'])
 def api_hydra_params(repo, commit):
+    if is_local_revision(repo, commit):
+        denied = require_local_files()
+        if denied is not None:
+            return denied
+        # Local pseudo revisions aren't Git commits. Return parameters from the workspace.
+        info = {'is_local': 1}
+        text = fetch_dvc_file_distributed(repo, commit, 'params.yaml', info)
+        return jsonify({'configs': [{'path': 'params.yaml', 'stages': [], 'content': yaml.safe_load(text) or {}}] if text else []})
     """Extract Hydra/YAML config parameters from dvc.yaml deps at a specific revision.
 
     Scans dvc.yaml stages for .yaml/.yml dependency files, groups them by
@@ -2265,28 +2403,17 @@ def fetch_dvc_file_distributed(repo, rev, file_path, job_info=None):
     """
     norm_file_path = os.path.normpath(file_path).replace('\\', '/')
     
-    # 1. Local job check
-    if job_info and job_info.get('is_local') == 1:
-        local_path = job_info.get('local_repo_path')
-        if local_path and os.path.exists(local_path):
-            app.logger.info(f"📁 [P2P Resolution] Reading {norm_file_path} directly from local_repo_path: {local_path}")
-            direct_file = os.path.join(local_path, norm_file_path)
-            if os.path.exists(direct_file) and os.path.isfile(direct_file):
-                try:
-                    with open(direct_file, 'r', encoding='utf-8') as f:
-                        return f.read()
-                except Exception as e:
-                    app.logger.warning(f"Failed to read local file {direct_file}: {e}")
-            if rev and os.path.exists(os.path.join(local_path, ".git")):
-                try:
-                    res = subprocess.run(
-                        ["git", "show", f"{rev}:{norm_file_path}"],
-                        cwd=local_path, capture_output=True, text=True, timeout=5
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        return res.stdout
-                except Exception as e:
-                    app.logger.warning(f"git show {rev}:{norm_file_path} failed in {local_path}: {e}")
+    if job_info and job_info.get('is_local'):
+        worker = job_info.get('service_url') or local_worker(repo)
+        if not worker or not CLUSTER_TOKEN:
+            return None
+        response = requests.get(
+            worker + '/api/worker/dvc/get',
+            params={'repo': repo, 'local': '1', 'path': norm_file_path},
+            headers={'Authorization': f'Bearer {CLUSTER_TOKEN}'},
+            timeout=10, allow_redirects=False,
+        )
+        return response.text if response.status_code == 200 else None
 
     # 2. Worker P2P HTTP API check
     worker_url = None

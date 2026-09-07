@@ -1750,7 +1750,7 @@
                         const col = document.createElement('div');
                         col.className = 'col-12 full-width mb-3';
                         const [owner, name] = run.repo.split('/');
-                        const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
+                        const viewerUrl = (run.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
                         const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
                         const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
                         const launchDate = startedAt ? startedAt.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
@@ -2123,7 +2123,7 @@
                         const col = document.createElement('div');
                         col.className = 'col-12 full-width mb-4';
                         const [owner, name] = repo.split('/');
-                        const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
+                        const viewerUrl = (run.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
                         
                         const runDate = new Date(run.created_at).toLocaleString('en-US', {
                             year: 'numeric', month: '2-digit', day: '2-digit',
@@ -3547,7 +3547,7 @@
                             const col = document.createElement('div');
                             col.className = 'col-12 full-width mb-3';
                             const [owner, name] = run.repo.split('/');
-                            const viewerUrl = '/view/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
+                            const viewerUrl = (run.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
                             const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
                             const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
                             const launchDate = startedAt ? startedAt.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';

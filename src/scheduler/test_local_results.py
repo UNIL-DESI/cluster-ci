@@ -22,9 +22,10 @@ class TestLocalResultRoutes(unittest.TestCase):
         self.original_cluster_token = headnode_service.CLUSTER_TOKEN
         self.original_chunk_size = headnode_service.LOCAL_TRANSFER_CHUNK_SIZE
         headnode_service.REPOS_DIR = self.results_root
-        headnode_service.CLUSTER_TOKEN = None
+        headnode_service.CLUSTER_TOKEN = "test-cluster-token"
         headnode_service.LOCAL_TRANSFER_CHUNK_SIZE = 8
         self.client = headnode_service.app.test_client()
+        self.client.environ_base["HTTP_AUTHORIZATION"] = "Bearer test-cluster-token"
         self.job_id = str(uuid.uuid4())
 
     def tearDown(self):

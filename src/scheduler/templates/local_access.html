@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local job files</title></head>
+<body>
+<h1>Local job files</h1>
+<p>Enter the cluster token to access local files and results in this browser session.</p>
+{% if error %}<p role="alert">Incorrect token, or no cluster token is configured.</p>{% endif %}
+<form action="{{ url_for('local_access') }}" method="post">
+<label for="cluster-token">Cluster token</label>
+<input id="cluster-token" name="cluster_token" type="password" autocomplete="off" required>
+<button type="submit">Unlock local files</button>
+</form>
+<a href="{{ url_for('dashboard') }}">Back to dashboard</a>
+</body></html>

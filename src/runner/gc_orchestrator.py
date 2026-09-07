@@ -439,7 +439,7 @@ def run_transfer_gc():
 
             can_evict = True
             sync_status = "done"
-            if has_remote:
+            if has_remote and not project_name.startswith("_local/"):
                 try:
                     resp = requests.get(f"{headnode_url}/check_space", timeout=5)
                     if resp.status_code == 200 and resp.json().get("sufficient"):

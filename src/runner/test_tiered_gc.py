@@ -33,7 +33,7 @@ class TestTieredGC(unittest.TestCase):
         gc_orchestrator.cleanup_level_1(project_path, "proj1")
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
-        self.assertIn("dvc", args)
+        self.assertEqual(Path(args[0]).name, "dvc")
         self.assertIn("gc", args)
         self.assertIn("--rev", args)
 
