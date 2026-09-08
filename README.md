@@ -100,7 +100,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 6. **CI Feedback**: Joules receives native failure and success notifications via GitHub PR integration.
 7. **Configuration `.cluster-ci`**: Les jobs nécessitant d'être schedulés peuvent déclarer les paramètres suivants à la racine :
     - `REQUIRED_RAM=16GB` : Contrainte de placement RAM (défaut : 2GB).
-    - `REQUIRED_VRAM=24GB` : Contrainte de placement VRAM GPU (défaut : 0, pas de contrainte). Le scheduler n'assignera le job qu'à des workers disposant d'au moins cette quantité de VRAM.
+    - `REQUIRED_VRAM=24GB` : Contrainte de placement VRAM **par GPU** (défaut : 0, pas de contrainte). Deux GPU de 24GB ne satisfont pas une demande de 32GB. Le watchdog contrôle la carte la plus chargée, sans additionner les cartes ; sur les GB10, il surveille la RAM système. Voir [les limites et tests du watchdog](docs/gpu-watchdog.md).
     - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
     - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
    Une fois alloué, le conteneur a accès à 100% de la RAM hôte pour éviter les limites artificielles.

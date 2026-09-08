@@ -24,6 +24,12 @@ jobs:
         run: |
           pip install -e .[dev]
 
+      - name: Test GPU Watchdog
+        # Command fixtures require no GPU or Docker daemon.
+        run: |
+          python3 -m unittest discover -s src/runner -p test_gpu_watchdog.py -v
+          bash -n src/runner/gpu_watchdog.sh
+
       - name: Setup Mock Runner
         run: |
           sudo mkdir -p /usr/local/bin

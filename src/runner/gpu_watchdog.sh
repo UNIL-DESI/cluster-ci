@@ -2,7 +2,9 @@
 # GPU/Memory Watchdog — Runs on the HOST (not inside Docker)
 # Monitors memory usage and kills the container if it exceeds the declared limit.
 #
-# On discrete GPUs: monitors nvidia-smi memory.used
+# On discrete GPUs: monitors the highest per-GPU nvidia-smi memory.used.
+# REQUIRED_VRAM is per GPU, matching worker capacity used for scheduling.
+# Workers run one scheduled job at a time; this is not per-job GPU isolation.
 # On unified memory (GB10/Grace): nvidia-smi reports [N/A], so we monitor
 # system RAM via /proc/meminfo (since CPU+GPU share the same pool).
 #
@@ -69,8 +71,8 @@ POLL_INTERVAL=2   # Poll every 2 seconds (was 5)
 
 get_used_memory_mib() {
     if [ "$MONITORING_MODE" = "nvidia-smi" ]; then
-        # Discrete GPU: query nvidia-smi
-        nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '{sum+=$1} END {print int(sum)}'
+        # Enforce the reservation on every GPU, without summing or averaging cards.
+        nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '$1 > maximum {maximum=$1} END {print int(maximum)}'
     else
         # Unified memory: read system RAM usage from /proc/meminfo
         # MemUsed = MemTotal - MemAvailable (includes GPU allocations on unified systems)
