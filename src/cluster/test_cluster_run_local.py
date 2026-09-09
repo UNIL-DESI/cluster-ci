@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.cluster.cluster_run import package_local_source
+from src.cluster.cluster_run import local_job_branch, package_local_source
 
 
 class TestLocalSourcePackaging(unittest.TestCase):
@@ -39,6 +39,42 @@ class TestLocalSourcePackaging(unittest.TestCase):
         (self.project / '.cluster-ci-local-include').write_text('../outside\n')
         with self.assertRaises(SystemExit):
             package_local_source(self.project)
+
+    def test_local_label_branch_is_backward_compatible(self):
+        self.assertEqual(local_job_branch('alice'), 'local-draft/alice')
+        self.assertEqual(
+            local_job_branch('alice', 'summary-b'),
+            'local-draft/alice/summary-b',
+        )
+
+    def test_standalone_cli_accepts_label_only_with_local_mode(self):
+        script = Path(__file__).with_name('cluster_run.py')
+        help_result = subprocess.run(
+            [sys.executable, str(script), '--help'],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(help_result.returncode, 0)
+        self.assertIn('--label', help_result.stdout)
+
+        invalid_mode = subprocess.run(
+            [sys.executable, str(script), '--label', 'summary-a'],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(invalid_mode.returncode, 2)
+        self.assertIn('--label can only be used with --local', invalid_mode.stderr)
+
+        invalid_label = subprocess.run(
+            [sys.executable, str(script), '--local', '--label', 'bad/label'],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(invalid_label.returncode, 2)
+        self.assertIn('Local job labels must be', invalid_label.stderr)
 
 
 if __name__ == '__main__':
