@@ -145,7 +145,7 @@ stages:
         cpus: 2
 
   toy_gpu_1:
-    cmd: python3 -c "import time, torch; print('toy_gpu_1 running, CUDA:', torch.cuda.is_available()); time.sleep(60)"
+    cmd: python3 -c "import time, torch; print('toy_gpu_1 running, CUDA:', torch.cuda.is_available()); time.sleep(75)"
     meta:
       cluster:
         image: nvcr.io/nvidia/pytorch:26.05-py3
@@ -153,7 +153,7 @@ stages:
         vram_gb: 1
 
   toy_gpu_2:
-    cmd: python3 -c "import time, torch; print('toy_gpu_2 running, CUDA:', torch.cuda.is_available()); time.sleep(60)"
+    cmd: python3 -c "import time, torch; print('toy_gpu_2 running, CUDA:', torch.cuda.is_available()); time.sleep(75)"
     meta:
       cluster:
         image: nvcr.io/nvidia/pytorch:26.05-py3
