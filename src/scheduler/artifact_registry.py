@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -429,9 +430,207 @@ def extract_node_outputs_from_dvc_lock(
     return results
 
 
+def get_dag_stage_outputs(
+    dvc_lock_data: str | Mapping[str, Any] | None = None,
+    dvc_yaml_data: str | Mapping[str, Any] | None = None,
+    repo_dir: str | Path | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[tuple[Any, str]]]:
+    """
+    Collects all stage outputs across the entire DAG from dvc.lock and dvc.yaml.
+    Handles foreach stages (expanded in dvc.lock as stage@item, and template patterns in dvc.yaml).
+    
+    Returns:
+      (exact_outputs, directory_outputs, pattern_outputs)
+      where:
+        exact_outputs: {norm_path: {"stage": stage_name, "md5": md5_or_none, "is_dir": bool}}
+        directory_outputs: {norm_dir_path: {"stage": stage_name, "md5": md5_or_none, "is_dir": True}}
+        pattern_outputs: [(compiled_regex, stage_name)]
+    """
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        import json as yaml  # type: ignore
+
+    exact_outputs: dict[str, dict[str, Any]] = {}
+    directory_outputs: dict[str, dict[str, Any]] = {}
+    pattern_outputs: list[tuple[Any, str]] = []
+
+    def _load_yaml(src: str | Mapping[str, Any] | None) -> dict[str, Any]:
+        if not src:
+            return {}
+        if isinstance(src, Mapping):
+            return dict(src)
+        if isinstance(src, str):
+            if "\n" not in src and os.path.isfile(src):
+                try:
+                    with open(src, "r", encoding="utf-8") as f:
+                        return yaml.safe_load(f) or {}
+                except Exception:
+                    return {}
+            else:
+                try:
+                    return yaml.safe_load(src) or {}
+                except Exception:
+                    return {}
+        return {}
+
+    lock_dict: dict[str, Any] = {}
+    yaml_dict: dict[str, Any] = {}
+
+    if repo_dir:
+        rpath = Path(repo_dir)
+        lock_file = rpath / "dvc.lock"
+        if lock_file.is_file():
+            lock_dict = _load_yaml(str(lock_file))
+        yaml_file = rpath / "dvc.yaml"
+        if yaml_file.is_file():
+            yaml_dict = _load_yaml(str(yaml_file))
+
+    if dvc_lock_data:
+        ld = _load_yaml(dvc_lock_data)
+        if ld:
+            lock_dict = ld
+
+    if dvc_yaml_data:
+        yd = _load_yaml(dvc_yaml_data)
+        if yd:
+            yaml_dict = yd
+
+    # 1. Parse dvc.lock stages
+    lock_stages = lock_dict.get("stages", {}) if isinstance(lock_dict, Mapping) else {}
+    if isinstance(lock_stages, Mapping):
+        for st_name, st_val in lock_stages.items():
+            if not isinstance(st_val, Mapping):
+                continue
+            for out in st_val.get("outs", []):
+                if not isinstance(out, Mapping):
+                    continue
+                raw_path = out.get("path")
+                if not raw_path:
+                    continue
+                norm_p = os.path.normpath(str(raw_path)).replace("\\", "/").rstrip("/")
+                if not norm_p or norm_p == ".":
+                    continue
+                raw_hash = out.get("md5") or out.get("hash")
+                h = normalize_hash(raw_hash) if raw_hash else None
+                is_dir = bool(out.get("is_dir") or (h and h.endswith(".dir")))
+                info = {"stage": str(st_name), "md5": h, "is_dir": is_dir}
+                exact_outputs[norm_p] = info
+                if is_dir:
+                    directory_outputs[norm_p] = info
+
+    def _extract_outs(outs_obj: Any) -> list[str]:
+        paths = []
+        if isinstance(outs_obj, list):
+            for item in outs_obj:
+                if isinstance(item, str):
+                    paths.append(item)
+                elif isinstance(item, Mapping):
+                    for k, v in item.items():
+                        if k == "path" and isinstance(v, str):
+                            paths.append(v)
+                        elif isinstance(k, str) and not isinstance(v, Mapping):
+                            paths.append(k)
+                        elif isinstance(item.get("path"), str):
+                            paths.append(item["path"])
+        elif isinstance(outs_obj, str):
+            paths.append(outs_obj)
+        elif isinstance(outs_obj, Mapping):
+            for k in outs_obj.keys():
+                if isinstance(k, str):
+                    paths.append(k)
+        return paths
+
+    # 2. Parse dvc.yaml stages
+    yaml_stages = yaml_dict.get("stages", {}) if isinstance(yaml_dict, Mapping) else {}
+    if isinstance(yaml_stages, Mapping):
+        for st_name, st_def in yaml_stages.items():
+            if not isinstance(st_def, Mapping):
+                continue
+
+            foreach_items = st_def.get("foreach")
+            do_block = st_def.get("do", {})
+            if foreach_items is not None and isinstance(do_block, Mapping):
+                do_outs = _extract_outs(do_block.get("outs", []))
+                do_outs.extend(_extract_outs(do_block.get("metrics", [])))
+                do_outs.extend(_extract_outs(do_block.get("plots", [])))
+
+                items_list: list[str] = []
+                if isinstance(foreach_items, list):
+                    items_list = [str(x) for x in foreach_items]
+                elif isinstance(foreach_items, Mapping):
+                    items_list = [str(k) for k in foreach_items.keys()]
+
+                for item_val in items_list:
+                    sub_stage = f"{st_name}@{item_val}"
+                    for raw_p in do_outs:
+                        resolved = raw_p.replace("${item}", item_val).replace("$item", item_val)
+                        norm_p = os.path.normpath(resolved).replace("\\", "/").rstrip("/")
+                        if not norm_p or norm_p == ".":
+                            continue
+                        is_dir = raw_p.endswith("/") or raw_p.endswith("\\")
+                        if norm_p not in exact_outputs:
+                            exact_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": is_dir}
+                        if is_dir and norm_p not in directory_outputs:
+                            directory_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": True}
+
+                for raw_p in do_outs:
+                    norm_p = os.path.normpath(raw_p).replace("\\", "/").rstrip("/")
+                    if "${" in norm_p or "$" in norm_p:
+                        pat_str = re.escape(norm_p)
+                        pat_str = re.sub(r'\\\$\\\{[^}]+\\\}', '.*', pat_str)
+                        pat_str = re.sub(r'\\\$[a-zA-Z0-9_]+', '.*', pat_str)
+                        try:
+                            pattern_outputs.append((re.compile(f"^{pat_str}(?:/.*)?$"), str(st_name)))
+                        except Exception:
+                            pass
+            else:
+                st_outs = _extract_outs(st_def.get("outs", []))
+                st_outs.extend(_extract_outs(st_def.get("metrics", [])))
+                st_outs.extend(_extract_outs(st_def.get("plots", [])))
+                for raw_p in st_outs:
+                    norm_p = os.path.normpath(raw_p).replace("\\", "/").rstrip("/")
+                    if not norm_p or norm_p == ".":
+                        continue
+                    is_dir = raw_p.endswith("/") or raw_p.endswith("\\")
+                    if norm_p not in exact_outputs:
+                        exact_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": is_dir}
+                    if is_dir and norm_p not in directory_outputs:
+                        directory_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": True}
+
+    return exact_outputs, directory_outputs, pattern_outputs
+
+
+def is_dag_stage_output(
+    dep_path: str,
+    exact_outputs: Mapping[str, Any],
+    directory_outputs: Mapping[str, Any],
+    pattern_outputs: Sequence[Any],
+) -> tuple[bool, dict[str, Any] | None]:
+    """
+    Checks if dep_path is an output of any stage in the DAG.
+    Returns (True, info_dict) or (False, None).
+    """
+    norm_dep = os.path.normpath(dep_path).replace("\\", "/").rstrip("/")
+    if norm_dep in exact_outputs:
+        return True, dict(exact_outputs[norm_dep])
+    for dir_path, dir_info in directory_outputs.items():
+        if norm_dep.startswith(f"{dir_path}/"):
+            res = dict(dir_info)
+            res["parent_dir"] = dir_path
+            res["parent_dir_hash"] = dir_info.get("md5")
+            return True, res
+    for pat, st_name in pattern_outputs:
+        if pat.match(norm_dep):
+            return True, {"stage": st_name, "md5": None, "is_dir": False}
+    return False, None
+
+
 def extract_node_deps_from_dvc_lock(
     dvc_lock_data: str | Mapping[str, Any],
     node_name: str,
+    stage_outs_only: bool = False,
+    repo_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """
     Utility for W2/W3 to extract dependency definitions directly from dvc.lock
@@ -440,17 +639,22 @@ def extract_node_deps_from_dvc_lock(
     Automatically resolves sub-paths belonging to upstream directory outputs (.dir)
     and attaches parent_dir_hash so that the parent .dir manifest can be retrieved.
     
+    When stage_outs_only=True, filters out git-tracked files (scripts, configs)
+    that are not the output of any stage in the DAG.
+    
     Returns list of dicts:
-      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool, "parent_dir_hash": ...}]
+      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool, "parent_dir_hash": ..., "is_stage_output": bool}]
     """
-    if isinstance(dvc_lock_data, str):
-        try:
-            import yaml  # type: ignore
-        except ImportError:
-            import json as yaml  # type: ignore
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        import json as yaml  # type: ignore
 
+    lock_file_path = None
+    if isinstance(dvc_lock_data, str):
         if "\n" not in dvc_lock_data and (dvc_lock_data.endswith(".lock") or dvc_lock_data.endswith(".yaml")):
             if os.path.isfile(dvc_lock_data):
+                lock_file_path = dvc_lock_data
                 with open(dvc_lock_data, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
             else:
@@ -463,19 +667,16 @@ def extract_node_deps_from_dvc_lock(
     if not isinstance(data, Mapping):
         return []
 
+    effective_repo_dir = repo_dir
+    if not effective_repo_dir and lock_file_path:
+        effective_repo_dir = os.path.dirname(lock_file_path)
+
+    exact_outs, dir_outs, pat_outs = get_dag_stage_outputs(
+        dvc_lock_data=data,
+        repo_dir=effective_repo_dir,
+    )
+
     stages = data.get("stages", {})
-
-    # Collect all upstream directory outputs across all stages in this lockfile
-    dir_outputs: dict[str, str] = {}  # {dir_path: dir_md5}
-    for st_name, st_val in stages.items():
-        if isinstance(st_val, Mapping):
-            for out in st_val.get("outs", []):
-                if isinstance(out, Mapping):
-                    out_md5 = normalize_hash(out.get("md5") or out.get("hash"))
-                    out_path = str(out.get("path", "")).replace("\\", "/")
-                    if out_md5.endswith(".dir"):
-                        dir_outputs[out_path] = out_md5
-
     stage = stages.get(node_name, {})
     deps = stage.get("deps", [])
 
@@ -493,12 +694,20 @@ def extract_node_deps_from_dvc_lock(
         size_bytes = int(dep.get("size_bytes", dep.get("size", 0)) or 0)
         dep_path = str(dep.get("path", "")).replace("\\", "/")
 
-        parent_dir_hash = None
-        for dir_path, dir_md5 in dir_outputs.items():
-            if dep_path.startswith(f"{dir_path}/"):
-                parent_dir_hash = dir_md5
-                parent_dirs_to_add[dir_md5] = dir_path
-                break
+        is_stage_out, out_info = is_dag_stage_output(dep_path, exact_outs, dir_outs, pat_outs)
+        if stage_outs_only and not is_stage_out:
+            continue
+
+        parent_dir_hash = (out_info or {}).get("parent_dir_hash")
+        if not parent_dir_hash:
+            for dir_path, dir_md5 in dir_outs.items():
+                if dep_path.startswith(f"{dir_path}/"):
+                    parent_dir_hash = dir_md5.get("md5") if isinstance(dir_md5, Mapping) else dir_md5
+                    parent_dirs_to_add[str(parent_dir_hash)] = dir_path
+                    break
+        elif parent_dir_hash:
+            p_dir = (out_info or {}).get("parent_dir") or ""
+            parent_dirs_to_add[str(parent_dir_hash)] = p_dir
 
         results.append({
             "path": dep_path,
@@ -506,18 +715,20 @@ def extract_node_deps_from_dvc_lock(
             "size_bytes": max(0, size_bytes),
             "is_dir": is_dir,
             "parent_dir_hash": parent_dir_hash,
+            "is_stage_output": is_stage_out,
         })
 
     # Ensure parent .dir manifests are also declared so DVC checkout can unpack subfiles
     existing_hashes = {r["md5"] for r in results}
     for p_md5, p_path in parent_dirs_to_add.items():
-        if p_md5 not in existing_hashes:
+        if p_md5 and p_md5 not in existing_hashes:
             results.append({
                 "path": p_path,
                 "md5": p_md5,
                 "size_bytes": 0,
                 "is_dir": True,
                 "parent_dir_hash": None,
+                "is_stage_output": True,
             })
             existing_hashes.add(p_md5)
 
