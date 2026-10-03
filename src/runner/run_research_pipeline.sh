@@ -173,6 +173,7 @@ if [ "$IS_LOCAL" = "1" ]; then
     WORKSPACE_KEY="_local/$TARGET_REPO"
     VIEWER_BIND_ADDRESS="127.0.0.1"
 fi
+export WORKSPACE_KEY
 REPO_WORK_DIR="repositories/$WORKSPACE_KEY"
 
 # Graceful kill with timeout fallback to SIGKILL
@@ -227,8 +228,8 @@ if [ -n "$JOB_ID" ]; then
 fi
 log_info "Scanning for zombie containers (JIT Zombie GC)..."
 python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-zombie-gc
-python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-gc
 python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-running "$WORKSPACE_KEY"
+python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-gc --current-project "$WORKSPACE_KEY"
 
 function cleanup_job_resources() {
     log_info "Cleaning up job resources for ${JOB_ID}..."
