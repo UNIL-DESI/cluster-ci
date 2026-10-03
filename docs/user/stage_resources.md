@@ -69,9 +69,9 @@ All fields under `meta.cluster` are **optional**. If a field is omitted, Cluster
     * **Type Validation**: Types are strictly enforced: `cpus` must be an integer `>= 1`, `gpus` an integer `>= 0`, `ram_gb`/`vram_gb`/`storage_gb` numbers `>= 0`, and `workers` a list of strings.
     * **GPU Consistency Rule (A16/A17)**: Declaring `vram_gb > 0` strictly requires `gpus >= 1`. If `vram_gb > 0` while `gpus == 0`, Cluster-CI raises an immediate actionable error:
       ```text
-      Fichier dvc.yaml, stage '<stage>' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
-      Cause : vram_gb exige gpus >= 1 (la mémoire vidéo ne peut être allouée sans GPU).
-      Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
+      File dvc.yaml, stage '<stage>': resource inconsistency between 'meta.cluster.vram_gb' (X GB) and 'meta.cluster.gpus' (0).
+      Cause: vram_gb requires gpus >= 1 (video memory cannot be allocated without a GPU).
+      Remedy: declare 'gpus: 1' (or more) under meta.cluster in dvc.yaml (or REQUIRED_GPUS in .cluster-ci), or set vram_gb to 0.
       ```
 
 ---

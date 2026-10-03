@@ -2270,6 +2270,7 @@ def register_signals():
 # Background self-healing loop has been retired and replaced by deterministic JIT purges at job execution and worker startup.
 
 def main_loop():
+    global current_job_id
     # Enforce single instance lock first
     acquire_single_instance_lock()
     

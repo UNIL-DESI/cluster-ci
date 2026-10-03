@@ -30,7 +30,7 @@ When scheduling a job or individual stage, the scheduler compares requested reso
 | **Discrete GPU & RAM**<br>*(e.g. isipol09, 2× RTX 3090)* | `ram_gb <= available_ram_gb - 8.0 GB`<br>**and** `vram_gb <= sum(available_vram[gpu_ids])` | Specific GPUs isolated via `CUDA_VISIBLE_DEVICES` |
 | **All Workers** | `cpus <= available_cpus`<br>`storage_gb <= available_disk_gb`<br>Docker image matches worker architecture | — |
 
-<!-- v3: à vérifier contre l'implémentation : variables d'environnement CUDA_VISIBLE_DEVICES et formule exacte de réserve OS -->
+<!-- v3: check against implementation: environment variables CUDA_VISIBLE_DEVICES and exact OS headroom formula -->
 
 ### Default Resource Allocation
 If resources are not explicitly specified in `meta.cluster` or `.cluster-ci`:

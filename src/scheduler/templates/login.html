@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -156,16 +156,16 @@
 </head>
 <body>
     <div class="login-card text-center">
-        <button id="theme-toggle-btn" class="theme-toggle-corner" onclick="toggleTheme()" title="Basculer le thème">
+        <button id="theme-toggle-btn" class="theme-toggle-corner" onclick="toggleTheme()" title="Toggle theme">
             <i id="theme-toggle-icon" class="bi bi-sun-fill text-warning"></i>
         </button>
         <div class="login-brand-icon">
             <i class="bi bi-cpu-fill"></i>
         </div>
         <h2 class="fw-bold mb-2" style="letter-spacing: -0.025em;">Cluster-CI</h2>
-        <p class="text-muted mb-4" style="font-size: 0.95rem;">Connectez-vous avec votre compte GitHub pour accéder à vos projets et exécutions.</p>
+        <p class="text-muted mb-4" style="font-size: 0.95rem;">Sign in with your GitHub account to access your projects and runs.</p>
         <a href="{{ url_for('login') }}" class="btn-github-solar">
-            <i class="bi bi-github fs-5"></i> Continuer avec GitHub
+            <i class="bi bi-github fs-5"></i> Continue with GitHub
         </a>
     </div>
 

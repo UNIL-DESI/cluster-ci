@@ -1,7 +1,7 @@
-# Index de Documentation : Sécurité
+# Documentation Index: Security
 
-Ce document indexe toutes les notes et analyses de sécurité concernant l'infrastructure Cluster-CI.
+This document indexes all security notes and risk assessments regarding Cluster-CI infrastructure.
 
-| Titre de la note | Courte Description | Dernière modif | Tag |
+| Note Title | Short Description | Last modified | Tag |
 |------------------|-------------------|----------------|-----|
-| [Analyse des Risques `cluster-run`](security/risk_analysis.md) | Analyse des risques de sécurité liés à l'architecture d'exécution de jobs (mots de passe codés en dur, verrous SQLite, etc.). | 2026-05-19 | `Up to date` |
+| [Risk Assessment `cluster-run`](security/risk_analysis.md) | Risk analysis regarding job execution architecture (hardcoded credentials, SQLite locks, etc.). | 2026-05-19 | `Up to date` |

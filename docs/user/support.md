@@ -49,28 +49,28 @@ Cluster-CI v3 enforces explicit, actionable error reporting. Every submission or
 
 #### 1. Unknown Key under `meta.cluster`
 ```text
-Fichier dvc.yaml, stage '<stage_name>' : clé(s) inconnue(s) sous 'meta.cluster' : ['<key>'].
-Cause : la ou les clés indiquées ne font pas partie du schéma des ressources Cluster-CI v3.
-Remède : modifiez ou supprimez cette clé sous meta.cluster dans dvc.yaml.
-Clés valides autorisées : ['cpus', 'gpus', 'image', 'image_amd64', 'image_arm64', 'ram_gb', 'storage_gb', 'vram_gb', 'workers'].
+File dvc.yaml, stage '<stage_name>': unknown key(s) under 'meta.cluster': ['<key>'].
+Cause: the specified key(s) are not part of the Cluster-CI v3 resource schema.
+Remedy: modify or remove this key under meta.cluster in dvc.yaml.
+Valid allowed keys: ['cpus', 'gpus', 'image', 'image_amd64', 'image_arm64', 'ram_gb', 'storage_gb', 'vram_gb', 'workers'].
 ```
 * **Cause**: Typo or deprecated field name in `dvc.yaml`.
 * **Remedy**: Fix the key to match one of the 9 allowed resource fields.
 
 #### 2. VRAM Requested Without GPU
 ```text
-Fichier dvc.yaml, stage '<stage_name>' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
-Cause : vram_gb exige gpus >= 1 (la mémoire vidéo ne peut être allouée sans GPU).
-Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
+File dvc.yaml, stage '<stage_name>': resource inconsistency between 'meta.cluster.vram_gb' (X GB) and 'meta.cluster.gpus' (0).
+Cause: vram_gb requires gpus >= 1 (video memory cannot be allocated without a GPU).
+Remedy: declare 'gpus: 1' (or more) under meta.cluster in dvc.yaml (or REQUIRED_GPUS in .cluster-ci), or set vram_gb to 0.
 ```
 * **Cause**: Stage declares positive `vram_gb` but `gpus` is `0` or omitted.
 * **Remedy**: Add `gpus: 1` under `meta.cluster` in `dvc.yaml` (or `REQUIRED_GPUS=1` in `.cluster-ci`), or set `vram_gb: 0`.
 
 #### 3. Invalid Value or Type for Resource Fields
 ```text
-Fichier dvc.yaml, stage '<stage_name>' : valeur invalide pour 'meta.cluster.cpus' : <valeur>.
-Cause : cpus doit être un entier strictement positif (>= 1).
-Remède : définissez un entier >= 1 pour 'cpus' sous meta.cluster dans dvc.yaml (défaut : 2).
+File dvc.yaml, stage '<stage_name>': invalid value for 'meta.cluster.cpus': <value>.
+Cause: cpus must be a strictly positive integer (>= 1).
+Remedy: specify an integer >= 1 for 'cpus' under meta.cluster in dvc.yaml (default: 2).
 ```
 * **Cause**: Float, boolean, string, or negative number provided for an integer field.
 * **Remedy**: Supply an integer `>= 1` for `cpus`, integer `>= 0` for `gpus`, or number `>= 0` for `ram_gb`/`vram_gb`/`storage_gb`.
@@ -81,21 +81,21 @@ Remède : définissez un entier >= 1 pour 'cpus' sous meta.cluster dans dvc.yaml
 
 #### 4. DAG Cycle Detected
 ```text
-Cycle détecté dans le DAG des nœuds à partir de '<stage_name>'
+Cycle detected in DAG nodes starting from '<stage_name>'
 ```
 * **Cause**: Circular dependency between stages in `dvc.yaml` (e.g. A depends on B, and B depends on A).
 * **Remedy**: Run `dvc dag` locally to inspect the execution graph and remove circular references in `deps` / `outs`.
 
 #### 5. Invalid Stage Dependency
 ```text
-Dépendance invalide '<dep_name>' déclarée par le nœud '<stage_name>'
+Invalid dependency '<dep_name>' declared by node '<stage_name>'
 ```
 * **Cause**: A stage lists a dependency on a stage that does not exist in `dvc.yaml`.
 * **Remedy**: Verify stage names in `dvc.yaml` and fix the dependency list.
 
 #### 6. Duplicate Stage Name
 ```text
-Nom de nœud dupliqué dans le plan: '<stage_name>'
+Duplicate node name in plan: '<stage_name>'
 ```
 * **Cause**: Multiple stages share the same name in the resolved pipeline.
 * **Remedy**: Ensure each stage has a unique identifier in `dvc.yaml`.
