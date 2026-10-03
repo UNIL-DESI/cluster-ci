@@ -38,6 +38,14 @@ try:
     from redaction import redact_secrets
 except ImportError:
     from src.scheduler.redaction import redact_secrets
+try:
+    from runner.host_guard import (
+        DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
+    )
+except ImportError:
+    from src.runner.host_guard import (
+        DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
+    )
 from authlib.integrations.flask_client import OAuth
 import uuid
 import datetime
@@ -565,6 +573,22 @@ def register_worker():
     if disk_free_gb is None:
         disk_free_gb = available_storage_gb if available_storage_gb is not None else (total_storage_gb or 0.0)
     role = data.get('role') or 'worker'
+    # Détermination de la priorité de placement (A13)
+    prio = data.get('placement_priority')
+    if prio is None:
+        prio = data.get('priority')
+    if prio is not None:
+        try:
+            prio = int(prio)
+        except (ValueError, TypeError):
+            prio = None
+    if prio is None:
+        is_hn = (
+            data.get('is_headnode') is True
+            or str(role).strip().lower() in ('headnode', 'headnode_worker', 'master')
+        )
+        prio = HEADNODE_PLACEMENT_PRIORITY if is_hn else DEFAULT_PLACEMENT_PRIORITY
+
     docker_images = data.get('docker_images')
     if isinstance(docker_images, (dict, list)):
         docker_images = json.dumps(docker_images)
@@ -578,14 +602,14 @@ def register_worker():
                 worker_id, hostname, service_url,
                 total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb,
                 total_vram_gb, gpu_count, gpu_name, available_vram_gb,
-                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images,
+                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, placement_priority, docker_images,
                 last_seen, status
             )
             VALUES (
                 ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '{}'),
+                ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '{}'),
                 CURRENT_TIMESTAMP, 'online'
             )
             ON CONFLICT(worker_id) DO UPDATE SET
@@ -605,6 +629,7 @@ def register_worker():
                 arch = COALESCE(excluded.arch, workers.arch),
                 disk_free_gb = COALESCE(excluded.disk_free_gb, workers.disk_free_gb),
                 role = COALESCE(excluded.role, workers.role),
+                placement_priority = COALESCE(excluded.placement_priority, workers.placement_priority),
                 docker_images = COALESCE(excluded.docker_images, workers.docker_images, '{}'),
                 last_seen = CURRENT_TIMESTAMP,
                 status = 'online'
@@ -612,7 +637,7 @@ def register_worker():
             worker_id, hostname, service_url,
             total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb,
             total_vram_gb, gpu_count, gpu_name, available_vram_gb,
-            cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images
+            cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, prio, docker_images
         ))
         
         # If a worker re-registers (is_startup=True), it means it restarted and lost any running jobs.

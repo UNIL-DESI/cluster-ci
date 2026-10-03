@@ -1453,5 +1453,106 @@ def test_classic_job_impossible_unified_memory_and_actionable_message(client):
     assert st_ok["status"] in ("assigned", "running")
 
 
+def test_headnode_placement_priority_last_resort_a13(client):
+    """
+    Test Amendement A13 :
+    3 machines enregistrées via /register_worker :
+    - Headnode isipol09 avec la plus grosse RAM (128 Go), role='headnode'
+    - GB10_1 HEC45801 (120 Go), role='worker', unified_memory=1
+    - GB10_2 HEC45803 (121 Go), role='worker', unified_memory=1
+    Un nœud prêt doit aller sur un GB10 (HEC45803) et JAMAIS sur le headnode isipol09 tant que les GB10 sont libres.
+    """
+    # 1. Enregistrement des 3 machines via l'API /register_worker
+    resp_hn = client.post("/register_worker", json={
+        "worker_id": "HN_isipol09",
+        "hostname": "isipol09",
+        "service_url": "http://127.0.0.1:9000",
+        "total_ram_gb": 128.0,
+        "available_storage_gb": 500.0,
+        "cpus": 32,
+        "role": "headnode",
+        "is_headnode": True
+    })
+    assert resp_hn.status_code in (200, 201)
+
+    resp_w1 = client.post("/register_worker", json={
+        "worker_id": "W1_HEC45801",
+        "hostname": "HEC45801",
+        "service_url": "http://127.0.0.1:9001",
+        "total_ram_gb": 120.0,
+        "available_storage_gb": 500.0,
+        "total_vram_gb": 120.0,
+        "unified_memory": 1,
+        "gpu_name": "NVIDIA GB10",
+        "gpu_count": 1,
+        "cpus": 32,
+        "role": "worker"
+    })
+    assert resp_w1.status_code in (200, 201)
+
+    resp_w2 = client.post("/register_worker", json={
+        "worker_id": "W2_HEC45803",
+        "hostname": "HEC45803",
+        "service_url": "http://127.0.0.1:9002",
+        "total_ram_gb": 121.0,
+        "available_storage_gb": 500.0,
+        "total_vram_gb": 121.0,
+        "unified_memory": 1,
+        "gpu_name": "NVIDIA GB10",
+        "gpu_count": 1,
+        "cpus": 32,
+        "role": "worker"
+    })
+    assert resp_w2.status_code in (200, 201)
+
+    # Vérification que placement_priority est correctement persisté en base
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT worker_id, placement_priority, total_ram_gb FROM workers ORDER BY placement_priority DESC, total_ram_gb DESC")
+        rows = cursor.fetchall()
+        worker_prios = {r[0]: r[1] for r in rows}
+        assert worker_prios["HN_isipol09"] == 0
+        assert worker_prios["W1_HEC45801"] == 50
+        assert worker_prios["W2_HEC45803"] == 50
+        # W2 (121 Go) et W1 (120 Go) doivent être classés avant HN (128 Go)
+        assert rows[0][0] == "W2_HEC45803"
+        assert rows[1][0] == "W1_HEC45801"
+        assert rows[2][0] == "HN_isipol09"
+
+    # 2. Soumission d'un job v3 avec un nœud prêt
+    plan = {
+        "version": "3.0",
+        "defaults": {"image": "image:default", "ram_gb": 4.0},
+        "nodes": [
+            {"name": "prep", "deps": [], "priority": 10.0, "stale": True}
+        ]
+    }
+    sub = client.post("/submit_job", json={"repo": "owner/repo", "branch": "feat", "plan": plan}).get_json()
+    job_id = sub["job_id"]
+
+    # 3. Exécution du scheduler
+    scheduler_loop.schedule_iteration()
+
+    # 4. Vérification que le job a été attribué à un GB10 (W2_HEC45803) et NON au headnode
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (job_id,))
+        home_worker = cursor.fetchone()[0]
+        assert home_worker in ("W2_HEC45803", "W1_HEC45801")
+        assert home_worker != "HN_isipol09"
+        assert home_worker == "W2_HEC45803"
+
+    # 5. Récupération du nœud prêt par le worker : il doit recevoir le nœud prep
+    step_resp = client.post(f"/api/jobs/{job_id}/next_node", json={
+        "runner_id": "runner_w2",
+        "worker": home_worker,
+        "node": None,
+        "status": None
+    }).get_json()
+    assert step_resp["action"] in ("run", "switch_image")
+    assert step_resp["node"] == "prep"
+
+
+
 
 

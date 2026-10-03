@@ -1358,7 +1358,7 @@ def schedule_iteration():
             SELECT * FROM workers
             WHERE status = "online"
             AND last_seen >= datetime('now', '-60 seconds')
-            ORDER BY total_ram_gb DESC
+            ORDER BY placement_priority DESC, total_ram_gb DESC
         ''')
         workers = [dict(row) for row in cursor.fetchall()]
 
