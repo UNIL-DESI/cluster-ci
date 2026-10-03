@@ -5,6 +5,7 @@ import os
 import sys
 import subprocess
 import tempfile
+import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 import pytest
@@ -765,6 +766,38 @@ class TestV3W8Submission(unittest.TestCase):
         self.assertTrue(is_exhausted)
         self.assertIn("Exceeded maximum network retries", msg)
         self.assertIn("cluster-run attach job-abc", msg)
+
+    def test_run_planner_external_target_repo_no_modulenotfound(self):
+        """(Non-régression) Vérifie que run_planner_for_submission résout le plan sans ModuleNotFoundError
+        même lorsque target_repo est un dossier temporaire externe et PYTHONPATH ne contient pas cluster-ci."""
+        with tempfile.TemporaryDirectory(prefix="test_ext_repo_") as tmp_repo:
+            subprocess.run(["git", "init"], cwd=tmp_repo, check=True, capture_output=True)
+            dvc_cmd = ["dvc"] if shutil.which("dvc") else [sys.executable, "-m", "dvc"]
+            subprocess.run(dvc_cmd + ["init", "--no-scm"], cwd=tmp_repo, check=True, capture_output=True)
+            with open(os.path.join(tmp_repo, ".cluster-ci"), "w", encoding="utf-8") as f:
+                f.write("PARALLEL_STAGES=true\nREQUIRED_RAM=16GB\n")
+            with open(os.path.join(tmp_repo, "dvc.yaml"), "w", encoding="utf-8") as f:
+                f.write("stages:\n  train:\n    cmd: echo 1\n    outs:\n      - out.txt\n")
+
+            orig_cwd = os.getcwd()
+            orig_pypath = os.environ.get("PYTHONPATH", "")
+            orig_path = os.environ.get("PATH", "")
+            local_bin = os.path.expanduser("~/.local/bin")
+            if os.path.exists(local_bin) and local_bin not in orig_path.split(os.pathsep):
+                os.environ["PATH"] = f"{local_bin}{os.pathsep}{orig_path}"
+            try:
+                os.chdir(tmp_repo)
+                os.environ["PYTHONPATH"] = ""
+                with patch("shutil.which", return_value=None):
+                    plan = run_planner_for_submission(tmp_repo)
+                self.assertIsNotNone(plan)
+                self.assertIn("nodes", plan)
+                self.assertEqual(len(plan["nodes"]), 1)
+                self.assertEqual(plan["nodes"][0]["name"], "train")
+            finally:
+                os.chdir(orig_cwd)
+                os.environ["PYTHONPATH"] = orig_pypath
+                os.environ["PATH"] = orig_path
 
 
 if __name__ == "__main__":
