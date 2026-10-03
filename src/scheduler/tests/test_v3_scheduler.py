@@ -1369,4 +1369,89 @@ def test_a17_oomkilled_message_in_job_status_and_job_logs(client):
     assert "OOMKilled" in logs_classic.get("logs", "")
 
 
+# =========================================================================
+# 25. Amendement A17 : Job classique impossible sur mémoire unifiée (b85ab474)
+# =========================================================================
+
+def test_classic_job_impossible_unified_memory_and_actionable_message(client):
+    """
+    Test réel : le job classique b85ab474 (REQUIRED_RAM=100GB, REQUIRED_VRAM=100GB)
+    sur deux machines GB10 (121.63 Go de mémoire unifiée chacune).
+    - Somme 200 Go > 121.63 - 8 = 113.63 Go : impossible sur toute machine.
+    - Doit échouer immédiatement avec message actionnable A17 exhaustif.
+    - Un job admissible (50 Go RAM + 50 Go VRAM = 100 Go <= 113.63 Go) doit être assigné avec succès.
+    """
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM jobs")
+        cursor.execute("DELETE FROM workers")
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('GB10_1', 'gb10-1', 'http://10.0.0.1:6000', 121.63, 121.63, 1, 32, 'online', CURRENT_TIMESTAMP)
+        ''')
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('GB10_2', 'gb10-2', 'http://10.0.0.2:6000', 121.63, 121.63, 1, 32, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    # 1. Cas impossible (100 Go RAM + 100 Go VRAM)
+    submit_resp = client.post("/submit_job", json={
+        "repo": "owner/impossible-classic",
+        "branch": "main",
+        "ram_required_gb": 100.0,
+        "vram_required_gb": 100.0
+    }).get_json()
+    job_id_impossible = submit_resp["job_id"]
+
+    # Exécution de l'itération d'ordonnancement
+    scheduler_loop.schedule_iteration()
+
+    # Vérification base SQLite
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, exit_code, error_message FROM jobs WHERE job_id = ?", (job_id_impossible,))
+        j_status, j_exit, j_err = cursor.fetchone()
+        assert j_status == "failed"
+        assert j_exit == 1
+        assert "Job classique" in j_err
+        assert "REQUIRED_RAM=100.0 Go et REQUIRED_VRAM=100.0 Go" in j_err
+        assert "somme=200.0 Go sur mémoire unifiée" in j_err
+        assert "machine GB10_1 (113.6 Go max RAM+VRAM unifiée, 32 CPUs)" in j_err
+        assert "machine GB10_2 (113.6 Go max RAM+VRAM unifiée, 32 CPUs)" in j_err
+        assert "remède : baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10, ou déclarer meta.cluster par étape et activer le mode v3" in j_err
+
+    # Vérification route /job_status
+    st_resp = client.get(f"/job_status/{job_id_impossible}").get_json()
+    assert st_resp["status"] == "failed"
+    assert "baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10" in st_resp.get("error_message", "")
+
+    # Vérification route /job_logs
+    log_resp = client.get(f"/job_logs/{job_id_impossible}?offset=0").get_json()
+    assert "baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10" in log_resp.get("logs", "")
+
+    # 2. Cas admissible (50 Go RAM + 50 Go VRAM = 100 Go <= 113.63 Go)
+    submit_ok = client.post("/submit_job", json={
+        "repo": "owner/admissible-classic",
+        "branch": "main",
+        "ram_required_gb": 50.0,
+        "vram_required_gb": 50.0
+    }).get_json()
+    job_id_admissible = submit_ok["job_id"]
+
+    scheduler_loop.schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, worker_id, error_message FROM jobs WHERE job_id = ?", (job_id_admissible,))
+        ok_status, ok_worker, ok_err = cursor.fetchone()
+        assert ok_status in ("assigned", "running")
+        assert ok_worker in ("GB10_1", "GB10_2")
+        assert ok_err is None
+
+    st_ok = client.get(f"/job_status/{job_id_admissible}").get_json()
+    assert st_ok["status"] in ("assigned", "running")
+
+
+
 
