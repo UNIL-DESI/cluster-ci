@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import time
+import random
 import urllib.error
 import urllib.request
 import zipfile
@@ -577,10 +578,220 @@ def _sync_metrics_http():
     except Exception as e:
         log_warn(f"Unexpected error during HTTP metrics sync: {e}")
 
+def _get_git_env():
+    env = os.environ.copy()
+    cluster_ci_root = str(Path(__file__).resolve().parent.parent.parent)
+    current_pypath = env.get("PYTHONPATH", "")
+    if cluster_ci_root not in current_pypath.split(os.pathsep):
+        env["PYTHONPATH"] = f"{cluster_ci_root}{os.pathsep}{current_pypath}" if current_pypath else cluster_ci_root
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+def _get_current_branch(cwd=None):
+    try:
+        branch = subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            cwd=cwd,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        ).strip()
+        if branch == "HEAD" or not branch:
+            return os.environ.get("TARGET_BRANCH", "main")
+        return branch
+    except Exception:
+        return os.environ.get("TARGET_BRANCH", "main")
+
+def install_dvc_lock_merge_driver(repo_path=None):
+    """Install the dvc.lock merge driver in .git/info/attributes and local git config.
+    
+    Safe, idempotent, and does NOT modify user tracked repository files (.gitattributes).
+    """
+    cwd = repo_path or os.getcwd()
+    try:
+        res = subprocess.run(
+            ['git', 'rev-parse', '--git-path', 'info/attributes'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+        if res.returncode == 0 and res.stdout and isinstance(res.stdout, str):
+            attr_path = res.stdout.strip()
+            if not os.path.isabs(attr_path):
+                attr_path = os.path.join(cwd, attr_path)
+        else:
+            attr_path = os.path.join(cwd, '.git', 'info', 'attributes')
+    except Exception:
+        attr_path = os.path.join(cwd, '.git', 'info', 'attributes')
+
+    try:
+        attr_dir = os.path.dirname(attr_path)
+        if attr_dir:
+            os.makedirs(attr_dir, exist_ok=True)
+
+        pattern = "dvc.lock merge=dvclock"
+        already_configured = False
+        if os.path.exists(attr_path):
+            try:
+                with open(attr_path, 'r', encoding='utf-8', errors='replace') as f:
+                    for line in f:
+                        if line.strip() == pattern:
+                            already_configured = True
+                            break
+            except Exception:
+                pass
+
+        if not already_configured:
+            prefix_nl = False
+            if os.path.exists(attr_path) and os.path.getsize(attr_path) > 0:
+                try:
+                    with open(attr_path, 'rb') as f:
+                        f.seek(-1, os.SEEK_END)
+                        if f.read(1) != b'\n':
+                            prefix_nl = True
+                except Exception:
+                    pass
+            with open(attr_path, 'a', encoding='utf-8') as f:
+                if prefix_nl:
+                    f.write("\n")
+                f.write(f"{pattern}\n")
+            log_info(f"Registered merge attribute in {attr_path}")
+    except Exception as e:
+        log_warn(f"Could not write merge attribute: {e}")
+
+    try:
+        py_exec = sys.executable.replace("\\", "/") if sys.platform.startswith("win") else sys.executable
+        driver_cmd = f'"{py_exec}" -m src.runner.dvc_lock_merge %O %A %B'
+        subprocess.run(['git', 'config', 'merge.dvclock.name', 'DVC lock 3-way merge driver'], cwd=cwd, check=False)
+        subprocess.run(['git', 'config', 'merge.dvclock.driver', driver_cmd], cwd=cwd, check=False)
+        log_info("Configured merge.dvclock driver in local git config")
+    except Exception as e:
+        log_warn(f"Could not configure merge driver in git config: {e}")
+
+def push_with_retries(current_branch=None, max_retries=10, base_delay=0.5, max_delay=10.0, cwd=None):
+    """Push local commits to origin with retry loop and rebase reconciliation.
+    
+    Tries git push origin HEAD:{current_branch}.
+    If rejected (e.g. non-fast-forward from concurrent pushes), pulls with --rebase,
+    resolving dvc.lock via custom merge driver, and retries up to max_retries times
+    with bounded exponential backoff and jitter.
+    Fails loudly if reconciliation fails or max retries are exceeded.
+    """
+    cwd = cwd or os.getcwd()
+    install_dvc_lock_merge_driver(repo_path=cwd)
+    env = _get_git_env()
+
+    if not current_branch:
+        current_branch = _get_current_branch(cwd)
+
+    for attempt in range(1, max_retries + 1):
+        log_info(f"Push attempt {attempt}/{max_retries} to origin/{current_branch}...")
+
+        res_push = subprocess.run(
+            ['git', 'push', 'origin', f'HEAD:{current_branch}'],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=60,
+            env=env
+        )
+        if res_push.returncode == 0:
+            log_success(f"Changes pushed successfully to origin/{current_branch} on attempt {attempt}.")
+            return True
+
+        stderr_msg = res_push.stderr.strip() if res_push.stderr else (res_push.stdout.strip() if res_push.stdout else "Unknown push error")
+        log_warn(f"Push attempt {attempt}/{max_retries} failed: {stderr_msg}")
+
+        if attempt == max_retries:
+            raise RuntimeError(
+                f"Failed to push to origin/{current_branch} after {max_retries} attempts. Last error: {stderr_msg}"
+            )
+
+        log_info(f"Attempting reconciliation via pull --rebase on branch '{current_branch}'...")
+        res_rebase = subprocess.run(
+            ['git', 'pull', '--rebase', 'origin', current_branch],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=60,
+            env=env
+        )
+
+        if res_rebase.returncode != 0:
+            rebase_err = res_rebase.stderr.strip() if res_rebase.stderr else (res_rebase.stdout.strip() if res_rebase.stdout else "Rebase failed")
+            log_warn(f"Rebase conflict or failure: {rebase_err}")
+            subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
+            raise RuntimeError(
+                f"Reconciliation failed during pull --rebase on branch '{current_branch}'. "
+                f"Unresolvable conflict encountered: {rebase_err}"
+            )
+
+        log_info(f"Rebase successful on attempt {attempt}. Preparing for next push attempt...")
+
+        backoff = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        jitter = random.uniform(0.1, 0.5)
+        delay = backoff + jitter
+        log_info(f"Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}...")
+        time.sleep(delay)
+
+    raise RuntimeError(f"Failed to push to origin/{current_branch} after {max_retries} attempts.")
+
+def sync_before_node(current_branch=None, cwd=None):
+    """Synchronize repository with origin before executing a node.
+    
+    Installs the merge driver, performs a clean git pull --rebase against origin.
+    Fails loudly on unresolved conflicts. Does NOT perform git reset --hard
+    so that any unpushed local work is safely preserved and rebased.
+    """
+    cwd = cwd or os.getcwd()
+    install_dvc_lock_merge_driver(repo_path=cwd)
+    env = _get_git_env()
+
+    if not current_branch:
+        current_branch = _get_current_branch(cwd)
+
+    log_info(f"Synchronizing repository before node on branch '{current_branch}'...")
+
+    # Check for active rebase in progress
+    git_dir_res = subprocess.run(['git', 'rev-parse', '--git-dir'], cwd=cwd, capture_output=True, text=True, env=env)
+    if git_dir_res.returncode == 0 and git_dir_res.stdout:
+        git_dir = git_dir_res.stdout.strip()
+        if not os.path.isabs(git_dir):
+            git_dir = os.path.join(cwd, git_dir)
+        if os.path.exists(os.path.join(git_dir, 'rebase-merge')) or os.path.exists(os.path.join(git_dir, 'rebase-apply')):
+            raise RuntimeError(f"Repository at {cwd} has an active rebase in progress before running node.")
+
+    res = subprocess.run(
+        ['git', 'pull', '--rebase', 'origin', current_branch],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        timeout=60,
+        env=env
+    )
+    if res.returncode != 0:
+        err = res.stderr.strip() if res.stderr else (res.stdout.strip() if res.stdout else "Rebase failed")
+        log_warn(f"Failed to pull --rebase before node: {err}")
+        subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
+        raise RuntimeError(f"sync_before_node failed on branch '{current_branch}': {err}")
+
+    log_success(f"Repository successfully synchronized before node on branch '{current_branch}'.")
+
 def sync_metrics():
     if os.environ.get("IS_LOCAL") == "1":
         log_info("IS_LOCAL=1 detected: Redirecting metrics sync to HTTP endpoint.")
         return _sync_metrics_http()
+
+    install_dvc_lock_merge_driver()
 
     # Check if dvc.lock has changes or is untracked
     dvc_lock_changed = False
@@ -661,33 +872,11 @@ def sync_metrics():
         subprocess.run(['git', 'config', 'user.email', 'bot@cluster-ci.io'], check=True)
         subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
 
-        # Determine the target branch name robustly
-        try:
-            current_branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], text=True).strip()
-            if current_branch == "HEAD":
-                # Fallback if detached: check environment or default to main
-                current_branch = os.environ.get("TARGET_BRANCH", "main")
-        except Exception:
-            current_branch = os.environ.get("TARGET_BRANCH", "main")
+        current_branch = _get_current_branch()
 
-        # Push all accumulated local commits robustly
+        # Push all accumulated local commits robustly with retries and rebase
         log_info(f"Pushing all accumulated local commits to origin on branch '{current_branch}'...")
-        try:
-            subprocess.run(['git', 'push', 'origin', f'HEAD:{current_branch}'], check=True, capture_output=True, text=True, timeout=60)
-            log_success(f"All changes pushed successfully to {current_branch}.")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            log_warn(f"Initial push failed, attempting reconciliation (rebase): {getattr(e, 'stderr', '') or e}")
-            try:
-                # Attempt to pull with rebase to handle remote changes
-                subprocess.run(['git', 'pull', '--rebase', 'origin', current_branch], check=True, capture_output=True, text=True, timeout=60)
-                log_info("Rebase successful, retrying push...")
-                subprocess.run(['git', 'push', 'origin', f'HEAD:{current_branch}'], check=True, capture_output=True, text=True, timeout=60)
-                log_success(f"All changes pushed successfully to {current_branch} after reconciliation.")
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as rebase_err:
-                log_warn(f"Reconciliation failed: {getattr(rebase_err, 'stderr', '') or rebase_err}")
-                # Abort rebase if it's still in progress to leave the repo in a clean state
-                subprocess.run(['git', 'rebase', '--abort'], check=False, capture_output=True)
-                log_warn("Push abandoned. The pipeline will continue, but local commits were not synchronized.")
+        push_with_retries(current_branch=current_branch)
     else:
         log_info("No new metrics changes to commit. Skipping push.")
 
@@ -698,6 +887,8 @@ if __name__ == "__main__":
     subparsers.add_parser('inject')
     subparsers.add_parser('sync')
     subparsers.add_parser('sync-local-results')
+    subparsers.add_parser('sync-before-node')
+    subparsers.add_parser('install-merge-driver')
 
     args = parser.parse_args()
 
@@ -707,5 +898,9 @@ if __name__ == "__main__":
         sync_metrics()
     elif args.command == 'sync-local-results':
         sync_local_results_archive()
+    elif args.command == 'sync-before-node':
+        sync_before_node()
+    elif args.command == 'install-merge-driver':
+        install_dvc_lock_merge_driver()
     else:
         parser.print_help()
