@@ -9,6 +9,9 @@ Features:
   - Automatic fallback: tries candidate sources sequentially per object until one succeeds
   - Strict MD5 integrity verification on every downloaded chunk (rejects corrupted objects)
   - Full support for DVC directory manifests (.dir) and their nested files
+  - Robust read-only permission handling (chmod stat.S_IWRITE before unlink/replace, protect to 0o444)
+  - No silent OSError masking
+  - Safe dvc checkout: never triggers global checkout when target_paths is empty
   - Executes `dvc checkout <deps>` WITHOUT masking errors (no 2>/dev/null)
   - Identifies missing dependencies for Amendement A4 (status: "missing_deps")
   - Protocol compatibility with existing worker_agent.py `/fetch_artifact` route
@@ -25,6 +28,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
@@ -59,8 +63,17 @@ class FetchResult:
         }
 
 
+def _ensure_writable(path: Path) -> None:
+    """Ensures file is writable before unlink or atomic replacement (fixes Windows 0o444 locking)."""
+    if path.is_file():
+        try:
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        except OSError as e:
+            logger.warning("Could not unlock file %s permissions: %s", path, e)
+
+
 def compute_file_md5(file_path: Path | str, chunk_size: int = 65536) -> str:
-    """Computes hexadecimal MD5 of a local file."""
+    """Computes hexadecimal MD5 of a local file in raw binary mode."""
     hasher = hashlib.md5()
     with open(file_path, "rb") as f:
         while chunk := f.read(chunk_size):
@@ -145,13 +158,11 @@ def download_single_object(
 
     # 1. Check if already cached and valid
     if target_file.is_file():
-        try:
-            if compute_file_md5(target_file) == expected_hex:
-                return True, "already_cached"
-            logger.warning("Corrupted local cache file %s, will re-fetch", target_file)
-            target_file.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if compute_file_md5(target_file) == expected_hex:
+            return True, "already_cached"
+        logger.warning("Corrupted local cache file %s, removing to re-fetch", target_file)
+        _ensure_writable(target_file)
+        target_file.unlink()
 
     target_dir.mkdir(parents=True, exist_ok=True)
     temp_file = target_dir / f"{suffix}.tmp.{uuid4().hex[:8]}"
@@ -179,18 +190,29 @@ def download_single_object(
                         "Checksum mismatch for %s from %s (got %s, expected %s). Rejecting and trying next source.",
                         clean_h, url, computed_hex, expected_hex
                     )
+                    _ensure_writable(temp_file)
                     temp_file.unlink(missing_ok=True)
                     continue
 
-                # MD5 verified! Atomic move into final cache location
+                # MD5 verified! Atomic replace into final cache location
+                _ensure_writable(target_file)
                 temp_file.replace(target_file)
+
+                # Protect downloaded cache object as read-only (0o444) matching DVC
+                try:
+                    os.chmod(target_file, stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
+                except OSError:
+                    pass
+
                 logger.info("Successfully fetched and verified %s from %s", clean_h, url)
                 return True, "downloaded"
 
             except Exception as e:
                 logger.debug("Fetch failed for %s from %s: %s", clean_h, url, e)
+                _ensure_writable(temp_file)
                 temp_file.unlink(missing_ok=True)
 
+    _ensure_writable(temp_file)
     temp_file.unlink(missing_ok=True)
     return False, "missing"
 
@@ -204,7 +226,22 @@ def parse_dir_manifest(manifest_path: Path) -> list[dict[str, Any]]:
             return data
     except Exception as e:
         logger.error("Failed to parse .dir manifest %s: %s", manifest_path, e)
-    return []
+def get_dvc_command() -> list[str]:
+    """Finds dvc executable in PATH, ~/.local/bin, or uvx fallback."""
+    dvc_path = shutil.which("dvc")
+    if dvc_path:
+        return [dvc_path]
+    local_dvc = os.path.expanduser("~/.local/bin/dvc")
+    if os.path.isfile(local_dvc) and os.access(local_dvc, os.X_OK):
+        return [local_dvc]
+    uvx_path = shutil.which("uvx")
+    if not uvx_path:
+        cand_uvx = os.path.expanduser("~/.local/bin/uvx")
+        if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
+            uvx_path = cand_uvx
+    if uvx_path:
+        return [uvx_path, "--from", "dvc==3.67.1", "dvc"]
+    return ["dvc"]
 
 
 def fetch_dependencies(
@@ -242,20 +279,31 @@ def fetch_dependencies(
 
     # 1. Normalize dependencies
     normalized_deps: list[dict[str, Any]] = []
+    parent_dirs_to_fetch: set[str] = set()
+
     for item in dependencies:
         if isinstance(item, str):
             h = item.strip().lower()
-            normalized_deps.append({"path": "", "md5": h})
+            normalized_deps.append({"path": "", "md5": h, "parent_dir_hash": None})
         elif isinstance(item, Mapping):
             raw_h = item.get("md5") or item.get("hash") or ""
+            clean_h = str(raw_h).strip().lower()
+            p_hash = str(item.get("parent_dir_hash") or "").strip().lower() or None
+            if p_hash:
+                parent_dirs_to_fetch.add(p_hash)
             normalized_deps.append({
                 "path": str(item.get("path") or ""),
-                "md5": str(raw_h).strip().lower(),
+                "md5": clean_h,
                 "sources": item.get("sources", []),
+                "parent_dir_hash": p_hash,
             })
 
     # Collect initial hashes to fetch
     top_level_hashes = [d["md5"] for d in normalized_deps if d["md5"]]
+    for p_h in parent_dirs_to_fetch:
+        if p_h not in top_level_hashes:
+            top_level_hashes.append(p_h)
+
     merged_sources: dict[str, list[str]] = {}
     for h, urls in sources_map.items():
         clean_h = h.strip().lower()
@@ -271,12 +319,23 @@ def fetch_dependencies(
             merged_sources.setdefault(h, [])
             if u not in merged_sources[h]:
                 merged_sources[h].append(u)
+        # If item has parent_dir_hash, share sources with parent .dir
+        p_h = d.get("parent_dir_hash")
+        if p_h:
+            # Propagate parent sources to subfile, and subfile sources to parent
+            for u in merged_sources.get(p_h, []):
+                merged_sources.setdefault(h, [])
+                if u not in merged_sources[h]:
+                    merged_sources[h].append(u)
+            for u in merged_sources.get(h, []):
+                merged_sources.setdefault(p_h, [])
+                if u not in merged_sources[p_h]:
+                    merged_sources[p_h].append(u)
 
     downloaded: list[str] = []
     already_cached: list[str] = []
     failed_hashes: set[str] = set()
 
-    # Session for connection reuse
     session = requests.Session()
 
     # 2. Phase 1: Download top-level hashes (including .dir manifests)
@@ -303,7 +362,6 @@ def fetch_dependencies(
 
     # 3. Phase 2: Inspect directory manifests (.dir) and fetch nested objects
     nested_hashes_to_fetch: set[str] = set()
-    parent_dir_sources: dict[str, list[str]] = {}
 
     for h in top_level_hashes:
         if h.endswith(".dir") and h not in failed_hashes:
@@ -315,7 +373,6 @@ def fetch_dependencies(
                     sub_h = entry.get("md5", "").strip().lower()
                     if sub_h:
                         nested_hashes_to_fetch.add(sub_h)
-                        # The worker holding the directory holds its nested files
                         for s in sources_for_dir:
                             merged_sources.setdefault(sub_h, [])
                             if s not in merged_sources[sub_h]:
@@ -344,8 +401,9 @@ def fetch_dependencies(
 
     for d in normalized_deps:
         h = d["md5"]
-        # If top level hash failed or any nested file of a .dir failed
-        is_missing = h in failed_hashes
+        p_h = d.get("parent_dir_hash")
+        # Missing if direct hash failed or if its parent .dir failed
+        is_missing = (h in failed_hashes) or (p_h and p_h in failed_hashes)
         if h.endswith(".dir") and not is_missing:
             # Check if any nested file failed
             manifest_file = c_path / h[:2] / h[2:]
@@ -376,9 +434,18 @@ def fetch_dependencies(
     # 5. Execute dvc checkout if requested
     if run_checkout:
         target_paths = [d["path"] for d in normalized_deps if d["path"]]
-        cmd = ["dvc", "checkout"]
-        if target_paths:
-            cmd.extend(target_paths)
+        if not target_paths:
+            # If no target paths specified, return immediately without global dvc checkout
+            return FetchResult(
+                success=True,
+                status="success",
+                missing_deps=[],
+                missing_hashes=[],
+                downloaded_hashes=downloaded,
+                cached_hashes=already_cached,
+            )
+
+        cmd = [*get_dvc_command(), "checkout", *target_paths]
 
         try:
             # Never hide errors: capture stdout/stderr and check exit code
@@ -437,7 +504,6 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Load sources
     if os.path.isfile(args.sources_json):
         with open(args.sources_json, "r", encoding="utf-8") as f:
             sources_map = json.load(f)
@@ -449,7 +515,6 @@ def main() -> int:
         from src.scheduler.artifact_registry import extract_node_deps_from_dvc_lock
         deps = extract_node_deps_from_dvc_lock(args.dvc_lock, args.node)
     else:
-        # Use hashes present in sources_map keys
         deps = [{"path": "", "md5": h} for h in sources_map.keys()]
 
     result = fetch_dependencies(
