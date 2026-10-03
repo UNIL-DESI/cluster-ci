@@ -11,9 +11,14 @@ if sys.platform.startswith("win"):
 
 try:
     from ruamel.yaml import YAML
+    _HAS_RUAMEL = True
 except ImportError:
-    print("❌ Error: 'ruamel.yaml' is missing. Please ensure it is installed.", file=sys.stderr)
-    sys.exit(1)
+    _HAS_RUAMEL = False
+    try:
+        import yaml as pyyaml
+    except ImportError:
+        print("❌ Error: neither 'ruamel.yaml' nor 'pyyaml' is available.", file=sys.stderr)
+        sys.exit(1)
 
 
 class MergeConflictError(Exception):
@@ -231,24 +236,40 @@ def merge_dvc_lock_data(o_data, a_data, b_data):
 
 def merge_dvc_lock_files(path_o, path_a, path_b):
     """Read Base (%O), Ours (%A), Theirs (%B) files, merge, and overwrite Ours (%A)."""
-    yaml = _get_yaml_instance()
+    if _HAS_RUAMEL:
+        yaml = _get_yaml_instance()
 
-    def _read_file(path):
-        if not os.path.exists(path) or os.path.getsize(path) == 0:
-            return {}
-        with open(path, 'r', encoding='utf-8') as f:
-            data = yaml.load(f)
-            return data or {}
+        def _read_file(path):
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                return {}
+            with open(path, 'r', encoding='utf-8') as f:
+                data = yaml.load(f)
+                return data or {}
 
-    o_data = _read_file(path_o)
-    a_data = _read_file(path_a)
-    b_data = _read_file(path_b)
+        o_data = _read_file(path_o)
+        a_data = _read_file(path_a)
+        b_data = _read_file(path_b)
 
-    merged_data = merge_dvc_lock_data(o_data, a_data, b_data)
+        merged_data = merge_dvc_lock_data(o_data, a_data, b_data)
 
-    # Write merged result back to %A
-    with open(path_a, 'w', encoding='utf-8') as f:
-        yaml.dump(merged_data, f)
+        with open(path_a, 'w', encoding='utf-8') as f:
+            yaml.dump(merged_data, f)
+    else:
+        def _read_file(path):
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                return {}
+            with open(path, 'r', encoding='utf-8') as f:
+                data = pyyaml.safe_load(f)
+                return data or {}
+
+        o_data = _read_file(path_o)
+        a_data = _read_file(path_a)
+        b_data = _read_file(path_b)
+
+        merged_data = merge_dvc_lock_data(o_data, a_data, b_data)
+
+        with open(path_a, 'w', encoding='utf-8') as f:
+            pyyaml.dump(merged_data, f, sort_keys=False, default_flow_style=False, indent=2)
 
 
 def main():

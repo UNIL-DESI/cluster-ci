@@ -664,10 +664,12 @@ def install_dvc_lock_merge_driver(repo_path=None):
 
     try:
         py_exec = sys.executable.replace("\\", "/") if sys.platform.startswith("win") else sys.executable
-        driver_cmd = f'"{py_exec}" -m src.runner.dvc_lock_merge %O %A %B'
+        driver_script = Path(__file__).resolve().with_name("dvc_lock_merge.py")
+        driver_file = str(driver_script).replace("\\", "/") if sys.platform.startswith("win") else str(driver_script)
+        driver_cmd = f'"{py_exec}" "{driver_file}" %O %A %B'
         subprocess.run(['git', 'config', 'merge.dvclock.name', 'DVC lock 3-way merge driver'], cwd=cwd, check=False)
         subprocess.run(['git', 'config', 'merge.dvclock.driver', driver_cmd], cwd=cwd, check=False)
-        log_info("Configured merge.dvclock driver in local git config")
+        log_info(f"Configured merge.dvclock driver in local git config: {driver_cmd}")
     except Exception as e:
         log_warn(f"Could not configure merge driver in git config: {e}")
 

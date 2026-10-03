@@ -468,3 +468,67 @@ class TestGitMergeDriverIntegration:
         merged_lock = _read_yaml(os.path.join(clone_b, "dvc.lock"))
         assert "stage_remote" in merged_lock["stages"]
         assert "stage_local_unpushed" in merged_lock["stages"]
+
+    def test_pull_rebase_with_empty_pythonpath_and_arbitrary_cwd(self, tmp_path):
+        """Verify merge driver executes cleanly even with empty PYTHONPATH and from an arbitrary cwd."""
+        bare_dir = tmp_path / "bare_pypath.git"
+        clone_a = tmp_path / "worker_a"
+        clone_b = tmp_path / "worker_b"
+        arbitrary_cwd = tmp_path / "arbitrary_dir"
+        arbitrary_cwd.mkdir()
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = ""
+
+        # Init bare repo
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True, env=env)
+
+        # Init clone A
+        subprocess.run(["git", "clone", str(bare_dir), str(clone_a)], check=True, capture_output=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "config", "user.name", "Worker A"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "config", "user.email", "a@test.com"], check=True, env=env)
+
+        init_data = {"schema": "2.0", "stages": {"base_stage": {"cmd": "echo base"}}}
+        _write_yaml(clone_a / "dvc.lock", init_data)
+        subprocess.run(["git", "-C", str(clone_a), "add", "dvc.lock"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "commit", "-m", "Initial commit"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "branch", "-M", "main"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "push", "-u", "origin", "main"], check=True, env=env)
+
+        # Init clone B
+        subprocess.run(["git", "clone", "-b", "main", str(bare_dir), str(clone_b)], check=True, capture_output=True, env=env)
+        subprocess.run(["git", "-C", str(clone_b), "config", "user.name", "Worker B"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_b), "config", "user.email", "b@test.com"], check=True, env=env)
+
+        # Install driver in clone B
+        install_dvc_lock_merge_driver(repo_path=str(clone_b))
+
+        # Clone A adds stage_a and pushes
+        lock_a = _read_yaml(clone_a / "dvc.lock")
+        lock_a["stages"]["stage_a"] = {"cmd": "echo A"}
+        _write_yaml(clone_a / "dvc.lock", lock_a)
+        subprocess.run(["git", "-C", str(clone_a), "commit", "-am", "A adds stage_a"], check=True, env=env)
+        subprocess.run(["git", "-C", str(clone_a), "push", "origin", "main"], check=True, env=env)
+
+        # Clone B adds stage_b and commits
+        lock_b = _read_yaml(clone_b / "dvc.lock")
+        lock_b["stages"]["stage_b"] = {"cmd": "echo B"}
+        _write_yaml(clone_b / "dvc.lock", lock_b)
+        subprocess.run(["git", "-C", str(clone_b), "commit", "-am", "B adds stage_b"], check=True, env=env)
+
+        # Run git pull --rebase on clone B from arbitrary_cwd with empty PYTHONPATH
+        res = subprocess.run(
+            ["git", "-C", str(clone_b), "pull", "--rebase", "origin", "main"],
+            cwd=str(arbitrary_cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace"
+        )
+        assert res.returncode == 0, f"Pull rebase failed: {res.stderr}"
+
+        final_lock = _read_yaml(clone_b / "dvc.lock")
+        assert "base_stage" in final_lock["stages"]
+        assert "stage_a" in final_lock["stages"]
+        assert "stage_b" in final_lock["stages"]
