@@ -780,6 +780,14 @@ def sync_before_node(current_branch=None, cwd=None):
         if os.path.exists(os.path.join(git_dir, 'rebase-merge')) or os.path.exists(os.path.join(git_dir, 'rebase-apply')):
             raise RuntimeError(f"Repository at {cwd} has an active rebase in progress before running node.")
 
+    # Revert any tracked runtime metadata files if modified so rebase is never blocked
+    for meta_file in ['.cluster-ci-commit', '.cluster-ci-viewer-port']:
+        meta_path = os.path.join(cwd, meta_file)
+        if os.path.exists(meta_path):
+            diff_res = subprocess.run(['git', 'diff', '--name-only', meta_file], cwd=cwd, capture_output=True, text=True, env=env)
+            if diff_res.returncode == 0 and meta_file in diff_res.stdout:
+                subprocess.run(['git', 'checkout', '--', meta_file], cwd=cwd, capture_output=True, env=env)
+
     res = subprocess.run(
         ['git', 'pull', '--rebase', 'origin', current_branch],
         cwd=cwd,
