@@ -776,7 +776,7 @@ if [ "$CLUSTER_CI_PARALLEL_MODE" = "1" ]; then
         --headnode-url "$HEADNODE_URL" \
         --job-id "${CLUSTER_CI_JOB_ID:-$JOB_ID}" \
         --runner-id "${CLUSTER_CI_RUNNER_ID:-runner-${SAFE_JOB_ID}-$$}" \
-        --worker-id "${WORKER_ID:-$(hostname)}" \
+        --worker-id "${CLUSTER_CI_WORKER_ID:-${WORKER_ID:-$(hostname)}}" \
         --repo-dir "$(pwd)" \
         --target-repo "$TARGET_REPO" \
         --target-branch "$TARGET_BRANCH" \

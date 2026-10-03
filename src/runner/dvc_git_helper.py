@@ -23,8 +23,18 @@ if sys.platform.startswith("win"):
 try:
     from ruamel.yaml import YAML
 except ImportError:
-    print("❌ Error: 'ruamel.yaml' is missing. Please run this script using 'uv run --with ruamel.yaml'.")
-    sys.exit(1)
+    try:
+        import yaml as PyYAML
+
+        class YAML:
+            def __init__(self, *args, **kwargs):
+                self.preserve_quotes = kwargs.get("preserve_quotes", False)
+            def load(self, stream):
+                return PyYAML.safe_load(stream)
+            def dump(self, data, stream):
+                return PyYAML.dump(data, stream, sort_keys=False)
+    except ImportError:
+        YAML = None
 
 def log_info(msg):
     print(f"ℹ️  [DVC-Git-Helper] {msg}")

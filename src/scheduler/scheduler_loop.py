@@ -798,11 +798,12 @@ def handle_next_node(req):
             return {"action": "finish", "error": "Job not found"}
         job = dict(job_row)
 
-        cursor.execute('SELECT * FROM workers WHERE worker_id = ?', (worker_id,))
+        cursor.execute('SELECT * FROM workers WHERE worker_id = ? OR hostname = ?', (worker_id, worker_id))
         worker_row = cursor.fetchone()
         if not worker_row:
             return {"action": "finish", "error": "Worker not found"}
         worker = dict(worker_row)
+        worker_id = worker["worker_id"]
 
         # Récupérer les workers inactifs disponibles actuellement (pour vérifier si une machine réellement inactive peut accueillir un concurrent)
         cursor.execute('''

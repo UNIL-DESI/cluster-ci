@@ -952,6 +952,7 @@ def execute_job(job):
         env["CLUSTER_CI_JOB_ID"] = job_id
         env["HEADNODE_URL"] = HEADNODE_URL
         env["CLUSTER_CI_HEADNODE_URL"] = HEADNODE_URL
+        env["WORKER_ID"] = WORKER_ID
         env["CLUSTER_CI_WORKER_ID"] = WORKER_ID
         if job.get("role"):
             env["CLUSTER_CI_ROLE"] = str(job["role"])
