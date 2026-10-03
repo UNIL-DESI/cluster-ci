@@ -2,3 +2,5 @@ schema: '2.0'
 stages:
   toy_b_step1:
     cmd: python3 -c "import time; print('toy_b_step1 running'); time.sleep(30)"
+  toy_b_step2:
+    cmd: python3 -c "import time; print('toy_b_step2 running'); time.sleep(30)"
