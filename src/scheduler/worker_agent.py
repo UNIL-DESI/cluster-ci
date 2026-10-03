@@ -40,7 +40,7 @@ if not HEADNODE_URL:
         logger.critical("❌ Error: HEADNODE_URL environment variable is missing.")
         sys.exit(1)
 CLUSTER_TOKEN = os.environ.get("CLUSTER_TOKEN")
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.environ.get("CLUSTER_CI_BASE_DIR", os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 LOGS_DIR = os.path.join(BASE_DIR, "job_logs")
 REPOS_DIR = os.path.join(BASE_DIR, "repositories")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -268,10 +268,20 @@ else:
 HOSTNAME = socket.gethostname()
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 6000))
 SERVICE_URL = os.environ.get("SERVICE_URL", f"http://{HOSTNAME}:{AGENT_PORT}")
-if SERVICE_URL:
-    SERVICE_URL = SERVICE_URL.replace("1300.223.169.200", "130.223.169.200")
 
-# Global state for current job tracking
+# Role detection (A14: no hardcoded hostnames or IPs; role comes from environment or config file)
+ROLE = os.environ.get("CLUSTER_CI_ROLE")
+if not ROLE and os.path.exists("/etc/cluster-ci/role"):
+    try:
+        with open("/etc/cluster-ci/role", "r") as f:
+            ROLE = f.read().strip()
+    except Exception:
+        pass
+if not ROLE:
+    ROLE = "worker"
+
+# Global state for multi-runner tracking (A11)
+active_executors = {}  # runner_id -> dict(job_id=..., process=..., is_parallel=..., start_time=..., repo=..., branch=...)
 current_job_id = None
 current_process = None
 job_lock = threading.Lock()
@@ -607,6 +617,77 @@ def get_gpu_info():
         data["unified_memory"]
     )
 
+def parse_docker_size(size_str):
+    """Converts Docker human-readable size strings (e.g., '191MB', '1.46GB', '420kB', '500B')
+    into integer bytes. Returns None if size_str cannot be parsed.
+    """
+    if not size_str or not isinstance(size_str, str):
+        return None
+    s = size_str.strip().upper()
+    units = {
+        "B": 1,
+        "KB": 1000,
+        "KIB": 1024,
+        "MB": 1000 * 1000,
+        "MIB": 1024 * 1024,
+        "GB": 1000 * 1000 * 1000,
+        "GIB": 1024 * 1024 * 1024,
+        "TB": 1000 * 1000 * 1000 * 1000,
+        "TIB": 1024 * 1024 * 1024 * 1024,
+    }
+    m = re.match(r"^([0-9.]+)\s*([A-Z]*)$", s)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+    except (ValueError, TypeError):
+        return None
+    unit = m.group(2) or "B"
+    if unit not in units:
+        return None
+    mult = units[unit]
+    return int(val * mult)
+
+def get_docker_images():
+    """Declares local Docker images as {"repo:tag": size_bytes} via `docker image ls`.
+    On error/failure, logs the error and returns None (never silent {}).
+    """
+    try:
+        res = subprocess.run(
+            ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if res.returncode != 0:
+            err_msg = res.stderr.strip() if res.stderr else "non-zero exit code"
+            logger.error(f"Error querying docker images via 'docker image ls' (exit code {res.returncode}): {err_msg}")
+            return None
+
+        images = {}
+        for line in res.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                tag_name = parts[0].strip()
+                size_str = parts[1].strip()
+            else:
+                tokens = line.split()
+                if len(tokens) >= 2:
+                    tag_name = tokens[0].strip()
+                    size_str = tokens[1].strip()
+                else:
+                    continue
+
+            if tag_name.startswith("<none>"):
+                continue
+
+            images[tag_name] = parse_docker_size(size_str)
+        return images
+    except Exception as e:
+        logger.error(f"Error querying docker images via 'docker image ls': {e}")
+        return None
+
 def get_worker_capabilities():
     """Aggregates all worker capacities into a single structured dictionary."""
     total_ram_gb, available_ram_gb = get_ram_info()
@@ -615,7 +696,18 @@ def get_worker_capabilities():
     cpus = get_cpu_info()
     arch = get_arch_info()
 
-    return {
+    active_runners_list = []
+    with job_lock:
+        for r_id, ex in active_executors.items():
+            active_runners_list.append({
+                "runner_id": r_id,
+                "job_id": ex.get("job_id"),
+                "repo": ex.get("repo"),
+                "is_parallel": ex.get("is_parallel", False),
+                "start_time": ex.get("start_time")
+            })
+
+    caps = {
         "cpus": cpus,
         "ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
         "total_ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
@@ -629,13 +721,29 @@ def get_worker_capabilities():
         "available_vram_gb": available_vram_gb,
         "vram_per_gpu": vram_per_gpu,
         "unified_memory": unified_memory,
-        "arch": arch
+        "arch": arch,
+        "docker_images": get_docker_images(),
+        "active_runners": active_runners_list,
+        "active_runner_count": len(active_runners_list),
+        "is_busy": len(active_runners_list) > 0,
+        "role": ROLE,
+        "is_headnode": bool(ROLE.lower() in ("headnode", "headnode_worker"))
     }
+
+    if caps["is_headnode"]:
+        try:
+            from src.runner.host_guard import get_headnode_safe_capacities
+            caps = get_headnode_safe_capacities(caps)
+        except ImportError:
+            pass
+
+    return caps
 
 def build_registration_payload(is_startup=False):
     """Builds the heartbeat/registration JSON payload for the headnode,
     retaining all existing fields for backward compatibility while providing
-    all new Cluster-CI v3 capacity fields (cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb).
+    all new Cluster-CI v3 capacity fields (cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb,
+    docker_images, active_runners, role, is_headnode).
     """
     caps = get_worker_capabilities()
 
@@ -660,7 +768,12 @@ def build_registration_payload(is_startup=False):
         "vram_per_gpu": caps["vram_per_gpu"],
         "unified_memory": caps["unified_memory"],
         "arch": caps["arch"],
-        "disk_free_gb": caps["disk_free_gb"]
+        "disk_free_gb": caps["disk_free_gb"],
+        "docker_images": caps["docker_images"],
+        "active_runners": caps["active_runners"],
+        "active_runner_count": caps["active_runner_count"],
+        "role": caps.get("role", ROLE),
+        "is_headnode": caps.get("is_headnode", False)
     }
 
 def heartbeat_loop():
@@ -745,12 +858,36 @@ def execute_job(job):
     runner_id = job.get('runner_id')
     if is_parallel and not runner_id:
         runner_id = f"runner-{WORKER_ID}-{uuid.uuid4().hex[:8]}"
+    elif not runner_id:
+        runner_id = f"classic-{job_id}"
 
-    logger.info(f"Executing job {job_id} (parallel_mode={is_parallel}) for {repo}@{branch} with {ram_limit_gb}GB limit")
+    logger.info(f"Executing job {job_id} (runner_id={runner_id}, parallel_mode={is_parallel}) for {repo}@{branch} with {ram_limit_gb}GB limit")
     purge_orphan_runners_and_containers(job_id)
     update_job_status(job_id, 'running', runner_id=runner_id, worker_id=WORKER_ID)
 
+    if not is_parallel:
+        with job_lock:
+            conflicting = [
+                ex for ex in active_executors.values()
+                if ex.get("repo") == repo and not ex.get("is_parallel") and ex.get("runner_id") != runner_id
+            ]
+            if conflicting:
+                logger.warning(
+                    f"⚠️ Workspace concurrency constraint: Classic job {job_id} shares single workspace 'repositories/{repo}' "
+                    f"with active classic executor(s) {[c.get('runner_id') for c in conflicting]}. "
+                    f"Classic jobs do not have isolated workspaces per runner like v3 (W2)."
+                )
+
     with job_lock:
+        active_executors[runner_id] = {
+            "runner_id": runner_id,
+            "job_id": job_id,
+            "repo": repo,
+            "branch": branch,
+            "is_parallel": is_parallel,
+            "start_time": time.time(),
+            "process": None
+        }
         current_job_id = job_id
 
     # We call the cluster-ci-run command which is supposed to be in /usr/local/bin/cluster-ci-run
@@ -837,6 +974,8 @@ def execute_job(job):
 
         process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         with job_lock:
+            if runner_id in active_executors:
+                active_executors[runner_id]["process"] = process
             current_process = process
 
         # Launch an unbuffered line-by-line real-time log streamer thread
@@ -1020,8 +1159,14 @@ def execute_job(job):
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
         with job_lock:
-            current_job_id = None
-            current_process = None
+            active_executors.pop(runner_id, None)
+            if active_executors:
+                first_active = next(iter(active_executors.values()))
+                current_job_id = first_active.get("job_id")
+                current_process = first_active.get("process")
+            else:
+                current_job_id = None
+                current_process = None
         if secrets_file and os.path.exists(secrets_file):
             try:
                 os.remove(secrets_file)
@@ -1216,38 +1361,50 @@ def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
         
     logger.info(f"✅ [ASYNC CLEANUP] Background cleanup complete for job {job_id}")
 
-@app.route('/cancel/<job_id>', methods=['POST'])
-def cancel_job(job_id):
+@app.route('/cancel/<target_id>', methods=['POST'])
+@app.route('/cancel/runner/<target_id>', methods=['POST'])
+def cancel_job(target_id):
     global current_job_id, current_process
-    logger.info(f"Received cancellation request for job {job_id}")
+    logger.info(f"Received cancellation request for target {target_id}")
 
-    safe_job_id = job_id.replace('/', '-')
-    
-    # Check if this job is currently running on the worker
-    job_is_active = False
-    process_to_kill = None
-    
+    safe_target_id = target_id.replace('/', '-')
+    matching_executors = []
+
     with job_lock:
-        if current_job_id == job_id:
-            job_is_active = True
-            process_to_kill = current_process
-            # Reset the current job trackers immediately so that the worker is considered free
+        if target_id in active_executors:
+            matching_executors.append(active_executors.pop(target_id))
+        else:
+            matching_keys = [k for k, ex in active_executors.items() if ex.get("job_id") == target_id]
+            for k in matching_keys:
+                matching_executors.append(active_executors.pop(k))
+
+        # Backward compatibility for single-job mock/legacy state
+        if not matching_executors and current_job_id == target_id:
+            matching_executors.append({"job_id": target_id, "process": current_process})
+
+        if active_executors:
+            first_active = next(iter(active_executors.values()))
+            current_job_id = first_active.get("job_id")
+            current_process = first_active.get("process")
+        else:
             current_job_id = None
             current_process = None
-            
-    # We always launch the async cleanup thread because we also want to clean up any physical
-    # containers (e.g. cluster-job-{safe_job_id}) that might be lingering even if the worker
-    # doesn't think it is active, or to double check.
-    cleanup_thread = threading.Thread(
-        target=_async_job_cleanup,
-        args=(job_id, safe_job_id, process_to_kill),
-        daemon=True
-    )
-    cleanup_thread.start()
-    
-    if job_is_active:
+
+    for ex in matching_executors:
+        j_id = ex.get("job_id", target_id)
+        s_id = j_id.replace('/', '-')
+        p_kill = ex.get("process")
+        cleanup_thread = threading.Thread(
+            target=_async_job_cleanup,
+            args=(j_id, s_id, p_kill),
+            daemon=True
+        )
+        cleanup_thread.start()
+
+    if matching_executors:
         return jsonify({
             "status": "cancelled",
+            "cancelled_runners": [ex.get("runner_id") for ex in matching_executors if ex.get("runner_id")],
             "message": "Cancellation initiated. Runner process tree and containers are being destroyed asynchronously in less than 5s."
         }), 200
     else:
@@ -1255,15 +1412,21 @@ def cancel_job(job_id):
         containers_exist = False
         try:
             res = subprocess.run(
-                ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_job_id}", "--filter", f"name=cluster-viewer-{safe_job_id}", "--format", "{{.Names}}"],
+                ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_target_id}", "--filter", f"name=cluster-viewer-{safe_target_id}", "--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=5
             )
             if res.returncode == 0 and res.stdout.strip():
                 containers_exist = True
         except Exception:
             pass
-            
+
         if containers_exist:
+            cleanup_thread = threading.Thread(
+                target=_async_job_cleanup,
+                args=(target_id, safe_target_id, None),
+                daemon=True
+            )
+            cleanup_thread.start()
             return jsonify({
                 "status": "cancelled",
                 "message": "Job not active in runner but matching containers found. Cancellation initiated asynchronously."
@@ -1271,7 +1434,7 @@ def cancel_job(job_id):
         else:
             return jsonify({
                 "status": "not_found",
-                "message": "Job not active on this worker and no matching containers found"
+                "message": f"Job or runner '{target_id}' not active on this worker and no matching containers found"
             }), 404
 
 @app.route('/job_logs/<job_id>', methods=['GET'])
@@ -1416,6 +1579,11 @@ def fetch_cas_object(md5):
 
     logger.info(f"Serving CAS object {clean_md5} from {cas_file}")
     return send_file(cas_file, mimetype='application/octet-stream')
+
+@app.route('/capabilities', methods=['GET'])
+def worker_capabilities():
+    """Returns worker capacities and state including hardware, capacity, docker images, and active runners."""
+    return jsonify(get_worker_capabilities())
 
 @app.route('/check_cache', methods=['POST'])
 def check_cache():
@@ -1916,7 +2084,7 @@ def drain_request():
 def start_webhook_server():
     app.run(host='0.0.0.0', port=AGENT_PORT)
 
-LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), "cluster-worker.lock")
+LOCK_FILE_PATH = os.environ.get("CLUSTER_WORKER_LOCK_PATH", os.path.join(tempfile.gettempdir(), "cluster-worker.lock"))
 lock_file = None
 shutdown_requested = False
 
@@ -1968,7 +2136,36 @@ def cleanup_active_jobs_and_containers():
     purge_ollama_vram_on_host()
     
     with job_lock:
-        if current_job_id:
+        if active_executors:
+            for r_id, ex in list(active_executors.items()):
+                j_id = ex.get("job_id")
+                proc = ex.get("process")
+                logger.warning(f"🧹 Initiating forced cleanup for active executor {r_id} (job {j_id}) due to shutdown request...")
+                if j_id:
+                    safe_job_id = str(j_id).replace('/', '-')
+                    safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+                if proc:
+                    logger.info(f"Terminating local runner process (PID: {proc.pid}) tree...")
+                    try:
+                        parent = psutil.Process(proc.pid)
+                        for child in parent.children(recursive=True):
+                            try:
+                                child.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                        parent.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                if j_id:
+                    try:
+                        logger.info(f"Notifying headnode of failure for job {j_id}...")
+                        update_job_status(j_id, 'failed', exit_code=-15)
+                    except Exception as e:
+                        logger.error(f"Failed to update job status on shutdown for {j_id}: {e}")
+            active_executors.clear()
+            current_job_id = None
+            current_process = None
+        elif current_job_id:
             logger.warning(f"🧹 Initiating forced cleanup for active job {current_job_id} due to shutdown request...")
             safe_job_id = current_job_id.replace('/', '-')
             safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
@@ -1991,6 +2188,8 @@ def cleanup_active_jobs_and_containers():
                 update_job_status(current_job_id, 'failed', exit_code=-15)
             except Exception as e:
                 logger.error(f"Failed to update job status on shutdown: {e}")
+            current_job_id = None
+            current_process = None
 
     # Catch-all: kill ALL remaining cluster containers even if not tracked
     # This handles edge cases where current_job_id was lost (e.g. crash recovery)
@@ -2074,17 +2273,15 @@ def main_loop():
             job = poll_for_job()
             if job:
                 try:
-                    execute_job(job)
+                    t = threading.Thread(target=execute_job, args=(job,), daemon=True)
+                    t.start()
                 except Exception as e:
-                    logger.error(f"❌ CRITICAL: Unhandled exception in execute_job: {e}")
+                    logger.error(f"❌ CRITICAL: Unhandled exception launching execute_job thread: {e}")
                     # Safety recovery to prevent locking down the worker
                     try:
                         purge_orphan_runners_and_containers()
                     except Exception as recovery_err:
                         logger.error(f"Failed to perform emergency recovery purge: {recovery_err}")
-                    with job_lock:
-                        current_job_id = None
-                        current_process = None
             time.sleep(5)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt caught in main loop.")

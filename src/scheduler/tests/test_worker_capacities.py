@@ -7,12 +7,15 @@ import shutil
 
 from src.scheduler.worker_agent import (
     parse_nvidia_smi_output,
+    parse_docker_size,
+    get_docker_images,
     get_cpu_info,
     get_arch_info,
     get_storage_info,
     get_worker_capabilities,
     build_registration_payload,
     execute_job,
+    cleanup_active_jobs_and_containers,
     app,
     WORKER_ID
 )
@@ -27,6 +30,10 @@ class TestWorkerCapacities(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
+        with worker_agent.job_lock:
+            worker_agent.active_executors.clear()
+            worker_agent.current_job_id = None
+            worker_agent.current_process = None
 
     def test_detection_gb10_unified_memory(self):
         """Test Case 1: NVIDIA GB10 Grace-Blackwell with [N/A] reported by nvidia-smi.
@@ -422,5 +429,216 @@ class TestWorkerCapacities(unittest.TestCase):
             self.assertIsNone(data["gpu_details"][0]["free_vram_gb"])
             self.assertTrue(any("Failed to parse discrete GPU total VRAM" in m for m in log_ctx.output))
             self.assertTrue(any("Failed to parse discrete GPU free VRAM" in m for m in log_ctx.output))
+
+    def test_parse_docker_size_units(self):
+        """Verify parse_docker_size parses decimal (MB, GB) and binary (MiB, GiB) units accurately."""
+        self.assertEqual(parse_docker_size("512B"), 512)
+        self.assertEqual(parse_docker_size("10KB"), 10000)
+        self.assertEqual(parse_docker_size("10KiB"), 10 * 1024)
+        self.assertEqual(parse_docker_size("77.8MB"), int(77.8 * 1000 * 1000))
+        self.assertEqual(parse_docker_size("100MiB"), 100 * 1024 * 1024)
+        self.assertEqual(parse_docker_size("1.5GB"), int(1.5 * 1000 * 1000 * 1000))
+        self.assertEqual(parse_docker_size("2GiB"), 2 * 1024 * 1024 * 1024)
+        self.assertEqual(parse_docker_size("1TB"), 1000 * 1000 * 1000 * 1000)
+        self.assertEqual(parse_docker_size("1TiB"), 1024 * 1024 * 1024 * 1024)
+        self.assertIsNone(parse_docker_size("unknown"))
+        self.assertIsNone(parse_docker_size(""))
+
+    def test_get_docker_images_success(self):
+        """Verify get_docker_images parses docker image ls tab-separated output into a dict with byte sizes."""
+        docker_output = (
+            "ubuntu:22.04\t77.8MB\n"
+            "python:3.11-slim\t150MiB\n"
+            "<none>:<none>\t50MB\n"
+            "myrepo/app:v1.0\t1.5GB\n"
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=docker_output)
+            images = get_docker_images()
+            self.assertIsInstance(images, dict)
+            self.assertIn("ubuntu:22.04", images)
+            self.assertEqual(images["ubuntu:22.04"], int(77.8 * 1000 * 1000))
+            self.assertIn("python:3.11-slim", images)
+            self.assertEqual(images["python:3.11-slim"], 150 * 1024 * 1024)
+            self.assertIn("myrepo/app:v1.0", images)
+            self.assertEqual(images["myrepo/app:v1.0"], int(1.5 * 1000 * 1000 * 1000))
+            self.assertNotIn("<none>:<none>", images)
+
+    def test_get_docker_images_failure_returns_null_and_logs(self):
+        """Verify failure in get_docker_images returns None (null) and logs ERROR (never empty {})."""
+        with patch("subprocess.run", side_effect=FileNotFoundError("docker not found")):
+            with self.assertLogs("src.scheduler.worker_agent", level="ERROR") as log_ctx:
+                images = get_docker_images()
+                self.assertIsNone(images)
+                self.assertTrue(any("Error querying docker images" in m for m in log_ctx.output))
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stderr="permission denied")
+            with self.assertLogs("src.scheduler.worker_agent", level="ERROR") as log_ctx:
+                images = get_docker_images()
+                self.assertIsNone(images)
+                self.assertTrue(any("Error querying docker images" in m for m in log_ctx.output))
+
+    def test_capabilities_endpoint(self):
+        """Verify GET /capabilities exposes complete worker hardware, capacities, docker images, and active runners."""
+        with patch("src.scheduler.worker_agent.get_docker_images", return_value={"test/img:latest": 100000}):
+            with worker_agent.job_lock:
+                worker_agent.active_executors["runner-t1"] = {
+                    "runner_id": "runner-t1",
+                    "job_id": "job-t1",
+                    "repo": "user/repo",
+                    "branch": "main",
+                    "is_parallel": True,
+                    "start_time": 1000.0,
+                    "process": None
+                }
+
+            resp = self.app.get("/capabilities")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.get_json()
+
+            # Verify key capacity and amendment fields
+            self.assertIn("docker_images", data)
+            self.assertEqual(data["docker_images"], {"test/img:latest": 100000})
+            self.assertIn("active_runners", data)
+            self.assertEqual(len(data["active_runners"]), 1)
+            self.assertEqual(data["active_runners"][0]["runner_id"], "runner-t1")
+            self.assertEqual(data["active_runner_count"], 1)
+            self.assertTrue(data["is_busy"])
+            self.assertIn("role", data)
+            self.assertIn("is_headnode", data)
+            self.assertIn("cpus", data)
+            self.assertIn("ram_gb", data)
+            self.assertIn("disk_free_gb", data)
+            self.assertIn("vram_per_gpu", data)
+
+    def test_cancel_by_runner_id_and_cancel_by_job_id(self):
+        """Verify targeted cancellation: POST /cancel/runner/<runner_id> cancels only targeted runner,
+        while POST /cancel/<job_id> cancels all runners associated with the job.
+        """
+        proc1 = MagicMock(pid=111)
+        proc2 = MagicMock(pid=222)
+        proc3 = MagicMock(pid=333)
+
+        with worker_agent.job_lock:
+            worker_agent.active_executors["runner-a"] = {
+                "runner_id": "runner-a",
+                "job_id": "job-multi-1",
+                "repo": "user/r1",
+                "process": proc1
+            }
+            worker_agent.active_executors["runner-b"] = {
+                "runner_id": "runner-b",
+                "job_id": "job-multi-1",
+                "repo": "user/r1",
+                "process": proc2
+            }
+            worker_agent.active_executors["runner-c"] = {
+                "runner_id": "runner-c",
+                "job_id": "job-other-2",
+                "repo": "user/r2",
+                "process": proc3
+            }
+
+        with patch("src.scheduler.worker_agent._async_job_cleanup"):
+            # 1. Cancel single runner via /cancel/runner/<runner_id>
+            resp = self.app.post("/cancel/runner/runner-a")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.get_json()
+            self.assertEqual(data["status"], "cancelled")
+            self.assertIn("runner-a", data["cancelled_runners"])
+
+            with worker_agent.job_lock:
+                self.assertNotIn("runner-a", worker_agent.active_executors)
+                self.assertIn("runner-b", worker_agent.active_executors)
+                self.assertIn("runner-c", worker_agent.active_executors)
+
+            # 2. Cancel remaining runners of job-multi-1 via /cancel/<job_id>
+            resp2 = self.app.post("/cancel/job-multi-1")
+            self.assertEqual(resp2.status_code, 200)
+            data2 = resp2.get_json()
+            self.assertEqual(data2["status"], "cancelled")
+            self.assertIn("runner-b", data2["cancelled_runners"])
+
+            with worker_agent.job_lock:
+                self.assertNotIn("runner-b", worker_agent.active_executors)
+                # runner-c for job-other-2 is still active
+                self.assertIn("runner-c", worker_agent.active_executors)
+
+    def test_cleanup_active_jobs_and_containers_multi_executors(self):
+        """Verify cleanup_active_jobs_and_containers terminates all active executor processes
+        and marks jobs as failed on headnode.
+        """
+        proc1 = MagicMock(pid=1001)
+        proc2 = MagicMock(pid=1002)
+
+        with worker_agent.job_lock:
+            worker_agent.active_executors["runner-1"] = {
+                "runner_id": "runner-1",
+                "job_id": "job-1",
+                "repo": "user/r1",
+                "process": proc1
+            }
+            worker_agent.active_executors["runner-2"] = {
+                "runner_id": "runner-2",
+                "job_id": "job-2",
+                "repo": "user/r2",
+                "process": proc2
+            }
+
+        with patch("src.scheduler.worker_agent.safe_docker_rm_f") as mock_rm, \
+             patch("src.scheduler.worker_agent.update_job_status") as mock_status, \
+             patch("psutil.Process") as mock_psutil, \
+             patch("subprocess.run") as mock_subproc:
+            mock_subproc.return_value = MagicMock(returncode=0, stdout="")
+            mock_ps_instance = MagicMock()
+            mock_ps_instance.children.return_value = []
+            mock_psutil.return_value = mock_ps_instance
+
+            cleanup_active_jobs_and_containers()
+
+            with worker_agent.job_lock:
+                self.assertEqual(len(worker_agent.active_executors), 0)
+                self.assertIsNone(worker_agent.current_job_id)
+                self.assertIsNone(worker_agent.current_process)
+
+            # Verify both jobs were reported failed
+            reported_jobs = [call_args[0][0] for call_args in mock_status.call_args_list]
+            self.assertIn("job-1", reported_jobs)
+            self.assertIn("job-2", reported_jobs)
+
+    def test_classic_job_workspace_concurrency_warning(self):
+        """Verify classic job execution logs a warning when another classic job shares the same workspace."""
+        mock_proc = MagicMock()
+        mock_proc.poll.side_effect = [0]
+        mock_proc.wait.return_value = 0
+        mock_proc.stdout = []
+
+        with worker_agent.job_lock:
+            worker_agent.active_executors["classic-active-prev"] = {
+                "runner_id": "classic-active-prev",
+                "job_id": "job-prev-001",
+                "repo": "user/shared-repo",
+                "branch": "main",
+                "is_parallel": False,
+                "process": None
+            }
+
+        job2 = {
+            "job_id": "job-new-002",
+            "repo": "user/shared-repo",
+            "branch": "feat/new",
+            "ram_required_gb": 4.0
+        }
+
+        with patch("subprocess.Popen", return_value=mock_proc), \
+             patch("src.scheduler.worker_agent.safe_docker_rm_f"), \
+             patch("src.scheduler.worker_agent.update_job_status"), \
+             patch("src.scheduler.worker_agent.purge_orphan_runners_and_containers"):
+            with self.assertLogs("src.scheduler.worker_agent", level="WARNING") as log_ctx:
+                execute_job(job2)
+                self.assertTrue(any("Workspace concurrency constraint" in m for m in log_ctx.output))
+                self.assertTrue(any("shares single workspace" in m for m in log_ctx.output))
+
 
 
