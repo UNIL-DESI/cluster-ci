@@ -6,12 +6,17 @@ for both classic (parallel_mode=0) and v3 (parallel_mode=1) multi-node jobs.
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch, Mock
 from pathlib import Path
 from flask import Flask, jsonify, request, Response, render_template
+
+import src.scheduler.headnode_service as headnode
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = BASE_DIR / "src" / "scheduler" / "templates"
@@ -155,7 +160,7 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertIn("<style>", resp.text)
         self.assertIn("ansiToHtml", resp.text)
         self.assertIn("getActiveRuns", resp.text)
-        self.assertIn("Alerte Disque (&gt;85%)", resp.text)
+        self.assertIn("Disk Alert (&gt;85%)", resp.text)
         self.assertNotIn("Packing A11", resp.text)
         self.assertNotIn("CPUs Admis (A11)", resp.text)
         self.assertIn("hjamet", resp.text)
@@ -196,6 +201,101 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         data = resp.get_json()
         self.assertIn("[prep_data@alpha]", data["logs"])
         self.assertIn("[train_model@beta]", data["logs"])
+
+
+class LogSyncHeadnodeResilienceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.old_logs_dir = getattr(headnode, "HEADNODE_LOGS_DIR", "")
+        headnode.HEADNODE_LOGS_DIR = os.path.join(self.tmp_dir, "logs")
+        os.makedirs(headnode.HEADNODE_LOGS_DIR, exist_ok=True)
+        headnode.app.config["TESTING"] = True
+        self.client = headnode.app.test_client()
+
+    def tearDown(self):
+        headnode.HEADNODE_LOGS_DIR = self.old_logs_dir
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_worker_unreachable_completes_job_without_failure(self):
+        job_id = "test-job-unreachable-worker"
+        with headnode.get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO workers (worker_id, service_url, status)
+                VALUES ('w-dead', 'http://127.0.0.1:59999', 'online')
+            ''')
+            cursor.execute('''
+                INSERT OR REPLACE INTO jobs (job_id, repo, status, worker_id, home_worker)
+                VALUES (?, 'UNIL-DESI/test-repo', 'running', 'w-dead', 'w-dead')
+            ''', (job_id,))
+            conn.commit()
+
+        # Update status to completed while worker is completely down
+        with patch("src.scheduler.headnode_service.check_token", return_value=True):
+            resp = self.client.post("/update_job_status", json={
+                "job_id": job_id,
+                "status": "completed",
+                "exit_code": 0
+            })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["status"], "ok")
+
+        # Verify job is marked completed in DB despite log sync failure
+        with headnode.get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status, exit_code FROM jobs WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            self.assertEqual(row["status"], "completed")
+            self.assertEqual(row["exit_code"], 0)
+
+    def test_running_job_logs_proxy_preserves_worker_offset(self):
+        job_id = "test-job-running-proxy"
+        with headnode.get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO workers (worker_id, service_url, status)
+                VALUES ('w-live', 'http://worker-live:6000', 'online')
+            ''')
+            cursor.execute('''
+                INSERT OR REPLACE INTO jobs (job_id, repo, status, worker_id, home_worker)
+                VALUES (?, 'UNIL-DESI/test-repo', 'running', 'w-live', 'w-live')
+            ''', (job_id,))
+            conn.commit()
+
+        with patch("src.scheduler.headnode_service.requests.get") as mock_get:
+            mock_resp = Mock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"logs": "live stream chunk\n", "offset": 42}
+            mock_get.return_value = mock_resp
+
+            resp = self.client.get(f"/api/jobs/{job_id}/logs?offset=10")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.get_json()
+            self.assertEqual(data["logs"], "live stream chunk\n")
+            self.assertEqual(data["offset"], 42)
+
+    def test_completed_job_with_marker_does_not_retry_sync(self):
+        job_id = "test-job-completed-marker"
+        log_file = os.path.join(headnode.HEADNODE_LOGS_DIR, f"{job_id}.log")
+        marker_file = f"{log_file}.synced"
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.write("[CLUSTER-CI ERROR] failed\n")
+        open(marker_file, "w").close()
+
+        with headnode.get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO jobs (job_id, repo, status)
+                VALUES (?, 'UNIL-DESI/test-repo', 'failed')
+            ''', (job_id,))
+            conn.commit()
+
+        # Because marker exists, _sync_job_logs_from_workers should NOT be called
+        with patch("src.scheduler.headnode_service._sync_job_logs_from_workers") as mock_sync:
+            resp = self.client.get(f"/api/jobs/{job_id}/logs?offset=0")
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("[CLUSTER-CI ERROR] failed", resp.get_json()["logs"])
+            mock_sync.assert_not_called()
 
 
 if __name__ == "__main__":
