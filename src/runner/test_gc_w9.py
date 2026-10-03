@@ -63,7 +63,6 @@ class TestGCW9Deliverables:
         self._create_project("proj_running", status="running", hours_ago=20.0, files={"data.bin": 1000})
         self._create_project("proj_old_idle", status="idle", hours_ago=20.0, files={"old.bin": 1000})
 
-        # Free space below panic threshold
         monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
 
         gc.run_gc()
@@ -88,10 +87,8 @@ class TestGCW9Deliverables:
         with open(gc.get_registry_path(), "r") as f:
             reg = json.load(f)
 
-        # Recent (< 6h) project must be preserved
         assert reg["proj_recent_idle"]["status"] == "idle"
         assert (self.repo_dir / "proj_recent_idle").exists()
-        # Old (> 6h) project is purged
         assert reg["proj_old_idle"]["status"] == "deleted"
         assert not (self.repo_dir / "proj_old_idle").exists()
 
@@ -118,11 +115,9 @@ class TestGCW9Deliverables:
         Correction de course : run-gc recevant current_project ou WORKSPACE_KEY
         le marque 'running' AVANT toute purge.
         """
-        # Initially marked idle 10h ago
         self._create_project("starting_proj", status="idle", hours_ago=10.0, files={"f.bin": 1000})
         monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
 
-        # Execute run-gc passing current_project
         gc.run_gc(current_project="starting_proj")
 
         with open(gc.get_registry_path(), "r") as f:
@@ -155,7 +150,6 @@ class TestGCW9Deliverables:
         caches régénérables -> volumes Docker -> cache DVC -> workspace complet.
         Arrêt dès que l'espace cible est atteint !
         """
-        # Project with both DVC cache and workspace
         self._create_project("p_test", status="idle", hours_ago=20.0, files={"code.py": 1000}, has_dvc_cache=True)
 
         current_space = [40 * 1024**3]  # starts at 40 GB (< 50 GB threshold)
@@ -164,7 +158,6 @@ class TestGCW9Deliverables:
 
         monkeypatch.setattr(gc, "get_free_space", mock_free_space)
 
-        # When cleanup_level_4 (DVC cache) runs, free space increases to 60 GB (> 50 GB threshold)
         original_l4 = gc.cleanup_level_4
         def fake_l4(path, name=None):
             res = original_l4(path, name)
@@ -175,13 +168,11 @@ class TestGCW9Deliverables:
 
         gc.run_gc()
 
-        # DVC cache was deleted
         assert not (self.repo_dir / "p_test" / ".dvc" / "cache").exists()
-        # But workspace was NOT deleted because target was reached in Tier 3!
         assert (self.repo_dir / "p_test" / "code.py").exists()
         with open(gc.get_registry_path(), "r") as f:
             reg = json.load(f)
-        assert reg["p_test"]["status"] == "idle"  # Not deleted
+        assert reg["p_test"]["status"] == "idle"
 
     def test_docker_volume_schema_v3(self, monkeypatch):
         """(2) Nettoyage des volumes Docker y compris le schéma v3 cluster-ci-home-<repo>-<image_slug>."""
@@ -191,7 +182,7 @@ class TestGCW9Deliverables:
             "cluster-ci-home-my-lab-my-repo",
             "cluster-ci-home-my-lab-my-repo-cuda12",
             "cluster-ci-home-my-lab-my-repo-pytorch2",
-            "cluster-ci-home-other-proj"  # should not be touched
+            "cluster-ci-home-other-proj"
         ]
 
         def fake_volume_ls(*args, **kwargs):
@@ -216,10 +207,8 @@ class TestGCW9Deliverables:
 
         monkeypatch.setattr(gc.subprocess, "run", fake_subprocess_run)
 
-        # Run Tier 2 cleanup for my-lab/my-repo
         gc.cleanup_all_project_docker_volumes(p_path, "my-lab/my-repo")
 
-        # Must have deleted base volume + both image slug volumes
         assert "cluster-ci-home-my-lab-my-repo" in deleted_volumes
         assert "cluster-ci-home-my-lab-my-repo-cuda12" in deleted_volumes
         assert "cluster-ci-home-my-lab-my-repo-pytorch2" in deleted_volumes
@@ -232,16 +221,13 @@ class TestGCW9Deliverables:
 
         gc.run_gc(dry_run=True)
 
-        # Check stdout contains DRY-RUN logs
         captured = capsys.readouterr().out
         assert "[GC DRY-RUN]" in captured
         assert "Would delete" in captured
 
-        # Files on disk must STILL exist!
         assert (p_path / "important.bin").exists()
         assert (p_path / ".dvc" / "cache").exists()
 
-        # Registry must NOT be marked deleted
         with open(gc.get_registry_path(), "r") as f:
             reg = json.load(f)
         assert reg["proj_dry"]["status"] == "idle"
@@ -253,3 +239,162 @@ class TestGCW9Deliverables:
         assert "[GC LOG] Deleted: '/path/to/dvc/cache'" in captured
         assert "15.00 MB" in captured
         assert "Tier 3: Local DVC cache" in captured
+
+    # --- NOUVEAUX TESTS (Relecture & Corrections W9) ---
+
+    def test_corrupted_registry_halts_gc_and_saves_backup(self, monkeypatch):
+        """(1) Registre corrompu -> sauvegarde .bak, aucune purge, arrêt avec code != 0."""
+        p_path = self._create_project("proj_safe", status="idle", hours_ago=20.0, files={"safe.bin": 1000})
+        registry_path = gc.get_registry_path()
+        # Corrupt the JSON file deliberately
+        with open(registry_path, "w") as f:
+            f.write("{invalid_json: true, unterminated")
+
+        monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
+
+        with pytest.raises(SystemExit) as excinfo:
+            gc.run_gc()
+        assert excinfo.value.code != 0
+
+        # Project must NOT be purged
+        assert (p_path / "safe.bin").exists()
+
+        # A .bak backup must have been created
+        bak_files = list(registry_path.parent.glob("registry*.corrupt.*.bak"))
+        assert len(bak_files) >= 1
+
+    def test_active_docker_container_protection(self, monkeypatch):
+        """(2) Détection 'en cours' : projet protégé si conteneur Docker ou volume actif."""
+        p_path = self._create_project("proj_docker_active", status="idle", hours_ago=20.0, files={"active.bin": 1000})
+        monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
+
+        # Mock docker ps returning an active container for this project
+        monkeypatch.setattr(gc, "get_active_docker_info", lambda: {
+            "cluster-job-proj_docker_active",
+            "cluster-ci-home-proj_docker_active"
+        })
+
+        gc.run_gc()
+
+        with open(gc.get_registry_path(), "r") as f:
+            reg = json.load(f)
+
+        # Must NOT be deleted because active in Docker
+        assert reg["proj_docker_active"]["status"] == "idle"
+        assert (p_path / "active.bin").exists()
+
+    def test_docker_ps_failure_halts_gc(self, monkeypatch):
+        """(2) Si 'docker ps' échoue -> aucune purge (erreur explicite, sortie non-zéro)."""
+        p_path = self._create_project("proj_safe_docker_fail", status="idle", hours_ago=20.0, files={"safe.bin": 1000})
+        monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
+
+        def mock_docker_ps_fail(*args, **kwargs):
+            return mock.Mock(returncode=1, stderr="Cannot connect to Docker daemon")
+
+        monkeypatch.setattr(gc.subprocess, "run", mock_docker_ps_fail)
+
+        with pytest.raises(SystemExit) as excinfo:
+            gc.run_gc()
+        assert excinfo.value.code != 0
+        assert (p_path / "safe.bin").exists()
+
+    def test_docker_volume_rm_failure_not_counted(self, monkeypatch, capsys):
+        """(4) docker volume rm en échec -> code retour inspecté, non compté comme libéré."""
+        p_path = self.repo_dir / "proj_vol"
+        p_path.mkdir(parents=True, exist_ok=True)
+
+        def mock_volume_rm_fail(*args, **kwargs):
+            return mock.Mock(returncode=1, stderr="volume is in use")
+
+        monkeypatch.setattr(gc.subprocess, "run", mock_volume_rm_fail)
+
+        gc.cleanup_level_3(p_path, "proj_vol")
+
+        captured = capsys.readouterr().out
+        assert "Failed to delete Docker volume" in captured
+        assert "[GC LOG] Deleted: 'cluster-ci-home-proj_vol'" not in captured
+
+    def test_cleanup_level_2_whitelist(self):
+        """(5) cleanup_level_2 : uniquement liste blanche explicite, jamais .venv ni fichiers tracked."""
+        p_path = self.repo_dir / "proj_whitelist"
+        p_path.mkdir(parents=True, exist_ok=True)
+
+        # 1. Whitelisted cache dirs & files
+        pycache_dir = p_path / "__pycache__"
+        pycache_dir.mkdir()
+        (pycache_dir / "mod.cpython-312.pyc").write_bytes(b"123")
+
+        cache_pip = p_path / ".cache" / "pip"
+        cache_pip.mkdir(parents=True)
+        (cache_pip / "wheel.whl").write_bytes(b"wheel")
+
+        log_file = p_path / "large.log"
+        log_file.write_bytes(b"log data")
+
+        tmp_file = p_path / "temp.tmp"
+        tmp_file.write_bytes(b"tmp data")
+
+        # 2. Protected paths: .venv
+        venv_dir = p_path / ".venv" / "lib"
+        venv_dir.mkdir(parents=True)
+        so_file = venv_dir / "libcublasLt.so.13"
+        so_file.write_bytes(b"binary so")
+
+        # 3. Regular non-whitelisted untracked file
+        regular_file = p_path / "important_data.csv"
+        regular_file.write_bytes(b"csv data")
+
+        gc.cleanup_level_2(p_path, "proj_whitelist")
+
+        # Whitelisted caches must be purged
+        assert not pycache_dir.exists()
+        assert not cache_pip.exists()
+        assert not log_file.exists()
+        assert not tmp_file.exists()
+
+        # Non-whitelisted and venv files must be strictly preserved
+        assert so_file.exists()
+        assert regular_file.exists()
+
+    def test_dry_run_zero_disk_writes_with_current_project(self, monkeypatch):
+        """(6) --dry-run : AUCUNE écriture sur disque, même avec current_project."""
+        self._create_project("proj_dry2", status="idle", hours_ago=20.0, files={"f.bin": 100})
+        monkeypatch.setattr(gc, "get_free_space", lambda: 10 * 1024**3)
+
+        registry_path = gc.get_registry_path()
+        mtime_before = registry_path.stat().st_mtime_ns
+        content_before = registry_path.read_text()
+
+        # Pass current_project in dry-run mode
+        gc.run_gc(dry_run=True, current_project="new_job_start")
+
+        mtime_after = registry_path.stat().st_mtime_ns
+        content_after = registry_path.read_text()
+
+        assert mtime_before == mtime_after
+        assert content_before == content_after
+        assert "new_job_start" not in content_after
+
+    def test_validate_project_name(self):
+        """(7) validate_project_name : rejette '', '.', '..', séparateurs invalides."""
+        valid_names = ["user/repo", "_local/user/repo", "proj1", "my-lab/my-proj_v2"]
+        for name in valid_names:
+            gc.validate_project_name(name)
+
+        invalid_names = [
+            "",
+            "   ",
+            ".",
+            "..",
+            "/absolute/path",
+            "../escape",
+            "a/../b",
+            "proj/",
+            "/proj",
+            "\\proj",
+            "a\\b",
+            "a//b"
+        ]
+        for name in invalid_names:
+            with pytest.raises(ValueError):
+                gc.validate_project_name(name)

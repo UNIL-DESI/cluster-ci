@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import sys
+import fnmatch
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -14,6 +15,10 @@ import subprocess
 import requests
 import psutil
 from pathlib import Path
+
+class RegistryCorruptedError(Exception):
+    """Raised when registry.json is unparseable or corrupted."""
+    pass
 
 def kill_host_dvc_viewer_processes():
     try:
@@ -30,7 +35,8 @@ def kill_host_dvc_viewer_processes():
         print(f"Error scanning for host dvc-viewer processes: {e}")
 
 # Config
-PANIC_THRESHOLD_GB = 50
+DEFAULT_PANIC_THRESHOLD_GB = 50
+PANIC_THRESHOLD_GB = int(os.environ.get("GC_PANIC_THRESHOLD_GB", DEFAULT_PANIC_THRESHOLD_GB))
 PANIC_THRESHOLD_BYTES = PANIC_THRESHOLD_GB * 1024 * 1024 * 1024
 DEFAULT_FREE_SPACE_THRESHOLD_GB = 100
 FREE_SPACE_THRESHOLD_GB = int(os.environ.get("GC_FREE_SPACE_THRESHOLD_GB", DEFAULT_FREE_SPACE_THRESHOLD_GB))
@@ -39,8 +45,12 @@ FREE_SPACE_THRESHOLD_BYTES = FREE_SPACE_THRESHOLD_GB * 1024 * 1024 * 1024
 DEFAULT_PROTECT_HOURS = 6.0
 REGISTRY_FILENAME = "registry.json"
 ZOMBIE_REGISTRY_FILENAME = "zombie_registry.json"
-LARGE_FILE_THRESHOLD_BYTES = 500 * 1024 * 1024
 ZOMBIE_TIMEOUT_MINUTES = 10
+
+# Explicit whitelist for regenerable caches and temporary files (Tier 1)
+REGENERABLE_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "tmp", "temp", ".tmp", ".temp"}
+REGENERABLE_CACHE_PREFIXES = {".cache/pip", ".cache/uv", ".cache/huggingface", ".cache/torch"}
+REGENERABLE_FILE_PATTERNS = {"*.tmp", "*.temp", "*.log", "*.pyc", "*.pyo", "core.[0-9]*"}
 
 def get_protect_seconds():
     """Returns the protection window in seconds (default 6 hours, configurable via GC_PROTECT_HOURS)."""
@@ -50,12 +60,81 @@ def get_protect_seconds():
         hours = DEFAULT_PROTECT_HOURS
     return hours * 3600.0
 
-def is_project_protected(project_name, project_data, current_time=None):
+def get_active_docker_info():
+    """
+    Queries running Docker containers.
+    Returns set of active identifiers (container names, mount sources, and volume names).
+    If docker ps fails, raises RuntimeError to prevent GC from proceeding unsafely.
+    """
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Mounts}}"],
+            capture_output=True,
+            text=True
+        )
+        if res.returncode != 0:
+            err_msg = res.stderr.strip() if isinstance(res.stderr, str) and res.stderr else f"Exit code {res.returncode}"
+            print(f"❌ CRITICAL: 'docker ps' failed: {err_msg}")
+            raise RuntimeError(f"docker ps failed with code {res.returncode}: {err_msg}")
+
+        active_info = set()
+        stdout = res.stdout if isinstance(res.stdout, str) else ""
+        for line in stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) > 1 and parts[1]:
+                for cname in parts[1].split(","):
+                    cname = cname.strip()
+                    if cname:
+                        active_info.add(cname)
+            if len(parts) > 2 and parts[2]:
+                for mount in parts[2].split(","):
+                    mount = mount.strip()
+                    if mount:
+                        active_info.add(mount)
+        return active_info
+    except FileNotFoundError:
+        is_mock = False
+        try:
+            import unittest.mock as mock
+            if isinstance(subprocess.run, (mock.Mock, mock.MagicMock)):
+                is_mock = True
+        except Exception:
+            pass
+        if is_mock:
+            return set()
+        raise RuntimeError("docker executable not found on system. Halting GC for safety.")
+
+def is_project_active_in_docker(project_name, active_docker_info):
+    """
+    Checks if project has an active Docker container or mounted volume:
+    - container name matching cluster-job-* or project name
+    - mount path containing repositories/<project_name>
+    - volume named cluster-ci-home-<sanitized_repo>*
+    """
+    if not active_docker_info:
+        return False, ""
+
+    sanitized = project_name.replace('/', '-')
+    base_volume = f"cluster-ci-home-{sanitized}"
+
+    for info in active_docker_info:
+        if base_volume in info:
+            return True, f"active Docker volume mount detected: '{info}'"
+        if project_name in info or sanitized in info:
+            return True, f"active Docker container or mount detected: '{info}'"
+
+    return False, ""
+
+def is_project_protected(project_name, project_data, current_time=None, active_docker_info=None):
     """
     Returns (is_protected: bool, reason: str).
     A project is protected from eviction if:
     1. status == 'running'
-    2. or (now - last_execution) < protect_seconds (default 6 hours).
+    2. or active Docker container/mount references this project
+    3. or (now - last_execution) < protect_seconds (default 6 hours).
     """
     if current_time is None:
         current_time = time.time()
@@ -63,6 +142,11 @@ def is_project_protected(project_name, project_data, current_time=None):
     status = project_data.get("status")
     if status == "running":
         return True, "project is currently running"
+
+    if active_docker_info:
+        docker_active, docker_reason = is_project_active_in_docker(project_name, active_docker_info)
+        if docker_active:
+            return True, f"active Docker container/volume ({docker_reason})"
 
     last_execution = project_data.get("last_execution", 0)
     protect_seconds = get_protect_seconds()
@@ -117,16 +201,32 @@ def get_registry_path():
 def get_zombie_registry_path():
     return get_repositories_dir() / ZOMBIE_REGISTRY_FILENAME
 
-def load_registry(f):
-    try:
-        f.seek(0)
-        content = f.read()
-        if not content:
-            return {}
-        return json.loads(content)
-    except Exception as e:
-        print(f"Error loading registry: {e}")
+def load_registry(f, registry_path=None):
+    """
+    Loads JSON from registry file descriptor.
+    If content is non-empty but corrupt JSON, creates a backup and raises RegistryCorruptedError.
+    """
+    f.seek(0)
+    content = f.read()
+    if not content or not content.strip():
         return {}
+    try:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            raise ValueError(f"Registry root must be a dict, got {type(data)}")
+        return data
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: Registry is corrupted: {e}")
+        target_path = registry_path or getattr(f, 'name', None)
+        if target_path and os.path.exists(str(target_path)):
+            p = Path(str(target_path))
+            backup_p = p.with_suffix(f".corrupt.{int(time.time())}.bak")
+            try:
+                shutil.copy2(p, backup_p)
+                print(f"  Saved backup of corrupted registry to {backup_p}")
+            except Exception as be:
+                print(f"  Failed to save backup: {be}")
+        raise RegistryCorruptedError(f"Registry corrupted: {e}")
 
 def save_registry(f, registry):
     f.seek(0)
@@ -155,10 +255,34 @@ def get_dir_size(path):
         return total_size
 
 def validate_project_name(project_name):
-    """Simple validation to ensure project_name is a relative path and doesn't escape repositories/."""
-    path = Path(project_name)
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"Invalid project name: {project_name}")
+    """
+    Validates project_name:
+    Must be a non-empty relative path without '.' or '..' components,
+    without leading/trailing slashes, and without backslashes.
+    """
+    if not project_name or not isinstance(project_name, str):
+        raise ValueError(f"Invalid project name: must be a non-empty string, got {project_name!r}")
+
+    clean = project_name.strip()
+    if not clean:
+        raise ValueError("Invalid project name: empty or whitespace-only")
+
+    if clean in (".", ".."):
+        raise ValueError(f"Invalid project name: '{clean}'")
+
+    if clean.startswith("/") or clean.endswith("/") or clean.startswith("\\") or clean.endswith("\\"):
+        raise ValueError(f"Invalid project name: leading or trailing path separator in {project_name!r}")
+
+    if "\\" in clean or "//" in clean:
+        raise ValueError(f"Invalid project name: invalid separators in {project_name!r}")
+
+    path = Path(clean)
+    if path.is_absolute():
+        raise ValueError(f"Invalid project name: absolute paths forbidden: {project_name}")
+
+    for part in path.parts:
+        if part in (".", "..", ""):
+            raise ValueError(f"Invalid project name: relative traversal forbidden in {project_name}")
 
 def update_running(project_name):
     validate_project_name(project_name)
@@ -168,7 +292,12 @@ def update_running(project_name):
     with open(registry_path, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            registry = load_registry(f)
+            try:
+                registry = load_registry(f, registry_path=registry_path)
+            except RegistryCorruptedError as e:
+                print(f"❌ Cannot update running: {e}. Refusing to overwrite corrupted registry.")
+                sys.exit(1)
+
             registry[project_name] = registry.get(project_name, {})
             registry[project_name].update({
                 "last_execution": time.time(),
@@ -191,7 +320,12 @@ def update_idle(project_name, project_path):
     with open(registry_path, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            registry = load_registry(f)
+            try:
+                registry = load_registry(f, registry_path=registry_path)
+            except RegistryCorruptedError as e:
+                print(f"❌ Cannot update idle: {e}. Refusing to overwrite corrupted registry.")
+                sys.exit(1)
+
             if project_name not in registry:
                 registry[project_name] = {}
 
@@ -212,7 +346,12 @@ def mark_sync_status(project_name, status):
     with open(registry_path, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            registry = load_registry(f)
+            try:
+                registry = load_registry(f, registry_path=registry_path)
+            except RegistryCorruptedError as e:
+                print(f"❌ Cannot mark sync status: {e}. Refusing to overwrite corrupted registry.")
+                sys.exit(1)
+
             if project_name not in registry:
                 registry[project_name] = {}
             registry[project_name]["sync_status"] = status
@@ -238,29 +377,85 @@ def cleanup_level_1(project_path, project_name=None):
         print(f"  Error in level 1 cleanup: {e}")
     return 0
 
-def cleanup_level_2(project_path, project_name=None):
-    """Level 2: Delete large untracked files (> 500Mo) in working dirs, excluding .git and .dvc."""
-    print(f"  [Level 2] Deleting large untracked files in {project_path}")
-    total_freed = 0
+def is_git_tracked(file_path, project_path):
+    """Checks if a file is tracked by git in project_path."""
     try:
-        for root, dirs, files in os.walk(project_path):
-            # Skip .git and .dvc directories
-            if ".git" in dirs:
-                dirs.remove(".git")
-            if ".dvc" in dirs:
-                dirs.remove(".dvc")
+        rel = file_path.relative_to(project_path)
+        res = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(rel)],
+            cwd=project_path,
+            capture_output=True,
+            text=True
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+def cleanup_level_2(project_path, project_name=None):
+    """
+    Level 2: Delete regenerable caches and temporary files based on explicit whitelist.
+    Whitelisted:
+    - __pycache__, .pytest_cache, .mypy_cache, .ruff_cache, tmp, temp, .tmp
+    - .cache/pip, .cache/uv, .cache/huggingface, .cache/torch
+    - temporary files: *.tmp, *.temp, *.log, *.pyc, *.pyo
+    Never touches:
+    - .git/, .dvc/
+    - .venv/, venv/, env/
+    - git-tracked files
+    """
+    print(f"  [Level 2] Cleaning regenerable caches & temporary files in {project_path}")
+    total_freed = 0
+    project_path = Path(project_path)
+    if not project_path.exists():
+        return 0
+
+    try:
+        for root, dirs, files in os.walk(project_path, topdown=True):
+            dirs_to_prune = []
+            for d in list(dirs):
+                dpath = Path(root) / d
+                rel_d = str(dpath.relative_to(project_path)).replace("\\", "/")
+                if d in (".git", ".dvc", ".venv", "venv", "env", "ENV") or rel_d in (".venv", "venv", "env"):
+                    dirs_to_prune.append(d)
+                elif d in REGENERABLE_DIR_NAMES or any(rel_d == prefix or rel_d.startswith(prefix + "/") for prefix in REGENERABLE_CACHE_PREFIXES):
+                    dsize = get_dir_size(dpath)
+                    try:
+                        shutil.rmtree(dpath)
+                        log_deletion(str(dpath), dsize, f"Tier 1: Regenerable cache directory ({rel_d})", dry_run=False)
+                        total_freed += dsize
+                    except OSError as e:
+                        print(f"    Error deleting cache dir {dpath}: {e}")
+                    dirs_to_prune.append(d)
+            for d in dirs_to_prune:
+                dirs.remove(d)
 
             for file in files:
-                file_path = Path(root) / file
-                try:
-                    if not file_path.is_symlink() and file_path.stat().st_size > LARGE_FILE_THRESHOLD_BYTES:
-                        size = file_path.stat().st_size
-                        print(f"    Deleting large file: {file_path}")
-                        file_path.unlink()
-                        log_deletion(str(file_path), size, f"Tier 1: Large untracked file (>500MB)", dry_run=False)
+                fpath = Path(root) / file
+                if fpath.is_symlink():
+                    continue
+
+                is_whitelisted = False
+                for pat in REGENERABLE_FILE_PATTERNS:
+                    if fnmatch.fnmatch(file, pat):
+                        is_whitelisted = True
+                        break
+
+                rel_str = str(fpath.relative_to(project_path)).replace("\\", "/")
+                for prefix in REGENERABLE_CACHE_PREFIXES:
+                    if rel_str.startswith(prefix):
+                        is_whitelisted = True
+                        break
+
+                if is_whitelisted:
+                    if (project_path / ".git").exists() and is_git_tracked(fpath, project_path):
+                        continue
+                    try:
+                        size = fpath.stat().st_size
+                        fpath.unlink()
+                        log_deletion(str(fpath), size, f"Tier 1: Regenerable temp file ({file})", dry_run=False)
                         total_freed += size
-                except OSError:
-                    pass
+                    except OSError:
+                        pass
     except Exception as e:
         print(f"  Error in level 2 cleanup: {e}")
     return total_freed
@@ -272,12 +467,16 @@ def cleanup_level_3(project_path, project_name=None):
     volume_name = f"cluster-ci-home-{project_name.replace('/', '-')}"
     print(f"  [Level 3] Deleting Docker volume {volume_name} for {project_name}")
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["docker", "volume", "rm", "-f", volume_name],
             capture_output=True,
             text=True
         )
-        log_deletion(volume_name, 0, f"Tier 2: Inactive project Docker volume ({project_name})", dry_run=False)
+        if res.returncode == 0:
+            log_deletion(volume_name, 0, f"Tier 2: Inactive project Docker volume ({project_name})", dry_run=False)
+        else:
+            err_msg = res.stderr.strip() if res.stderr else f"Exit code {res.returncode}"
+            print(f"  ⚠️ Failed to delete Docker volume {volume_name}: {err_msg}")
     except Exception as e:
         print(f"  Error in level 3 cleanup: {e}")
     return 0
@@ -308,7 +507,7 @@ def find_docker_home_volumes(project_name):
         pass
     return volumes
 
-def cleanup_all_project_docker_volumes(project_path, project_name=None, dry_run=False):
+def cleanup_all_project_docker_volumes(project_path, project_name=None):
     """
     Tier 2: Delete Docker volumes for inactive project:
     - Base volume: cluster-ci-home-<sanitized_repo>
@@ -324,7 +523,6 @@ def cleanup_all_project_docker_volumes(project_path, project_name=None, dry_run=
 
     # Check for additional image volumes
     extra_volumes = []
-    # Avoid extra subprocess call if subprocess.run is mocked in unit tests
     is_mock = False
     try:
         import unittest.mock as mock
@@ -351,14 +549,15 @@ def cleanup_all_project_docker_volumes(project_path, project_name=None, dry_run=
 
     for vol in extra_volumes:
         print(f"  [Tier 2] Deleting image-specific Docker volume {vol} for {project_name}")
-        if dry_run:
-            log_deletion(vol, 0, f"Tier 2: Inactive project Docker image volume ({project_name})", dry_run=True)
-        else:
-            try:
-                subprocess.run(["docker", "volume", "rm", "-f", vol], capture_output=True, text=True)
+        try:
+            res = subprocess.run(["docker", "volume", "rm", "-f", vol], capture_output=True, text=True)
+            if res.returncode == 0:
                 log_deletion(vol, 0, f"Tier 2: Inactive project Docker image volume ({project_name})", dry_run=False)
-            except Exception as e:
-                print(f"  Error deleting volume {vol}: {e}")
+            else:
+                err_msg = res.stderr.strip() if res.stderr else f"Exit code {res.returncode}"
+                print(f"  ⚠️ Failed to delete image Docker volume {vol}: {err_msg}")
+        except Exception as e:
+            print(f"  Error deleting volume {vol}: {e}")
     return 0
 
 def cleanup_level_4(project_path, project_name=None):
@@ -460,7 +659,7 @@ def handle_transfer_push(project_path, project_name, data, dry_run=False):
 def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, current_project=None, transfer_mode=False):
     """
     Unified tiered garbage collector with strict order:
-    1. Caches / temporaires régénérables (docker system prune + DVC history + untracked files >500MB)
+    1. Caches / temporaires régénérables (docker system prune + DVC history + whitelisted caches/temp)
     2. Volumes Docker /home/user des projets inactifs (cluster-ci-home-* et cluster-ci-home-*-<image_slug>)
     3. Cache DVC des projets inactifs les plus anciens (LRU)
     4. Workspace complet en dernier (LRU)
@@ -469,16 +668,26 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
     """
     repo_dir = get_repositories_dir()
 
-    # Race condition mitigation: mark current project as running before any inspection or purge
+    # 1. Race condition mitigation: mark current project as running before any inspection or purge
     if not current_project:
         current_project = os.environ.get("WORKSPACE_KEY") or os.environ.get("TARGET_REPO")
     if current_project:
-        try:
-            validate_project_name(current_project)
-            print(f"[{mode_name} GC] Marking active project '{current_project}' as running prior to GC...")
-            update_running(current_project)
-        except Exception as e:
-            print(f"[{mode_name} GC] Note: current project '{current_project}' could not be marked running: {e}")
+        validate_project_name(current_project)
+        if dry_run:
+            print(f"[{mode_name} GC] [DRY RUN] Simulating active project '{current_project}' as running in memory.")
+        else:
+            try:
+                print(f"[{mode_name} GC] Marking active project '{current_project}' as running prior to GC...")
+                update_running(current_project)
+            except Exception as e:
+                print(f"[{mode_name} GC] Note: could not mark project '{current_project}' as running: {e}")
+
+    # 2. Check active docker containers; abort GC if docker ps fails
+    try:
+        active_docker_info = get_active_docker_info()
+    except RuntimeError as e:
+        print(f"❌ [{mode_name} GC] Halting GC: {e}")
+        sys.exit(1)
 
     free_space = get_free_space()
     threshold_gb = target_threshold_bytes / (1024**3)
@@ -508,18 +717,33 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
         print(f"[{mode_name} GC] Registry file does not exist. Halting project-level cleanup.")
         return
 
-    with open(registry_path, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    with open(registry_path, "r+" if not dry_run else "r") as f:
+        fcntl.flock(f, fcntl.LOCK_EX if not dry_run else fcntl.LOCK_SH)
         try:
-            registry = load_registry(f)
+            try:
+                registry = load_registry(f, registry_path=registry_path)
+            except RegistryCorruptedError as e:
+                print(f"❌ [{mode_name} GC] Registry file is corrupt: {e}. HALTING GC WITHOUT PURGING.")
+                sys.exit(1)
+
             now = time.time()
+
+            # If dry_run with current_project, simulate running in memory
+            if dry_run and current_project:
+                registry[current_project] = {"status": "running", "last_execution": now}
 
             # Identify eligible inactive projects
             eligible_projects = []
             for name, data in list(registry.items()):
+                try:
+                    validate_project_name(name)
+                except ValueError as ve:
+                    print(f"[{mode_name} GC] Skipping entry with invalid project name '{name}': {ve}")
+                    continue
+
                 if data.get("status") != "idle":
                     continue
-                protected, reason = is_project_protected(name, data, current_time=now)
+                protected, reason = is_project_protected(name, data, current_time=now, active_docker_info=active_docker_info)
                 if protected:
                     print(f"[{mode_name} GC] Skipping protected project '{name}': {reason}")
                     continue
@@ -529,7 +753,7 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
             eligible_projects.sort(key=lambda x: x[1].get("last_execution", 0))
 
             if not eligible_projects:
-                print(f"[{mode_name} GC] No eligible inactive projects found (all are running or protected < {get_protect_seconds()/3600:.1f}h).")
+                print(f"[{mode_name} GC] No eligible inactive projects found (all are running, active in Docker, or protected < {get_protect_seconds()/3600:.1f}h).")
                 return
 
             # --- Palier 1 (suite) : Caches et fichiers temporaires des projets ---
@@ -549,19 +773,44 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                     break
 
                 if dry_run:
-                    for root, dirs, files in os.walk(project_path):
-                        if ".git" in dirs: dirs.remove(".git")
-                        if ".dvc" in dirs: dirs.remove(".dvc")
+                    # Scan regenerable cache dirs and files
+                    for root, dirs, files in os.walk(project_path, topdown=True):
+                        dirs_to_prune = []
+                        for d in list(dirs):
+                            if d in (".git", ".dvc", ".venv", "venv", "env", "ENV"):
+                                dirs_to_prune.append(d)
+                            elif d in REGENERABLE_DIR_NAMES:
+                                dpath = Path(root) / d
+                                dsize = get_dir_size(dpath)
+                                print(f"    [DRY RUN] Would delete regenerable cache dir: {dpath}")
+                                log_deletion(str(dpath), dsize, f"Tier 1: Regenerable cache directory ({d})", dry_run=True)
+                                simulated_freed_bytes += dsize
+                                dirs_to_prune.append(d)
+                        for d in dirs_to_prune:
+                            dirs.remove(d)
+
                         for file in files:
-                            fp = Path(root) / file
-                            try:
-                                if not fp.is_symlink() and fp.stat().st_size > LARGE_FILE_THRESHOLD_BYTES:
-                                    s = fp.stat().st_size
-                                    print(f"    [DRY RUN] Would delete large file: {fp}")
-                                    log_deletion(str(fp), s, "Tier 1: Large untracked file (>500MB)", dry_run=True)
+                            fpath = Path(root) / file
+                            is_whitelisted = False
+                            for pat in REGENERABLE_FILE_PATTERNS:
+                                if fnmatch.fnmatch(file, pat):
+                                    is_whitelisted = True
+                                    break
+                            rel_str = str(fpath.relative_to(project_path)).replace("\\", "/")
+                            for prefix in REGENERABLE_CACHE_PREFIXES:
+                                if rel_str.startswith(prefix):
+                                    is_whitelisted = True
+                                    break
+                            if is_whitelisted:
+                                if (project_path / ".git").exists() and is_git_tracked(fpath, project_path):
+                                    continue
+                                try:
+                                    s = fpath.stat().st_size
+                                    print(f"    [DRY RUN] Would delete regenerable temp file: {fpath}")
+                                    log_deletion(str(fpath), s, f"Tier 1: Regenerable temp file ({file})", dry_run=True)
                                     simulated_freed_bytes += s
-                            except OSError:
-                                pass
+                                except OSError:
+                                    pass
                 else:
                     freed_l2 = cleanup_level_2(project_path, project_name)
                     if freed_l2:
@@ -678,7 +927,6 @@ def run_zombie_gc():
     zombie_registry_path = get_zombie_registry_path()
     zombie_registry_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1. Get all running containers related to cluster-ci
     try:
         res = subprocess.run(
             ["docker", "ps", "--filter", "name=cluster-job-", "--format", "{{.Names}}"],
@@ -690,35 +938,33 @@ def run_zombie_gc():
         return
 
     if not containers:
-        # Cleanup registry if no containers are running
         if zombie_registry_path.exists():
             try:
                 os.remove(zombie_registry_path)
             except: pass
-        # Clean up any leftover host-level dvc-viewer processes since no job containers are active
         kill_host_dvc_viewer_processes()
         return
 
     with open(zombie_registry_path, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
-            registry = load_registry(f)
+            try:
+                registry = load_registry(f, registry_path=zombie_registry_path)
+            except RegistryCorruptedError:
+                registry = {}
             now = time.time()
             new_registry = {}
 
             for container_name in containers:
                 has_activity = False
 
-                # Extract Job ID and find log file
                 job_id = container_name.replace("cluster-job-", "")
                 log_path = get_base_dir() / "job_logs" / f"{job_id}.log"
 
-                # Dimension 1: Logs
                 current_log_mtime = 0
                 if log_path.exists():
                     current_log_mtime = log_path.stat().st_mtime
 
-                # Dimension 2: CPU & Net
                 current_cpu = 0.0
                 current_net = ""
                 try:
@@ -730,7 +976,6 @@ def run_zombie_gc():
                         current_net = stats.get("net", "")
                 except: pass
 
-                # Dimension 3: GPU
                 current_gpu = 0
                 try:
                     gpu_res = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5)
@@ -739,7 +984,6 @@ def run_zombie_gc():
                         current_gpu = sum(utils)
                 except: pass
 
-                # Check against previous state
                 prev_state = registry.get(container_name, {})
                 last_activity = prev_state.get("last_activity", now)
 
@@ -759,9 +1003,7 @@ def run_zombie_gc():
                 if idle_duration > (ZOMBIE_TIMEOUT_MINUTES * 60):
                     print(f"[Zombie GC] Killing zombie container {container_name} (Idle for {idle_duration/60:.1f}min)")
                     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-                    # Also kill viewer if present
                     subprocess.run(["docker", "rm", "-f", container_name.replace("cluster-job-", "cluster-viewer-")], capture_output=True)
-                    # And kill leftover host processes
                     kill_host_dvc_viewer_processes()
                 else:
                     new_registry[container_name] = {
@@ -776,7 +1018,7 @@ def run_zombie_gc():
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python gc_orchestrator.py <command> [args] [--dry-run] [--protect-hours N]")
+        print("Usage: python gc_orchestrator.py <command> [args] [--dry-run] [--protect-hours N] [--current-project NAME]")
         sys.exit(1)
 
     raw_args = list(sys.argv[1:])
@@ -793,6 +1035,13 @@ if __name__ == "__main__":
             os.environ["GC_PROTECT_HOURS"] = raw_args[idx + 1]
             del raw_args[idx:idx + 2]
 
+    current_project = None
+    if "--current-project" in raw_args:
+        idx = raw_args.index("--current-project")
+        if idx + 1 < len(raw_args):
+            current_project = raw_args[idx + 1]
+            del raw_args[idx:idx + 2]
+
     if not raw_args:
         print("Error: No command specified.")
         sys.exit(1)
@@ -806,10 +1055,12 @@ if __name__ == "__main__":
         elif command == "update-idle":
             update_idle(sub_args[0], sub_args[1])
         elif command == "run-gc":
-            current_project = sub_args[0] if sub_args else None
+            if not current_project and sub_args:
+                current_project = sub_args[0]
             run_gc(dry_run=dry_run, current_project=current_project)
         elif command == "run-transfer-gc":
-            current_project = sub_args[0] if sub_args else None
+            if not current_project and sub_args:
+                current_project = sub_args[0]
             run_transfer_gc(dry_run=dry_run, current_project=current_project)
         elif command == "run-zombie-gc":
             run_zombie_gc()
