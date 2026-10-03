@@ -125,4 +125,5 @@ stages:
           cache: false
     meta:
       cluster:
+        gpus: 1
         vram_gb: 1
