@@ -160,11 +160,11 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertNotIn("CPUs Admis (A11)", resp.text)
         self.assertIn("hjamet", resp.text)
         self.assertNotIn("{{ user", resp.text)
-        self.assertIn("MACHINES DU CLUSTER", resp.text)
-        self.assertIn("Exécutions Actives du Cluster", resp.text)
+        self.assertIn("CLUSTER MACHINES", resp.text)
+        self.assertIn("Active Cluster Runs", resp.text)
         self.assertIn("badge-spec-pill", resp.text)
         self.assertIn("v3-modal-section-title", resp.text)
-        self.assertNotIn("Active Cluster Runs", resp.text)
+
 
     def test_local_mermaid_static_serving(self):
         resp = self.client.get("/static/mermaid.min.js")
