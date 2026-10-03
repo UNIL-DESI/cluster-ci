@@ -1,89 +1,8 @@
 stages:
-  prep:
-    cmd: python3 simulate_research.py prep
-    deps:
-      - simulate_research.py
-    outs:
-      - artifacts/prep.txt
-    metrics:
-      - metrics/prep.json:
-          cache: false
-
-  branch_a_step1:
-    foreach:
-      - 1
-      - 2
-    do:
-      cmd: python3 simulate_research.py branch_a_step1 --item ${item}
-      deps:
-        - simulate_research.py
-        - artifacts/prep.txt
-      outs:
-        - artifacts/branch_a1_${item}.bin
-      metrics:
-        - metrics/branch_a1_${item}.json:
-            cache: false
-      meta:
-        cluster:
-          image: nvcr.io/nvidia/pytorch:26.05-py3
-          ram_gb: 4
-
-  branch_a_step2:
-    foreach:
-      - 1
-      - 2
-    do:
-      cmd: python3 simulate_research.py branch_a_step2 --item ${item}
-      deps:
-        - simulate_research.py
-        - artifacts/branch_a1_${item}.bin
-      outs:
-        - artifacts/branch_a2_${item}.bin
-      metrics:
-        - metrics/branch_a2_${item}.json:
-            cache: false
-      meta:
-        cluster:
-          image: nvcr.io/nvidia/pytorch:26.05-py3
-          ram_gb: 4
-
-  branch_b_step1:
-    cmd: python3 simulate_research.py branch_b_step1
-    deps:
-      - simulate_research.py
-      - artifacts/prep.txt
-    outs:
-      - artifacts/branch_b1.bin
-    metrics:
-      - metrics/branch_b1.json:
-          cache: false
-    meta:
-      cluster:
-        image: nvcr.io/nvidia/pytorch:26.04-py3
-        cpus: 2
-        ram_gb: 4
-
-  branch_b_step2:
-    cmd: python3 simulate_research.py branch_b_step2
-    deps:
-      - simulate_research.py
-      - artifacts/branch_b1.bin
-    outs:
-      - artifacts/branch_b2.bin
-    metrics:
-      - metrics/branch_b2.json:
-          cache: false
-    meta:
-      cluster:
-        image: nvcr.io/nvidia/pytorch:26.04-py3
-        cpus: 2
-        ram_gb: 4
-
   pack_light_1:
     cmd: python3 simulate_research.py pack_light_1
     deps:
       - simulate_research.py
-      - artifacts/prep.txt
     outs:
       - artifacts/pack_light_1.bin
     metrics:
@@ -91,6 +10,8 @@ stages:
           cache: false
     meta:
       cluster:
+        workers:
+          - HEC45803
         cpus: 1
         ram_gb: 1
 
@@ -98,7 +19,6 @@ stages:
     cmd: python3 simulate_research.py pack_light_2
     deps:
       - simulate_research.py
-      - artifacts/prep.txt
     outs:
       - artifacts/pack_light_2.bin
     metrics:
@@ -106,24 +26,7 @@ stages:
           cache: false
     meta:
       cluster:
+        workers:
+          - HEC45803
         cpus: 1
         ram_gb: 1
-
-  join:
-    cmd: python3 simulate_research.py join
-    deps:
-      - simulate_research.py
-      - artifacts/branch_a2_1.bin
-      - artifacts/branch_a2_2.bin
-      - artifacts/branch_b2.bin
-      - artifacts/pack_light_1.bin
-      - artifacts/pack_light_2.bin
-    outs:
-      - artifacts/join_summary.txt
-    metrics:
-      - metrics/join.json:
-          cache: false
-    meta:
-      cluster:
-        gpus: 1
-        vram_gb: 1
