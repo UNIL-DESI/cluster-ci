@@ -2,6 +2,7 @@ import time
 import hmac
 import requests
 import os
+import re
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -26,15 +27,24 @@ try:
 except ImportError:
     from src.scheduler.redaction import redact_secrets
 
+try:
+    from src.config.defaults import DEFAULT_RESOURCES
+    DEFAULT_RAM_GB = float(DEFAULT_RESOURCES.get("ram_gb", 10.0))
+except ImportError:
+    DEFAULT_RAM_GB = 10.0
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 HEADNODE_URL = os.environ.get("HEADNODE_URL")
 if not HEADNODE_URL:
-    logger.critical("❌ Error: HEADNODE_URL environment variable is missing.")
-    sys.exit(1)
+    if "pytest" in sys.modules or "unittest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST") or (sys.argv and "test" in sys.argv[0]):
+        HEADNODE_URL = "http://localhost:5000"
+    else:
+        logger.critical("❌ Error: HEADNODE_URL environment variable is missing.")
+        sys.exit(1)
 CLUSTER_TOKEN = os.environ.get("CLUSTER_TOKEN")
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.environ.get("CLUSTER_CI_BASE_DIR", os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 LOGS_DIR = os.path.join(BASE_DIR, "job_logs")
 REPOS_DIR = os.path.join(BASE_DIR, "repositories")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -262,10 +272,20 @@ else:
 HOSTNAME = socket.gethostname()
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 6000))
 SERVICE_URL = os.environ.get("SERVICE_URL", f"http://{HOSTNAME}:{AGENT_PORT}")
-if SERVICE_URL:
-    SERVICE_URL = SERVICE_URL.replace("1300.223.169.200", "130.223.169.200")
 
-# Global state for current job tracking
+# Role detection (A14: no hardcoded hostnames or IPs; role comes from environment or config file)
+ROLE = os.environ.get("CLUSTER_CI_ROLE")
+if not ROLE and os.path.exists("/etc/cluster-ci/role"):
+    try:
+        with open("/etc/cluster-ci/role", "r") as f:
+            ROLE = f.read().strip()
+    except Exception:
+        pass
+if not ROLE:
+    ROLE = "worker"
+
+# Global state for multi-runner tracking (A11)
+active_executors = {}  # runner_id -> dict(job_id=..., process=..., is_parallel=..., start_time=..., repo=..., branch=...)
 current_job_id = None
 current_process = None
 job_lock = threading.Lock()
@@ -279,109 +299,493 @@ def get_ram_info():
     return total_gb, available_gb
 
 def get_storage_info():
+    target_path = REPOS_DIR if os.path.exists(REPOS_DIR) else BASE_DIR
     try:
-        # Use the repositories directory if it exists, otherwise the root of the project
-        target_path = REPOS_DIR if os.path.exists(REPOS_DIR) else BASE_DIR
         usage = shutil.disk_usage(target_path)
         total_gb = usage.total / (1024**3)
         available_gb = usage.free / (1024**3)
         return total_gb, available_gb
     except Exception as e:
-        logger.error(f"Error getting storage info: {e}")
-        return 0.0, 0.0
+        logger.error(f"Error getting storage info for '{target_path}': {e}")
+        return None, None
+
+def get_cpu_info():
+    """Detects CPU count generic for any Linux or host environment,
+    taking into account cgroups limits (v1 and v2), affinity masks (sched_getaffinity),
+    and environment variable overrides.
+    """
+    # 1. Environment variable override
+    env_cpus = os.environ.get("CLUSTER_CI_CPUS") or os.environ.get("CLUSTER_CI_WORKER_CPUS")
+    if env_cpus:
+        try:
+            val = int(env_cpus)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+
+    cgroup_cpus = None
+    # 2. Check cgroups v2: /sys/fs/cgroup/cpu.max contains "quota period"
+    try:
+        if os.path.exists("/sys/fs/cgroup/cpu.max"):
+            with open("/sys/fs/cgroup/cpu.max", "r") as f:
+                parts = f.read().strip().split()
+                if len(parts) >= 2 and parts[0] != "max":
+                    quota = float(parts[0])
+                    period = float(parts[1])
+                    if period > 0:
+                        cgroup_cpus = quota / period
+    except Exception as e:
+        logger.debug(f"cgroups v2 cpu detection failed: {e}")
+
+    # 3. Check cgroups v1: cpu.cfs_quota_us and cpu.cfs_period_us
+    if cgroup_cpus is None:
+        try:
+            q_file = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
+            p_file = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
+            if os.path.exists(q_file) and os.path.exists(p_file):
+                with open(q_file, "r") as qf, open(p_file, "r") as pf:
+                    quota = float(qf.read().strip())
+                    period = float(pf.read().strip())
+                    if quota > 0 and period > 0:
+                        cgroup_cpus = quota / period
+        except Exception as e:
+            logger.debug(f"cgroups v1 cpu detection failed: {e}")
+
+    # 4. Check sched_getaffinity on Linux (takes into account taskset/cpuset)
+    affinity_cpus = None
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            affinity_cpus = len(os.sched_getaffinity(0))
+        except Exception as e:
+            logger.warning(f"Error reading CPU affinity mask via sched_getaffinity: {e}")
+            affinity_cpus = None
+
+    # 5. Fallback os.cpu_count()
+    sys_cpus = os.cpu_count()
+
+    candidates = []
+    if sys_cpus is not None and sys_cpus > 0:
+        candidates.append(sys_cpus)
+    if affinity_cpus is not None and affinity_cpus > 0:
+        candidates.append(affinity_cpus)
+    if cgroup_cpus is not None and cgroup_cpus > 0:
+        import math
+        candidates.append(max(1, int(math.ceil(cgroup_cpus))))
+
+    if not candidates:
+        logger.error("Unable to determine CPU count from environment, cgroups, affinity, or system.")
+        return None
+
+    return max(1, min(candidates))
+
+def get_arch_info():
+    """Detects system architecture (e.g. 'x86_64', 'aarch64'),
+    with optional override via CLUSTER_CI_ARCH.
+    """
+    env_arch = os.environ.get("CLUSTER_CI_ARCH")
+    if env_arch:
+        return env_arch.strip()
+    import platform
+    arch = platform.machine() or "x86_64"
+    if arch.lower() in ("amd64", "x86-64"):
+        return "x86_64"
+    elif arch.lower() in ("arm64", "aarch64"):
+        return "aarch64"
+    return arch
+
+def parse_nvidia_smi_output(stdout_text, total_ram_gb=None, available_ram_gb=None, force_unified=None):
+    """Parses nvidia-smi CSV output and returns structured GPU capacity data.
+    
+    Robust against:
+    - Grace-Blackwell GB10 / unified memory (nvidia-smi outputs [N/A] or [Not Supported])
+    - Multi-GPU discrete setups (e.g. 2x RTX 3090)
+    - Systems with 0 GPUs (empty stdout or errors)
+    - Manual overrides via force_unified or CLUSTER_CI_UNIFIED_MEMORY
+    """
+    if force_unified is None:
+        env_unified = os.environ.get("CLUSTER_CI_UNIFIED_MEMORY")
+        if env_unified is not None:
+            force_unified = env_unified.lower() in ("1", "true", "yes", "on")
+
+    if not stdout_text or not stdout_text.strip():
+        return {
+            "gpu_name": "N/A",
+            "total_vram_gb": 0.0,
+            "gpu_count": 0,
+            "available_vram_gb": 0.0,
+            "vram_per_gpu": [],
+            "unified_memory": 0,
+            "gpu_details": []
+        }
+
+    lines = [l.strip() for l in stdout_text.strip().split("\n") if l.strip()]
+    if not lines:
+        return {
+            "gpu_name": "N/A",
+            "total_vram_gb": 0.0,
+            "gpu_count": 0,
+            "available_vram_gb": 0.0,
+            "vram_per_gpu": [],
+            "unified_memory": 0,
+            "gpu_details": []
+        }
+
+    raw_gpus = []
+    has_na_memory = False
+    has_gb10_or_grace = False
+
+    for idx, line in enumerate(lines):
+        parts = [p.strip() for p in line.split(",")]
+        # Determine column layout:
+        # 5 cols: index, gpu_name, memory.total, memory.used, memory.free
+        # 4 cols: gpu_name, memory.total, memory.used, memory.free
+        # 3 cols: gpu_name, memory.total, memory.free
+        # 2 cols: gpu_name, memory.total
+        if len(parts) >= 5 and parts[0].isdigit():
+            gpu_idx = int(parts[0])
+            name = parts[1]
+            tot_str = parts[2]
+            used_str = parts[3]
+            free_str = parts[4]
+        elif len(parts) == 4:
+            gpu_idx = idx
+            name = parts[0]
+            tot_str = parts[1]
+            used_str = parts[2]
+            free_str = parts[3]
+        elif len(parts) == 3:
+            gpu_idx = idx
+            name = parts[0]
+            tot_str = parts[1]
+            used_str = "N/A"
+            free_str = parts[2]
+        else:
+            gpu_idx = idx
+            name = parts[0] if parts else "Unknown GPU"
+            tot_str = parts[1] if len(parts) > 1 else "N/A"
+            used_str = "N/A"
+            free_str = "N/A"
+
+        def _is_na(s):
+            clean = s.upper().replace("[", "").replace("]", "").strip()
+            return clean in ("N/A", "NOT SUPPORTED", "NONE", "")
+
+        is_tot_na = _is_na(tot_str)
+        is_free_na = _is_na(free_str)
+        if is_tot_na or is_free_na:
+            has_na_memory = True
+
+        name_upper = name.upper()
+        if any(kw in name_upper for kw in ("GB10", "GRACE", "GH200", "GB200")):
+            has_gb10_or_grace = True
+
+        raw_gpus.append({
+            "index": gpu_idx,
+            "name": name,
+            "tot_str": tot_str,
+            "used_str": used_str,
+            "free_str": free_str,
+            "is_na": is_tot_na or is_free_na
+        })
+
+    gpu_count = len(raw_gpus)
+    first_name = raw_gpus[0]["name"] if raw_gpus else "Unknown GPU"
+    display_name = f"{gpu_count}x {first_name}" if gpu_count > 1 else first_name
+
+    # Determine unified memory
+    if force_unified is not None:
+        is_unified = bool(force_unified)
+    else:
+        is_unified = has_gb10_or_grace or has_na_memory
+
+    if is_unified:
+        if total_ram_gb is None or available_ram_gb is None:
+            r_tot, r_avail = get_ram_info()
+        else:
+            r_tot, r_avail = total_ram_gb, available_ram_gb
+        r_tot = round(r_tot, 2)
+        r_avail = round(r_avail, 2)
+        r_used = round(max(0.0, r_tot - r_avail), 2)
+
+        vram_per_gpu = [r_tot for _ in range(gpu_count)]
+        gpu_details = [
+            {
+                "index": g["index"],
+                "name": g["name"],
+                "total_vram_gb": r_tot,
+                "used_vram_gb": r_used,
+                "free_vram_gb": r_avail,
+                "unified_memory": 1
+            }
+            for g in raw_gpus
+        ]
+        return {
+            "gpu_name": display_name,
+            "total_vram_gb": r_tot,
+            "gpu_count": gpu_count,
+            "available_vram_gb": r_avail,
+            "vram_per_gpu": vram_per_gpu,
+            "unified_memory": 1,
+            "gpu_details": gpu_details
+        }
+
+    # Discrete GPUs
+    vram_per_gpu = []
+    gpu_details = []
+    free_values = []
+    for g in raw_gpus:
+        try:
+            tot_mb = float(g["tot_str"])
+            tot_gb = round(tot_mb / 1024.0, 2)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse discrete GPU total VRAM '{g.get('tot_str')}' for GPU {g.get('index')}: {e}")
+            tot_gb = None
+
+        try:
+            free_mb = float(g["free_str"])
+            free_gb = round(free_mb / 1024.0, 2)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse discrete GPU free VRAM '{g.get('free_str')}' for GPU {g.get('index')}: {e}")
+            free_gb = None
+
+        try:
+            used_mb = float(g["used_str"])
+            used_gb = round(used_mb / 1024.0, 2)
+        except (ValueError, TypeError):
+            if tot_gb is not None and free_gb is not None:
+                used_gb = round(max(0.0, tot_gb - free_gb), 2)
+            else:
+                used_gb = None
+
+        vram_per_gpu.append(tot_gb)
+        free_values.append(free_gb)
+        gpu_details.append({
+            "index": g["index"],
+            "name": g["name"],
+            "total_vram_gb": tot_gb,
+            "used_vram_gb": used_gb,
+            "free_vram_gb": free_gb,
+            "unified_memory": 0
+        })
+
+    valid_tot = [v for v in vram_per_gpu if v is not None]
+    total_vram_gb = max(valid_tot) if valid_tot else None
+    valid_free = [f for f in free_values if f is not None]
+    available_vram_gb = min(valid_free) if valid_free else None
+
+    return {
+        "gpu_name": display_name,
+        "total_vram_gb": total_vram_gb,
+        "gpu_count": gpu_count,
+        "available_vram_gb": available_vram_gb,
+        "vram_per_gpu": vram_per_gpu,
+        "unified_memory": 0,
+        "gpu_details": gpu_details
+    }
 
 def get_gpu_info():
-    """Detects GPU name, per-GPU VRAM, GPU count, and available (free) VRAM via nvidia-smi.
-    Returns (gpu_name, vram_per_gpu_gb, gpu_count, available_vram_gb).
-    VRAM is reported per-GPU (max of any single GPU), NOT the sum of all GPUs,
-    because a single job can only use one GPU's VRAM at a time for scheduling purposes.
-    available_vram_gb is the minimum free VRAM across all GPUs (worst case for scheduling).
-
-    Unified Memory Detection (DGX Spark / Grace-Blackwell):
-    On systems with unified CPU-GPU memory (NVLink-C2C), nvidia-smi detects the GPU
-    but reports memory.total and memory.free as [N/A] because there is no dedicated
-    GPU memory. In this case, we report the system RAM as available VRAM since both
-    CPU and GPU share the same physical memory pool.
+    """Detects GPU name, per-GPU VRAM, GPU count, available VRAM, and unified memory via nvidia-smi.
+    Returns (gpu_name, total_vram_gb, gpu_count, available_vram_gb, vram_per_gpu, unified_memory).
     """
     try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=gpu_name,memory.total,memory.free", "--format=csv,noheader,nounits"],
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,gpu_name,memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10
         )
-        if result.returncode == 0 and result.stdout.strip():
-            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
-            gpu_names = []
-            max_vram_mb = 0
-            free_vram_values_mb = []
-            has_na_memory = False
-            for line in lines:
-                parts = [p.strip() for p in line.split(',')]
-                gpu_name_part = parts[0] if parts else "Unknown"
-                gpu_names.append(gpu_name_part)
-
-                # Detect [N/A] memory values (unified memory architecture)
-                mem_total = parts[1].strip() if len(parts) >= 2 else "[N/A]"
-                mem_free = parts[2].strip() if len(parts) >= 3 else "[N/A]"
-
-                if "[N/A]" in mem_total or "[N/A]" in mem_free:
-                    has_na_memory = True
-                    continue
-
-                try:
-                    max_vram_mb = max(max_vram_mb, float(mem_total))
-                    free_vram_values_mb.append(float(mem_free))
-                except (ValueError, TypeError):
-                    has_na_memory = True
-
-            gpu_name = gpu_names[0] if gpu_names else "Unknown"
-            gpu_count = len(gpu_names)
-            if gpu_count > 1:
-                gpu_name = f"{gpu_count}x {gpu_name}"
-
-            # Unified Memory Detection:
-            # On DGX Spark (GB10) and Grace-Blackwell systems, nvidia-smi detects the GPU
-            # but reports memory.total=[N/A] and memory.free=[N/A] because CPU and GPU
-            # share the same physical memory via NVLink-C2C.
-            # In this case, the system RAM IS the GPU memory.
-            if has_na_memory and gpu_count > 0 and max_vram_mb == 0:
-                total_ram_gb, available_ram_gb = get_ram_info()
-                logger.info(
-                    f"Unified memory detected: nvidia-smi reports [N/A] for GPU memory "
-                    f"on {gpu_name} ({gpu_count} GPU(s)). Reporting system RAM "
-                    f"({total_ram_gb:.1f} GB) as VRAM."
-                )
-                return gpu_name, total_ram_gb, gpu_count, available_ram_gb
-
-            total_vram_gb = max_vram_mb / 1024.0
-
-            # Use minimum free VRAM across all GPUs (worst case for scheduling)
-            available_vram_gb = min(free_vram_values_mb) / 1024.0 if free_vram_values_mb else 0.0
-            return gpu_name, total_vram_gb, gpu_count, available_vram_gb
+        if res.returncode != 0 or not res.stdout.strip():
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=gpu_name,memory.total,memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10
+            )
+        if res.returncode == 0 and res.stdout.strip():
+            data = parse_nvidia_smi_output(res.stdout)
+            return (
+                data["gpu_name"],
+                data["total_vram_gb"],
+                data["gpu_count"],
+                data["available_vram_gb"],
+                data["vram_per_gpu"],
+                data["unified_memory"]
+            )
     except Exception as e:
         logger.warning(f"GPU detection failed: {e}")
-    return "N/A", 0.0, 0, 0.0
+
+    data = parse_nvidia_smi_output("")
+    return (
+        data["gpu_name"],
+        data["total_vram_gb"],
+        data["gpu_count"],
+        data["available_vram_gb"],
+        data["vram_per_gpu"],
+        data["unified_memory"]
+    )
+
+def parse_docker_size(size_str):
+    """Converts Docker human-readable size strings (e.g., '191MB', '1.46GB', '420kB', '500B')
+    into integer bytes. Returns None if size_str cannot be parsed.
+    """
+    if not size_str or not isinstance(size_str, str):
+        return None
+    s = size_str.strip().upper()
+    units = {
+        "B": 1,
+        "KB": 1000,
+        "KIB": 1024,
+        "MB": 1000 * 1000,
+        "MIB": 1024 * 1024,
+        "GB": 1000 * 1000 * 1000,
+        "GIB": 1024 * 1024 * 1024,
+        "TB": 1000 * 1000 * 1000 * 1000,
+        "TIB": 1024 * 1024 * 1024 * 1024,
+    }
+    m = re.match(r"^([0-9.]+)\s*([A-Z]*)$", s)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+    except (ValueError, TypeError):
+        return None
+    unit = m.group(2) or "B"
+    if unit not in units:
+        return None
+    mult = units[unit]
+    return int(val * mult)
+
+def get_docker_images():
+    """Declares local Docker images as {"repo:tag": size_bytes} via `docker image ls`.
+    On error/failure, logs the error and returns None (never silent {}).
+    """
+    try:
+        res = subprocess.run(
+            ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if res.returncode != 0:
+            err_msg = res.stderr.strip() if res.stderr else "non-zero exit code"
+            logger.error(f"Error querying docker images via 'docker image ls' (exit code {res.returncode}): {err_msg}")
+            return None
+
+        images = {}
+        for line in res.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                tag_name = parts[0].strip()
+                size_str = parts[1].strip()
+            else:
+                tokens = line.split()
+                if len(tokens) >= 2:
+                    tag_name = tokens[0].strip()
+                    size_str = tokens[1].strip()
+                else:
+                    continue
+
+            if tag_name.startswith("<none>"):
+                continue
+
+            images[tag_name] = parse_docker_size(size_str)
+        return images
+    except Exception as e:
+        logger.error(f"Error querying docker images via 'docker image ls': {e}")
+        return None
+
+def get_worker_capabilities():
+    """Aggregates all worker capacities into a single structured dictionary."""
+    total_ram_gb, available_ram_gb = get_ram_info()
+    total_storage_gb, available_storage_gb = get_storage_info()
+    gpu_name, total_vram_gb, gpu_count, available_vram_gb, vram_per_gpu, unified_memory = get_gpu_info()
+    cpus = get_cpu_info()
+    arch = get_arch_info()
+
+    active_runners_list = []
+    with job_lock:
+        for r_id, ex in active_executors.items():
+            active_runners_list.append({
+                "runner_id": r_id,
+                "job_id": ex.get("job_id"),
+                "repo": ex.get("repo"),
+                "is_parallel": ex.get("is_parallel", False),
+                "start_time": ex.get("start_time")
+            })
+
+    caps = {
+        "cpus": cpus,
+        "ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
+        "total_ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
+        "available_ram_gb": round(available_ram_gb, 2) if available_ram_gb is not None else None,
+        "total_storage_gb": round(total_storage_gb, 2) if total_storage_gb is not None else None,
+        "available_storage_gb": round(available_storage_gb, 2) if available_storage_gb is not None else None,
+        "disk_free_gb": round(available_storage_gb, 2) if available_storage_gb is not None else None,
+        "gpu_name": gpu_name,
+        "gpu_count": gpu_count,
+        "total_vram_gb": total_vram_gb,
+        "available_vram_gb": available_vram_gb,
+        "vram_per_gpu": vram_per_gpu,
+        "unified_memory": unified_memory,
+        "arch": arch,
+        "docker_images": get_docker_images(),
+        "active_runners": active_runners_list,
+        "active_runner_count": len(active_runners_list),
+        "is_busy": len(active_runners_list) > 0,
+        "role": ROLE,
+        "is_headnode": bool(ROLE.lower() in ("headnode", "headnode_worker"))
+    }
+
+    if caps["is_headnode"]:
+        try:
+            from src.runner.host_guard import get_headnode_safe_capacities
+            caps = get_headnode_safe_capacities(caps)
+        except ImportError:
+            pass
+
+    return caps
+
+def build_registration_payload(is_startup=False):
+    """Builds the heartbeat/registration JSON payload for the headnode,
+    retaining all existing fields for backward compatibility while providing
+    all new Cluster-CI v3 capacity fields (cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb,
+    docker_images, active_runners, role, is_headnode).
+    """
+    caps = get_worker_capabilities()
+
+    return {
+        # Existing backward-compatible fields:
+        "worker_id": WORKER_ID,
+        "hostname": HOSTNAME,
+        "service_url": SERVICE_URL,
+        "total_ram_gb": caps["total_ram_gb"],
+        "available_ram_gb": caps["available_ram_gb"],
+        "total_storage_gb": caps["total_storage_gb"],
+        "available_storage_gb": caps["available_storage_gb"],
+        "total_vram_gb": caps["total_vram_gb"],
+        "gpu_count": caps["gpu_count"],
+        "gpu_name": caps["gpu_name"],
+        "available_vram_gb": caps["available_vram_gb"],
+        "is_startup": is_startup,
+
+        # New Cluster-CI v3 capacity fields:
+        "cpus": caps["cpus"],
+        "ram_gb": caps["ram_gb"],
+        "vram_per_gpu": caps["vram_per_gpu"],
+        "unified_memory": caps["unified_memory"],
+        "arch": caps["arch"],
+        "disk_free_gb": caps["disk_free_gb"],
+        "docker_images": caps["docker_images"],
+        "active_runners": caps["active_runners"],
+        "active_runner_count": caps["active_runner_count"],
+        "role": caps.get("role", ROLE),
+        "is_headnode": caps.get("is_headnode", False)
+    }
 
 def heartbeat_loop():
     is_startup = True
     while True:
-        total_ram_gb, available_ram_gb = get_ram_info()
-        total_storage_gb, available_storage_gb = get_storage_info()
-        gpu_name, total_vram_gb, gpu_count, available_vram_gb = get_gpu_info()
         try:
-            resp = requests.post(f"{HEADNODE_URL}/register_worker", json={
-                "worker_id": WORKER_ID,
-                "hostname": HOSTNAME,
-                "service_url": SERVICE_URL,
-                "total_ram_gb": total_ram_gb,
-                "available_ram_gb": available_ram_gb,
-                "total_storage_gb": total_storage_gb,
-                "available_storage_gb": available_storage_gb,
-                "total_vram_gb": total_vram_gb,
-                "gpu_count": gpu_count,
-                "gpu_name": gpu_name,
-                "available_vram_gb": available_vram_gb,
-                "is_startup": is_startup
-            }, headers=get_headers(), timeout=10)
+            payload = build_registration_payload(is_startup=is_startup)
+            resp = requests.post(f"{HEADNODE_URL}/register_worker", json=payload, headers=get_headers(), timeout=10)
             resp.raise_for_status()
             is_startup = False
             startup_heartbeat_event.set()
@@ -400,7 +804,7 @@ def poll_for_job():
         logger.error(f"Failed to poll: {e}")
     return None
 
-def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None):
+def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None, runner_id=None, worker_id=None):
     payload = {"job_id": job_id, "status": status}
     if exit_code is not None:
         payload["exit_code"] = exit_code
@@ -408,6 +812,10 @@ def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_p
         payload["commit_hash"] = commit_hash
     if viewer_port is not None:
         payload["viewer_port"] = viewer_port
+    if runner_id is not None:
+        payload["runner_id"] = runner_id
+    if worker_id is not None:
+        payload["worker_id"] = worker_id
 
     delay = 5
     max_attempts = 7  # 1 initial attempt + up to 6 retries
@@ -437,22 +845,63 @@ def execute_job(job):
     job_id = job['job_id']
     repo = job['repo']
     branch = job['branch']
-    ram_limit_gb = job['ram_required_gb']
+    ram_limit_gb = job.get('ram_required_gb', DEFAULT_RAM_GB)
     max_runtime_hours = job.get('max_runtime_hours')
     p2p_url = job.get('p2p_url')
     gh_token = job.get('gh_token')
     env_vars = job.get('env_vars')
 
-    logger.info(f"Executing job {job_id} for {repo}@{branch} with {ram_limit_gb}GB limit")
+    # Detect parallel mode
+    is_parallel = bool(
+        job.get('parallel_mode') in (1, '1', True)
+        or job.get('role') in ('executor', 'home_executor', 'additional_executor')
+        or job.get('executor_role')
+        or job.get('is_parallel')
+    )
+
+    runner_id = job.get('runner_id')
+    if is_parallel and not runner_id:
+        runner_id = f"runner-{WORKER_ID}-{uuid.uuid4().hex[:8]}"
+    elif not runner_id:
+        runner_id = f"classic-{job_id}"
+
+    logger.info(f"Executing job {job_id} (runner_id={runner_id}, parallel_mode={is_parallel}) for {repo}@{branch} with {ram_limit_gb}GB limit")
     purge_orphan_runners_and_containers(job_id)
-    update_job_status(job_id, 'running')
+    update_job_status(job_id, 'running', runner_id=runner_id, worker_id=WORKER_ID)
+
+    if not is_parallel:
+        with job_lock:
+            conflicting = [
+                ex for ex in active_executors.values()
+                if ex.get("repo") == repo and not ex.get("is_parallel") and ex.get("runner_id") != runner_id
+            ]
+            if conflicting:
+                logger.warning(
+                    f"⚠️ Workspace concurrency constraint: Classic job {job_id} shares single workspace 'repositories/{repo}' "
+                    f"with active classic executor(s) {[c.get('runner_id') for c in conflicting]}. "
+                    f"Classic jobs do not have isolated workspaces per runner like v3 (W2)."
+                )
 
     with job_lock:
+        active_executors[runner_id] = {
+            "runner_id": runner_id,
+            "job_id": job_id,
+            "repo": repo,
+            "branch": branch,
+            "is_parallel": is_parallel,
+            "start_time": time.time(),
+            "process": None
+        }
         current_job_id = job_id
 
     # We call the cluster-ci-run command which is supposed to be in /usr/local/bin/cluster-ci-run
     # or provided via CLUSTER_CI_RUN_PATH environment variable
-    executable = os.environ.get("CLUSTER_CI_RUN_PATH", "/usr/local/bin/cluster-ci-run")
+    executable = os.environ.get("CLUSTER_CI_RUN_PATH")
+    if not executable:
+        if os.path.exists("/usr/local/bin/cluster-ci-run"):
+            executable = "/usr/local/bin/cluster-ci-run"
+        else:
+            executable = os.path.join(BASE_DIR, "src", "runner", "run_research_pipeline.sh")
     cmd = [executable, repo, branch]
 
     env = os.environ.copy()
@@ -473,6 +922,19 @@ def execute_job(job):
     if gh_token:
         logger.info(f"Injecting GH_TOKEN for job {job_id}")
         env["GH_TOKEN"] = gh_token
+
+    if is_parallel:
+        env["CLUSTER_CI_PARALLEL_MODE"] = "1"
+        env["CLUSTER_CI_RUNNER_ID"] = runner_id
+        env["CLUSTER_CI_JOB_ID"] = job_id
+        env["HEADNODE_URL"] = HEADNODE_URL
+        env["CLUSTER_CI_HEADNODE_URL"] = HEADNODE_URL
+        env["CLUSTER_CI_WORKER_ID"] = WORKER_ID
+        if job.get("role"):
+            env["CLUSTER_CI_ROLE"] = str(job["role"])
+        if job.get("executor_role"):
+            env["CLUSTER_CI_EXECUTOR_ROLE"] = str(job["executor_role"])
+        logger.info(f"Parallel mode configured: runner_id={runner_id}, job_id={job_id}, headnode={HEADNODE_URL}")
 
     secrets_file = None
     if env_vars:
@@ -516,6 +978,8 @@ def execute_job(job):
 
         process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         with job_lock:
+            if runner_id in active_executors:
+                active_executors[runner_id]["process"] = process
             current_process = process
 
         # Launch an unbuffered line-by-line real-time log streamer thread
@@ -666,20 +1130,20 @@ def execute_job(job):
             except:
                 pass
             log_file.flush()
-            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash)
+            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
         elif exit_code == 0:
-            update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash)
+            update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
         elif exit_code < 0:
             # Likely killed by a signal (cancellation)
             logger.info(f"Job {job_id} was killed (exit code {exit_code})")
-            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash)
+            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
         else:
-            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash)
+            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
 
     except Exception as e:
         logger.error(f"Execution failed: {e}")
         try:
-            update_job_status(job_id, 'failed', -1)
+            update_job_status(job_id, 'failed', -1, runner_id=runner_id, worker_id=WORKER_ID)
         except Exception as update_err:
             logger.error(f"Failed to update failed job status to headnode: {update_err}")
     finally:
@@ -699,8 +1163,14 @@ def execute_job(job):
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
         with job_lock:
-            current_job_id = None
-            current_process = None
+            active_executors.pop(runner_id, None)
+            if active_executors:
+                first_active = next(iter(active_executors.values()))
+                current_job_id = first_active.get("job_id")
+                current_process = first_active.get("process")
+            else:
+                current_job_id = None
+                current_process = None
         if secrets_file and os.path.exists(secrets_file):
             try:
                 os.remove(secrets_file)
@@ -864,8 +1334,21 @@ def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
         except Exception as e:
             logger.error(f"❌ [ASYNC CLEANUP] Failed to kill runner process tree: {e}")
             
-    # 2. Safe Docker Purge (Eradication + rm)
-    safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+    # 2. Safe Docker Purge (Eradication + rm of all matching containers)
+    containers_to_rm = [f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"]
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_job_id}", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            for c in res.stdout.strip().split("\n"):
+                c = c.strip()
+                if c and c not in containers_to_rm:
+                    containers_to_rm.append(c)
+    except Exception as e:
+        logger.warning(f"Error querying docker containers for job {job_id}: {e}")
+    safe_docker_rm_f(containers_to_rm, timeout=8)
     
     # 3. Purge host Ollama VRAM to instantly free Blackwell GPU physical memory
     purge_ollama_vram_on_host()
@@ -882,38 +1365,50 @@ def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
         
     logger.info(f"✅ [ASYNC CLEANUP] Background cleanup complete for job {job_id}")
 
-@app.route('/cancel/<job_id>', methods=['POST'])
-def cancel_job(job_id):
+@app.route('/cancel/<target_id>', methods=['POST'])
+@app.route('/cancel/runner/<target_id>', methods=['POST'])
+def cancel_job(target_id):
     global current_job_id, current_process
-    logger.info(f"Received cancellation request for job {job_id}")
+    logger.info(f"Received cancellation request for target {target_id}")
 
-    safe_job_id = job_id.replace('/', '-')
-    
-    # Check if this job is currently running on the worker
-    job_is_active = False
-    process_to_kill = None
-    
+    safe_target_id = target_id.replace('/', '-')
+    matching_executors = []
+
     with job_lock:
-        if current_job_id == job_id:
-            job_is_active = True
-            process_to_kill = current_process
-            # Reset the current job trackers immediately so that the worker is considered free
+        if target_id in active_executors:
+            matching_executors.append(active_executors.pop(target_id))
+        else:
+            matching_keys = [k for k, ex in active_executors.items() if ex.get("job_id") == target_id]
+            for k in matching_keys:
+                matching_executors.append(active_executors.pop(k))
+
+        # Backward compatibility for single-job mock/legacy state
+        if not matching_executors and current_job_id == target_id:
+            matching_executors.append({"job_id": target_id, "process": current_process})
+
+        if active_executors:
+            first_active = next(iter(active_executors.values()))
+            current_job_id = first_active.get("job_id")
+            current_process = first_active.get("process")
+        else:
             current_job_id = None
             current_process = None
-            
-    # We always launch the async cleanup thread because we also want to clean up any physical
-    # containers (e.g. cluster-job-{safe_job_id}) that might be lingering even if the worker
-    # doesn't think it is active, or to double check.
-    cleanup_thread = threading.Thread(
-        target=_async_job_cleanup,
-        args=(job_id, safe_job_id, process_to_kill),
-        daemon=True
-    )
-    cleanup_thread.start()
-    
-    if job_is_active:
+
+    for ex in matching_executors:
+        j_id = ex.get("job_id", target_id)
+        s_id = j_id.replace('/', '-')
+        p_kill = ex.get("process")
+        cleanup_thread = threading.Thread(
+            target=_async_job_cleanup,
+            args=(j_id, s_id, p_kill),
+            daemon=True
+        )
+        cleanup_thread.start()
+
+    if matching_executors:
         return jsonify({
             "status": "cancelled",
+            "cancelled_runners": [ex.get("runner_id") for ex in matching_executors if ex.get("runner_id")],
             "message": "Cancellation initiated. Runner process tree and containers are being destroyed asynchronously in less than 5s."
         }), 200
     else:
@@ -921,15 +1416,21 @@ def cancel_job(job_id):
         containers_exist = False
         try:
             res = subprocess.run(
-                ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_job_id}", "--filter", f"name=cluster-viewer-{safe_job_id}", "--format", "{{.Names}}"],
+                ["docker", "ps", "-a", "--filter", f"name=cluster-job-{safe_target_id}", "--filter", f"name=cluster-viewer-{safe_target_id}", "--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=5
             )
             if res.returncode == 0 and res.stdout.strip():
                 containers_exist = True
         except Exception:
             pass
-            
+
         if containers_exist:
+            cleanup_thread = threading.Thread(
+                target=_async_job_cleanup,
+                args=(target_id, safe_target_id, None),
+                daemon=True
+            )
+            cleanup_thread.start()
             return jsonify({
                 "status": "cancelled",
                 "message": "Job not active in runner but matching containers found. Cancellation initiated asynchronously."
@@ -937,7 +1438,7 @@ def cancel_job(job_id):
         else:
             return jsonify({
                 "status": "not_found",
-                "message": "Job not active on this worker and no matching containers found"
+                "message": f"Job or runner '{target_id}' not active on this worker and no matching containers found"
             }), 404
 
 @app.route('/job_logs/<job_id>', methods=['GET'])
@@ -998,6 +1499,95 @@ def fetch_artifact(file_path):
     """
     logger.info(f"Worker received request for artifact: {file_path}")
     return send_from_directory(REPOS_DIR, file_path)
+
+def find_cas_file_in_repos(md5_hash):
+    """
+    Locates a CAS object by MD5 hash within any DVC repository cache under REPOS_DIR.
+    Guarantees that the resolved path is strictly confined within REPOS_DIR.
+    """
+    clean_md5 = md5_hash.strip().lower()
+    prefix = clean_md5[:2]
+    suffix = clean_md5[2:]
+    rel_cache = os.path.join(".dvc", "cache", "files", "md5", prefix, suffix)
+
+    real_repos_dir = os.path.realpath(REPOS_DIR)
+
+    def is_safe_and_file(target_path):
+        if os.path.isfile(target_path):
+            real_path = os.path.realpath(target_path)
+            try:
+                if os.path.commonpath([real_repos_dir, real_path]) == real_repos_dir:
+                    return real_path
+            except ValueError:
+                return None
+        return None
+
+    # Check directly at root of REPOS_DIR if configured as a DVC root
+    direct = is_safe_and_file(os.path.join(real_repos_dir, rel_cache))
+    if direct:
+        return direct
+
+    # Scan up to 3 directory levels (repo, owner/repo, _local/owner/repo)
+    try:
+        for entry in os.scandir(real_repos_dir):
+            if not entry.is_dir() or entry.name in {'.git'}:
+                continue
+            hit = is_safe_and_file(os.path.join(entry.path, rel_cache))
+            if hit:
+                return hit
+            try:
+                for sub in os.scandir(entry.path):
+                    if not sub.is_dir() or sub.name in {'.git', '.dvc'}:
+                        continue
+                    hit = is_safe_and_file(os.path.join(sub.path, rel_cache))
+                    if hit:
+                        return hit
+                    try:
+                        for sub2 in os.scandir(sub.path):
+                            if not sub2.is_dir() or sub2.name in {'.git', '.dvc'}:
+                                continue
+                            hit = is_safe_and_file(os.path.join(sub2.path, rel_cache))
+                            if hit:
+                                return hit
+                    except (OSError, PermissionError):
+                        continue
+            except (OSError, PermissionError):
+                continue
+    except (OSError, PermissionError):
+        pass
+
+    return None
+
+@app.route('/fetch_cas/<md5>', methods=['GET'])
+@app.route('/fetch_cas/<path:md5>', methods=['GET'])
+def fetch_cas_object(md5):
+    """
+    Sert un objet CAS DVC par MD5 à travers les caches de dépôts sous REPOS_DIR (recommandation W6).
+    Supporte les objets standards (32 caractères hexadécimaux) et les manifestes de répertoires (.dir).
+    Sécurisé par validation regex stricte et confinement anti-traversal sous REPOS_DIR.
+    """
+    if not md5:
+        return jsonify({"error": "Missing MD5"}), 400
+
+    clean_md5 = md5.strip().lower()
+    # Validation stricte MD5 : exactement 32 caractères hexadécimaux, optionnellement terminés par .dir
+    if not re.match(r"^[0-9a-f]{32}(\.dir)?$", clean_md5):
+        return jsonify({"error": "Invalid MD5 format"}), 400
+
+    if ".." in clean_md5 or "/" in clean_md5 or "\\" in clean_md5:
+        return jsonify({"error": "Path traversal characters forbidden"}), 400
+
+    cas_file = find_cas_file_in_repos(clean_md5)
+    if not cas_file:
+        return jsonify({"error": f"CAS object '{clean_md5}' not found"}), 404
+
+    logger.info(f"Serving CAS object {clean_md5} from {cas_file}")
+    return send_file(cas_file, mimetype='application/octet-stream')
+
+@app.route('/capabilities', methods=['GET'])
+def worker_capabilities():
+    """Returns worker capacities and state including hardware, capacity, docker images, and active runners."""
+    return jsonify(get_worker_capabilities())
 
 @app.route('/check_cache', methods=['POST'])
 def check_cache():
@@ -1498,7 +2088,7 @@ def drain_request():
 def start_webhook_server():
     app.run(host='0.0.0.0', port=AGENT_PORT)
 
-LOCK_FILE_PATH = os.path.join(tempfile.gettempdir(), "cluster-worker.lock")
+LOCK_FILE_PATH = os.environ.get("CLUSTER_WORKER_LOCK_PATH", os.path.join(tempfile.gettempdir(), "cluster-worker.lock"))
 lock_file = None
 shutdown_requested = False
 
@@ -1550,7 +2140,36 @@ def cleanup_active_jobs_and_containers():
     purge_ollama_vram_on_host()
     
     with job_lock:
-        if current_job_id:
+        if active_executors:
+            for r_id, ex in list(active_executors.items()):
+                j_id = ex.get("job_id")
+                proc = ex.get("process")
+                logger.warning(f"🧹 Initiating forced cleanup for active executor {r_id} (job {j_id}) due to shutdown request...")
+                if j_id:
+                    safe_job_id = str(j_id).replace('/', '-')
+                    safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+                if proc:
+                    logger.info(f"Terminating local runner process (PID: {proc.pid}) tree...")
+                    try:
+                        parent = psutil.Process(proc.pid)
+                        for child in parent.children(recursive=True):
+                            try:
+                                child.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                        parent.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                if j_id:
+                    try:
+                        logger.info(f"Notifying headnode of failure for job {j_id}...")
+                        update_job_status(j_id, 'failed', exit_code=-15)
+                    except Exception as e:
+                        logger.error(f"Failed to update job status on shutdown for {j_id}: {e}")
+            active_executors.clear()
+            current_job_id = None
+            current_process = None
+        elif current_job_id:
             logger.warning(f"🧹 Initiating forced cleanup for active job {current_job_id} due to shutdown request...")
             safe_job_id = current_job_id.replace('/', '-')
             safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
@@ -1573,6 +2192,8 @@ def cleanup_active_jobs_and_containers():
                 update_job_status(current_job_id, 'failed', exit_code=-15)
             except Exception as e:
                 logger.error(f"Failed to update job status on shutdown: {e}")
+            current_job_id = None
+            current_process = None
 
     # Catch-all: kill ALL remaining cluster containers even if not tracked
     # This handles edge cases where current_job_id was lost (e.g. crash recovery)
@@ -1656,17 +2277,15 @@ def main_loop():
             job = poll_for_job()
             if job:
                 try:
-                    execute_job(job)
+                    t = threading.Thread(target=execute_job, args=(job,), daemon=True)
+                    t.start()
                 except Exception as e:
-                    logger.error(f"❌ CRITICAL: Unhandled exception in execute_job: {e}")
+                    logger.error(f"❌ CRITICAL: Unhandled exception launching execute_job thread: {e}")
                     # Safety recovery to prevent locking down the worker
                     try:
                         purge_orphan_runners_and_containers()
                     except Exception as recovery_err:
                         logger.error(f"Failed to perform emergency recovery purge: {recovery_err}")
-                    with job_lock:
-                        current_job_id = None
-                        current_process = None
             time.sleep(5)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt caught in main loop.")
