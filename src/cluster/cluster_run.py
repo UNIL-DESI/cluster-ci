@@ -59,6 +59,7 @@ try:
         run_planner_for_submission,
         format_nodes_status_summary,
         print_final_dag_summary,
+        check_repo_remote_matches,
     )
 except ImportError:
     try:
@@ -66,8 +67,12 @@ except ImportError:
             run_planner_for_submission,
             format_nodes_status_summary,
             print_final_dag_summary,
+            check_repo_remote_matches,
         )
     except ImportError:
+        def check_repo_remote_matches(repo_dir, expected_repo):
+            return True, None, None
+
         def run_planner_for_submission(repo_dir="."):
             import subprocess
             planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
@@ -877,8 +882,42 @@ def stream_logs(run_id, commit_sha, branch=None):
                                     else:
                                         # Use the real exit code if available, otherwise fallback to 1
                                         ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
-                                        print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : failed (Exit code: {ret_code})")
-                                        print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
+                                        job_error = job_data.get("error_message") or job_data.get("error")
+                                        has_node_failure = False
+
+                                        if nodes_data and isinstance(nodes_data, list):
+                                            failed_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "failed"]
+                                            done_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") in ("done", "completed")]
+                                            running_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "running"]
+                                            blocked_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "blocked"]
+                                            pending_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "pending"]
+
+                                            if failed_nodes:
+                                                has_node_failure = True
+                                                for nd in failed_nodes:
+                                                    node_err = nd.get("error_message") or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
+                                                    print(f"❌ Nœud en échec : '{nd.get('name', 'unknown')}' -> {node_err}")
+                                            elif not done_nodes and not running_nodes and (blocked_nodes or pending_nodes):
+                                                has_node_failure = True
+                                                cause_desc = job_error or (
+                                                    f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
+                                                    f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                                                )
+                                                print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}")
+
+                                        if job_error and not has_node_failure:
+                                            print(f"\n❌ Error message: {job_error}")
+
+                                        if isinstance(ret_code, int) and ret_code < 0:
+                                            sig = -ret_code
+                                            sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                                            if not has_node_failure and not job_error:
+                                                print(f"\n❌ [ERREUR] L'exécution a été arrêtée par {sig_desc} (Exit code: {ret_code})")
+                                            else:
+                                                print(f"ℹ️  Processus exécutant arrêté par {sig_desc} (Exit code: {ret_code})")
+                                        else:
+                                            if not has_node_failure and not job_error:
+                                                print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : failed (Exit code: {ret_code})")
                                         close_log_redirection()
                                         print_log_summary()
                                         return int(ret_code)
@@ -1848,17 +1887,42 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                             return int(ret_code)
                         else:
                             ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
-                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})", file=sys.stderr)
-                            # A17 : Afficher tel quel le message d'erreur du headnode
                             job_error = job_data.get("error_message") or job_data.get("error")
-                            if job_error:
-                                print(f"❌ Error message: {job_error}", file=sys.stderr)
+                            has_node_failure = False
+
                             if nodes_data and isinstance(nodes_data, list):
-                                for nd in nodes_data:
-                                    if isinstance(nd, dict) and nd.get("status") == "failed":
-                                        node_err = nd.get("error_message")
-                                        if node_err:
-                                            print(f"❌ Node '{nd.get('name', 'unknown')}' failed: {node_err}", file=sys.stderr)
+                                failed_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "failed"]
+                                done_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") in ("done", "completed")]
+                                running_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "running"]
+                                blocked_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "blocked"]
+                                pending_nodes = [nd for nd in nodes_data if isinstance(nd, dict) and nd.get("status") == "pending"]
+
+                                if failed_nodes:
+                                    has_node_failure = True
+                                    for nd in failed_nodes:
+                                        node_err = nd.get("error_message") or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
+                                        print(f"❌ Nœud en échec : '{nd.get('name', 'unknown')}' -> {node_err}", file=sys.stderr)
+                                elif not done_nodes and not running_nodes and (blocked_nodes or pending_nodes):
+                                    has_node_failure = True
+                                    cause_desc = job_error or (
+                                        f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
+                                        f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                                    )
+                                    print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}", file=sys.stderr)
+
+                            if job_error and not has_node_failure:
+                                print(f"❌ Error message: {job_error}", file=sys.stderr)
+
+                            if isinstance(ret_code, int) and ret_code < 0:
+                                sig = -ret_code
+                                sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                                if not has_node_failure and not job_error:
+                                    print(f"\n❌ [ERREUR] Job local interrompu par {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
+                                else:
+                                    print(f"ℹ️  Processus local arrêté par {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
+                            else:
+                                if not has_node_failure and not job_error:
+                                    print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})", file=sys.stderr)
                             return int(ret_code)
         except Exception:
             # Status check temporary error
@@ -1918,12 +1982,30 @@ def local_run():
             os.remove(archive_path)
 
     plan = None
-    if config.get("parallel_stages") and os.path.isfile("dvc.yaml"):
-        print("🧩 PARALLEL_STAGES activé et dvc.yaml détecté : génération du plan via le planificateur W1...")
+    if config.get("parallel_stages"):
+        matches, actual_remote, error_detail = check_repo_remote_matches(".", repo)
+        if not matches:
+            print(
+                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
+                f"Le répertoire local a pour remote origin '{actual_remote}', "
+                f"ce qui ne correspond pas au dépôt soumis '{repo}'.\n"
+                f"Cause : Incohérence de remote ({error_detail}).\n"
+                f"Remède : Exécuter cluster-run depuis la racine du dépôt cible.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not os.path.isfile("dvc.yaml"):
+            print(
+                f"❌ [A17] Erreur de validation du pipeline DVC pour la planification v3 :\n"
+                f"Fichier dvc.yaml introuvable dans le répertoire local.\n"
+                f"Cause : PARALLEL_STAGES=true est activé mais le dépôt cible '{repo}' ne contient pas de dvc.yaml.\n"
+                f"Remède : Créer un fichier dvc.yaml définissant les étapes du pipeline ou retirer PARALLEL_STAGES dans .cluster-ci.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print("🧩 PARALLEL_STAGES activé et dvc.yaml validé : génération du plan via le planificateur W1...")
         plan = run_planner_for_submission(".")
         print(f"✅ Plan généré avec succès ({len(plan.get('nodes', []))} nœud(s)).")
-    elif config.get("parallel_stages") and not os.path.isfile("dvc.yaml"):
-        print("⚠️ PARALLEL_STAGES=true spécifié mais dvc.yaml introuvable. Soumission sans plan.")
 
     payload = {
         "repo": repo,

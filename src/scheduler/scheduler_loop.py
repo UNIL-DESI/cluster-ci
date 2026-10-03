@@ -1016,6 +1016,130 @@ def handle_next_node(req):
         "sources": dep_sources_map
     }
 
+def check_resource_impossibility(resources, workers, item_name="job", is_classic=False):
+    """
+    Règle unique et factorisée de détection des jobs et nœuds impossibles (A17).
+    Un job ou un nœud est impossible si AUCUNE machine enregistrée ne peut l'accueillir, même vide.
+    Utilise rigoureusement la règle d'admission factorisée : is_worker_admissible_for_node(w, resources, allocated=None).
+    
+    Retourne : (is_impossible: bool, message: str)
+    """
+    if not workers:
+        return False, ""
+
+    # Test d'admissibilité universelle à vide
+    if any(is_worker_admissible_for_node(w, resources, allocated=None) for w in workers):
+        return False, ""
+
+    # Aucune machine n'est admissible même à vide -> Calcul du diagnostic A17
+    req_ram = float(resources.get("ram_gb") if resources.get("ram_gb") is not None else DEFAULT_RAM_GB)
+    req_vram = float(resources.get("vram_gb") if resources.get("vram_gb") is not None else DEFAULT_VRAM_GB)
+    req_cpus = int(resources.get("cpus") if resources.get("cpus") is not None else DEFAULT_CPUS)
+    req_gpus = int(resources.get("gpus") if resources.get("gpus") is not None else (1 if req_vram > 0 else 0))
+    req_storage = float(resources.get("storage_gb") or 0.0)
+
+    worker_caps_desc = []
+    unified_workers = []
+    discrete_workers = []
+
+    for w in workers:
+        w_id = w.get("worker_id") or w.get("hostname") or "?"
+        tot_ram = float(w.get("total_ram_gb") or 0.0)
+        w_cpus = int(w.get("cpus") or 0)
+        if is_unified_memory(w):
+            avail_unified = max(0.0, tot_ram - OS_HEADROOM_GB)
+            unified_workers.append((w_id, avail_unified, w_cpus))
+            worker_caps_desc.append(f"machine {w_id} ({avail_unified:.1f} Go max RAM+VRAM unifiée, {w_cpus} CPUs)")
+        else:
+            avail_ram = max(0.0, tot_ram - 2.0)
+            gpus = parse_vram_per_gpu(w)
+            gpu_str = f"{len(gpus)} GPU(s) (max VRAM {max(gpus or [0.0]):.1f} Go)" if gpus else "0 GPU"
+            discrete_workers.append((w_id, avail_ram, gpus, w_cpus))
+            worker_caps_desc.append(f"machine {w_id} (RAM max {avail_ram:.1f} Go, {gpu_str}, {w_cpus} CPUs)")
+
+    max_caps_str = " ; ".join(worker_caps_desc) if worker_caps_desc else "aucune machine en ligne"
+    max_unif_threshold = int(max([avail for _, avail, _ in unified_workers], default=113))
+
+    if is_classic:
+        if req_vram > 0:
+            demande_str = (
+                f"demande REQUIRED_RAM={req_ram:.1f} Go et REQUIRED_VRAM={req_vram:.1f} Go "
+                f"(somme={req_ram + req_vram:.1f} Go sur mémoire unifiée)"
+            )
+        else:
+            demande_str = f"demande REQUIRED_RAM={req_ram:.1f} Go"
+
+        err_msg = (
+            f"Job classique {item_name} impossible : {demande_str} ; "
+            f"capacités maximales des machines : {max_caps_str} ; "
+            f"remède : baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ {max_unif_threshold} Go pour les GB10, "
+            f"ou déclarer meta.cluster par étape et activer le mode v3"
+        )
+        return True, err_msg
+    else:
+        # Nœud v3
+        if req_vram > 0 and unified_workers and (req_ram + req_vram > max([avail for _, avail, _ in unified_workers], default=0)):
+            err_msg = (
+                f"nœud {item_name} demande ram_gb={req_ram:.1f} Go + vram_gb={req_vram:.1f} Go "
+                f"({req_ram + req_vram:.1f} Go sur mémoire unifiée) ; "
+                f"capacités maximales des machines : {max_caps_str} ; "
+                f"remède : baisser ram_gb + vram_gb à ≤ {max_unif_threshold} Go pour les GB10, "
+                f"ou déclarer meta.cluster par étape et activer le mode v3"
+            )
+            return True, err_msg
+
+        res_key = "ram_gb"
+        req_val = f"{req_ram} Go"
+        max_worker = "none"
+        max_val = "0"
+
+        max_w_ram = max(workers, key=lambda w: float(w.get("total_ram_gb") or 0.0), default=None)
+        avail_ram = (float(max_w_ram.get("total_ram_gb") or 0.0) - (OS_HEADROOM_GB if is_unified_memory(max_w_ram) else 2.0)) if max_w_ram else 0.0
+        if req_ram > avail_ram:
+            res_key = "ram_gb"
+            req_val = f"{req_ram} Go"
+            max_worker = max_w_ram.get("worker_id") if max_w_ram else "none"
+            max_val = f"{avail_ram:.1f} Go"
+        elif req_gpus > 0:
+            max_w_gpu = max(workers, key=lambda w: len(parse_vram_per_gpu(w)), default=None)
+            avail_gpus = len(parse_vram_per_gpu(max_w_gpu)) if max_w_gpu else 0
+            if req_gpus > avail_gpus:
+                res_key = "gpus"
+                req_val = req_gpus
+                max_worker = max_w_gpu.get("worker_id") if max_w_gpu else "none"
+                max_val = f"{avail_gpus} GPU"
+            elif req_vram > 0:
+                all_vrams = [max(parse_vram_per_gpu(w) or [0.0]) for w in workers]
+                max_vram = max(all_vrams) if all_vrams else 0.0
+                if req_vram > max_vram:
+                    res_key = "vram_gb"
+                    req_val = f"{req_vram} Go"
+                    idx_max = all_vrams.index(max_vram) if all_vrams else 0
+                    max_worker = workers[idx_max].get("worker_id") if workers else "none"
+                    max_val = f"{max_vram:.1f} Go"
+        elif req_cpus > 0:
+            max_w_cpu = max(workers, key=lambda w: int(w.get("cpus") or 0), default=None)
+            avail_cpus = int(max_w_cpu.get("cpus") or 0) if max_w_cpu else 0
+            if req_cpus > avail_cpus:
+                res_key = "cpus"
+                req_val = req_cpus
+                max_worker = max_w_cpu.get("worker_id") if max_w_cpu else "none"
+                max_val = f"{avail_cpus} CPUs"
+        elif req_storage > 0:
+            max_w_stor = max(workers, key=lambda w: float(w.get("total_storage_gb") or 0.0), default=None)
+            avail_stor = float(max_w_stor.get("total_storage_gb") or 0.0) if max_w_stor else 0.0
+            if req_storage > avail_stor:
+                res_key = "storage_gb"
+                req_val = f"{req_storage} Go"
+                max_worker = max_w_stor.get("worker_id") if max_w_stor else "none"
+                max_val = f"{avail_stor:.1f} Go"
+
+        err_msg = (
+            f"nœud {item_name} demande {res_key}={req_val} ; plus grande capacité : machine {max_worker} ({max_val}) ; "
+            f"remède : réduire meta.cluster.{res_key} du stage {item_name} dans dvc.yaml"
+        )
+        return True, err_msg
+
 def check_job_impossible_nodes(job_id, conn, workers):
     """
     Amendement A16 / A17 :
@@ -1028,75 +1152,12 @@ def check_job_impossible_nodes(job_id, conn, workers):
     if not nodes:
         return False
 
-    empty_alloc = {
-        "used_cpus": 0, "used_ram_gb": 0.0, "used_vram_gb": 0.0,
-        "used_storage_gb": 0.0, "allocated_vram_by_gpu": {}, "active_executors": 0
-    }
-
     for row in nodes:
         n_name = row["node_name"]
         n_res = json.loads(row["resources"]) if row["resources"] else {}
-        can_any = any(is_worker_admissible_for_node(w, n_res, allocated=empty_alloc) for w in workers)
-        if not can_any:
-            req_ram = float(n_res.get("ram_gb") if n_res.get("ram_gb") is not None else DEFAULT_RAM_GB)
-            req_vram = float(n_res.get("vram_gb") if n_res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
-            req_gpus = int(n_res.get("gpus") if n_res.get("gpus") is not None else 0)
-            req_cpus = int(n_res.get("cpus") or DEFAULT_CPUS)
-            req_storage = float(n_res.get("storage_gb") or 0.0)
-
-            res_key = "ram_gb"
-            req_val = f"{req_ram} Go"
-            max_worker = "none"
-            max_val = "0"
-
-            # 1. Vérifier RAM
-            max_w_ram = max(workers, key=lambda w: float(w.get("total_ram_gb") or 0.0), default=None)
-            avail_ram = (float(max_w_ram.get("total_ram_gb") or 0.0) - OS_HEADROOM_GB) if max_w_ram else 0.0
-            if req_ram > avail_ram:
-                res_key = "ram_gb"
-                req_val = f"{req_ram} Go"
-                max_worker = max_w_ram.get("worker_id") if max_w_ram else "none"
-                max_val = f"{avail_ram:.1f} Go"
-            elif req_gpus > 0:
-                max_w_gpu = max(workers, key=lambda w: len(parse_vram_per_gpu(w)), default=None)
-                avail_gpus = len(parse_vram_per_gpu(max_w_gpu)) if max_w_gpu else 0
-                if req_gpus > avail_gpus:
-                    res_key = "gpus"
-                    req_val = req_gpus
-                    max_worker = max_w_gpu.get("worker_id") if max_w_gpu else "none"
-                    max_val = f"{avail_gpus} GPU"
-                elif req_vram > 0:
-                    all_vrams = [max(parse_vram_per_gpu(w) or [0.0]) for w in workers]
-                    max_vram = max(all_vrams) if all_vrams else 0.0
-                    if req_vram > max_vram:
-                        res_key = "vram_gb"
-                        req_val = f"{req_vram} Go"
-                        idx_max = all_vrams.index(max_vram) if all_vrams else 0
-                        max_worker = workers[idx_max].get("worker_id") if workers else "none"
-                        max_val = f"{max_vram:.1f} Go"
-            elif req_cpus > 0:
-                max_w_cpu = max(workers, key=lambda w: int(w.get("cpus") or 0), default=None)
-                avail_cpus = int(max_w_cpu.get("cpus") or 0) if max_w_cpu else 0
-                if req_cpus > avail_cpus:
-                    res_key = "cpus"
-                    req_val = req_cpus
-                    max_worker = max_w_cpu.get("worker_id") if max_w_cpu else "none"
-                    max_val = f"{avail_cpus} CPUs"
-            elif req_storage > 0:
-                max_w_stor = max(workers, key=lambda w: float(w.get("total_storage_gb") or 0.0), default=None)
-                avail_stor = float(max_w_stor.get("total_storage_gb") or 0.0) if max_w_stor else 0.0
-                if req_storage > avail_stor:
-                    res_key = "storage_gb"
-                    req_val = f"{req_storage} Go"
-                    max_worker = max_w_stor.get("worker_id") if max_w_stor else "none"
-                    max_val = f"{avail_stor:.1f} Go"
-
-            err_msg = (
-                f"nœud {n_name} demande {res_key}={req_val} ; plus grande capacité : machine {max_worker} ({max_val}) ; "
-                f"remède : réduire meta.cluster.{res_key} du stage {n_name} dans dvc.yaml"
-            )
+        is_impossible, err_msg = check_resource_impossibility(n_res, workers, item_name=n_name, is_classic=False)
+        if is_impossible:
             logger.error(f"Impossible node for job {job_id}: {err_msg}")
-
             cursor.execute('''
                 UPDATE job_nodes SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP
                 WHERE job_id = ? AND node_name = ?
@@ -1382,18 +1443,22 @@ def schedule_iteration():
                 candidates.append(w)
 
         if not candidates:
-            with get_db_conn() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT MAX(total_ram_gb) FROM workers WHERE status = "online"')
-                max_total = cursor.fetchone()[0] or 0.0
-                cursor.execute('SELECT MAX(total_vram_gb) FROM workers WHERE status = "online"')
-                max_vram = cursor.fetchone()[0] or 0.0
-
-            if ram_required > (max_total - OS_HEADROOM_GB) or (vram_required > 0 and vram_required > max_vram):
+            is_impossible, err_msg = check_resource_impossibility(c_res, workers, item_name=c_id, is_classic=True)
+            if is_impossible:
+                logger.error(f"Impossible classic job {c_id}: {err_msg}")
                 with get_db_conn() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (c_id,))
+                    cursor.execute("UPDATE jobs SET status = 'failed', exit_code = 1, error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?", (err_msg, c_id))
                     conn.commit()
+                try:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    log_dir = os.path.join(repo_root, "job_logs")
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"{c_id}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+                except Exception:
+                    pass
             continue
 
         # Data Locality (P2P Discovery) pour les jobs classiques

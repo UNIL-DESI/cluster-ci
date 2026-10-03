@@ -142,6 +142,29 @@ def purge_orphan_runners_and_containers(job_id=None):
     # 1. Docker JIT Container Purge
     safe_job_id = job_id.replace('/', '-') if job_id else None
     expected_containers = {f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"} if safe_job_id else set()
+    active_containers = set()
+    active_pids = {os.getpid()}
+    try:
+        with job_lock:
+            for ex in active_executors.values():
+                proc_obj = ex.get("process")
+                if proc_obj and proc_obj.pid:
+                    active_pids.add(proc_obj.pid)
+                    try:
+                        for child in psutil.Process(proc_obj.pid).children(recursive=True):
+                            active_pids.add(child.pid)
+                    except Exception:
+                        pass
+                ex_jid = ex.get("job_id")
+                if ex_jid:
+                    s_id = ex_jid.replace('/', '-')
+                    active_containers.add(f"cluster-job-{s_id}")
+                    active_containers.add(f"cluster-viewer-{s_id}")
+                r_id = ex.get("runner_id")
+                if r_id:
+                    active_containers.add(f"cluster-job-{r_id}")
+    except Exception as e:
+        logger.warning(f"Failed to gather active executor pids/containers for purge protection: {e}")
     
     try:
         res = subprocess.run(
@@ -151,7 +174,7 @@ def purge_orphan_runners_and_containers(job_id=None):
         if res.returncode == 0:
             containers = [c.strip() for c in res.stdout.split("\n") if c.strip()]
             for container in containers:
-                if container not in expected_containers:
+                if container not in expected_containers and container not in active_containers:
                     logger.warning(f"🔥 JIT Purge: Destroying orphan/zombie container {container}...")
                     safe_docker_rm_f(container, timeout=8)
         else:
@@ -165,7 +188,7 @@ def purge_orphan_runners_and_containers(job_id=None):
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
             pid = proc.info.get('pid')
-            if pid == my_pid:
+            if pid == my_pid or pid in active_pids:
                 continue
             
             cmdline = proc.info.get('cmdline') or []
@@ -2276,11 +2299,25 @@ def main_loop():
         while not shutdown_requested:
             job = poll_for_job()
             if job:
+                job_id = job.get("job_id")
+                with job_lock:
+                    already_running = (
+                        current_job_id == job_id
+                        or any(ex.get("job_id") == job_id for ex in active_executors.values())
+                    )
+                    if not already_running:
+                        current_job_id = job_id
+                if already_running:
+                    time.sleep(5)
+                    continue
                 try:
                     t = threading.Thread(target=execute_job, args=(job,), daemon=True)
                     t.start()
                 except Exception as e:
                     logger.error(f"❌ CRITICAL: Unhandled exception launching execute_job thread: {e}")
+                    with job_lock:
+                        if current_job_id == job_id:
+                            current_job_id = None
                     # Safety recovery to prevent locking down the worker
                     try:
                         purge_orphan_runners_and_containers()
