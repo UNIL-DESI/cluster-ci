@@ -1,0 +1,239 @@
+{
+  "classic_job": {
+    "id": "job-classic-101",
+    "job_id": "job-classic-101",
+    "parallel_mode": 0,
+    "status": "completed",
+    "repo": "organization/classic-pipeline",
+    "branch": "master",
+    "commit_hash": "c1a551c0001",
+    "commit_message": "chore: regular batch run",
+    "author": "Henri Jamet",
+    "worker_id": "alpha",
+    "home_worker": null,
+    "active_workers": [],
+    "created_at": "2026-10-03T10:00:00",
+    "started_at": "2026-10-03T10:00:10",
+    "finished_at": "2026-10-03T10:15:30",
+    "exit_code": 0,
+    "plan_json": null,
+    "nodes": []
+  },
+  "classic_job_logs": "===STAGE:checkout:BEGIN===\nCloning repository organization/classic-pipeline...\nHEAD is now at c1a551c\n===STAGE:checkout:END===\n===STAGE:run:BEGIN===\nStarting execution...\nRunning single-node batch...\n[OK] Task completed successfully.\n===STAGE:run:END===\n",
+  "v3_job": {
+    "id": "job-v3-multinode-202",
+    "job_id": "job-v3-multinode-202",
+    "parallel_mode": 1,
+    "status": "running",
+    "repo": "organization/latent-multimodal-v3",
+    "branch": "feat/distributed-dvc",
+    "commit_hash": "e8d9c0a1b2",
+    "commit_message": "feat: multi-node distributed training DAG",
+    "author": "Henri Jamet",
+    "worker_id": "alpha",
+    "home_worker": "alpha",
+    "active_workers": ["alpha", "beta", "gamma"],
+    "created_at": "2026-10-03T13:30:00",
+    "started_at": "2026-10-03T13:30:15",
+    "finished_at": null,
+    "exit_code": null,
+    "plan_json": {
+      "defaults": {
+        "image": "nvcr.io/nvidia/pytorch:26.05-py3",
+        "cpus": 4,
+        "ram_gb": 16.0,
+        "vram_gb": 0.0,
+        "storage_gb": 20.0
+      },
+      "nodes": [
+        {
+          "name": "prep_data",
+          "deps": [],
+          "cmd": "python scripts/prep_data.py",
+          "resources": {
+            "cpus": 4,
+            "ram_gb": 16.0,
+            "vram_gb": 0.0,
+            "storage_gb": 50.0,
+            "image": "python:3.11-slim"
+          },
+          "priority": 1.0,
+          "stale": true
+        },
+        {
+          "name": "train_model",
+          "deps": ["prep_data"],
+          "cmd": "torchrun --nproc_per_node=1 scripts/train.py",
+          "resources": {
+            "cpus": 8,
+            "ram_gb": 32.0,
+            "vram_gb": 24.0,
+            "storage_gb": 100.0,
+            "image": "pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime"
+          },
+          "priority": 2.0,
+          "stale": true
+        },
+        {
+          "name": "eval_model",
+          "deps": ["train_model"],
+          "cmd": "python scripts/eval.py",
+          "resources": {
+            "cpus": 4,
+            "ram_gb": 16.0,
+            "vram_gb": 12.0,
+            "storage_gb": 20.0,
+            "image": "pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime"
+          },
+          "priority": 0.5,
+          "stale": true
+        },
+        {
+          "name": "export_onnx",
+          "deps": ["train_model"],
+          "cmd": "python scripts/export.py",
+          "resources": {
+            "cpus": 2,
+            "ram_gb": 8.0,
+            "vram_gb": 0.0,
+            "storage_gb": 10.0,
+            "image": "python:3.11-slim"
+          },
+          "priority": 0.5,
+          "stale": true
+        },
+        {
+          "name": "package_release",
+          "deps": ["eval_model", "export_onnx"],
+          "cmd": "python scripts/package.py",
+          "resources": {
+            "cpus": 2,
+            "ram_gb": 4.0,
+            "vram_gb": 0.0,
+            "storage_gb": 5.0,
+            "image": "ubuntu:22.04"
+          },
+          "priority": 0.1,
+          "stale": true
+        }
+      ]
+    },
+    "nodes": [
+      {
+        "name": "prep_data",
+        "status": "done",
+        "worker_id": "alpha",
+        "machine": "alpha",
+        "runner_id": "runner-a-01",
+        "exit_code": 0,
+        "duration": 182.4,
+        "started_at": "2026-10-03T13:30:20",
+        "finished_at": "2026-10-03T13:33:22"
+      },
+      {
+        "name": "train_model",
+        "status": "running",
+        "worker_id": "beta",
+        "machine": "beta",
+        "runner_id": "runner-b-01",
+        "exit_code": null,
+        "duration": 420.0,
+        "started_at": "2026-10-03T13:33:30",
+        "finished_at": null
+      },
+      {
+        "name": "eval_model",
+        "status": "pending",
+        "worker_id": null,
+        "machine": null,
+        "runner_id": null,
+        "exit_code": null,
+        "duration": null,
+        "started_at": null,
+        "finished_at": null
+      },
+      {
+        "name": "export_onnx",
+        "status": "pending",
+        "worker_id": null,
+        "machine": null,
+        "runner_id": null,
+        "exit_code": null,
+        "duration": null,
+        "started_at": null,
+        "finished_at": null
+      },
+      {
+        "name": "package_release",
+        "status": "blocked",
+        "worker_id": null,
+        "machine": null,
+        "runner_id": null,
+        "exit_code": null,
+        "duration": null,
+        "started_at": null,
+        "finished_at": null
+      }
+    ]
+  },
+  "v3_job_logs": "===STAGE:dvc_repro:BEGIN===\n[prep_data@alpha] 2026-10-03T13:30:25 [INFO] Initializing dataset extraction on alpha\n[prep_data@alpha] 2026-10-03T13:31:10 [INFO] Sharding input records across splits\n[prep_data@alpha] 2026-10-03T13:33:20 [SUCCESS] Dataset prepared: 250,000 records ready\n[train_model@beta] 2026-10-03T13:33:35 [INFO] Worker beta starting train_model runner\n[train_model@beta] 2026-10-03T13:34:00 [INFO] Container pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime running on GPU 0\n[train_model@beta] 2026-10-03T13:35:10 Epoch 1/10 | loss=0.742 | val_loss=0.691 | lr=5e-4\n[train_model@beta] 2026-10-03T13:37:05 Epoch 2/10 | loss=0.512 | val_loss=0.485 | lr=4e-4\n[train_model@beta] 2026-10-03T13:39:15 [WARN] GPU temperature reached 76C (throttle threshold: 84C)\n[train_model@beta] 2026-10-03T13:40:20 Epoch 3/10 | loss=0.389 | val_loss=0.370 | lr=3e-4\n===STAGE:dvc_repro:END===\n",
+  "scheduler_status": {
+    "active_workers": [
+      {
+        "id": "alpha",
+        "name": "alpha",
+        "status": "busy",
+        "host": "192.168.1.10",
+        "cpus_total": 16,
+        "ram_gb_total": 64,
+        "vram_gb_total": 24,
+        "cpus_used": 4,
+        "ram_gb_used": 16,
+        "vram_gb_used": 0,
+        "active_job": "job-v3-multinode-202",
+        "v3_active_node": "prep_data (completed)",
+        "v3_executor": "home_coordinator",
+        "container": "python:3.11-slim"
+      },
+      {
+        "id": "beta",
+        "name": "beta",
+        "status": "busy",
+        "host": "192.168.1.11",
+        "cpus_total": 32,
+        "ram_gb_total": 128,
+        "vram_gb_total": 80,
+        "cpus_used": 8,
+        "ram_gb_used": 32,
+        "vram_gb_used": 24,
+        "active_job": "job-v3-multinode-202",
+        "v3_active_node": "train_model",
+        "v3_executor": "runner-b-01",
+        "container": "pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime"
+      },
+      {
+        "id": "gamma",
+        "name": "gamma",
+        "status": "idle",
+        "host": "192.168.1.12",
+        "cpus_total": 16,
+        "ram_gb_total": 64,
+        "vram_gb_total": 24,
+        "cpus_used": 0,
+        "ram_gb_used": 0,
+        "vram_gb_used": 0,
+        "active_job": null,
+        "v3_active_node": null,
+        "v3_executor": null,
+        "container": null
+      }
+    ],
+    "queue_count": 0,
+    "running_count": 1,
+    "cluster_utilization": {
+      "cpu_pct": 18.75,
+      "ram_pct": 18.75,
+      "vram_pct": 18.75
+    }
+  }
+}
