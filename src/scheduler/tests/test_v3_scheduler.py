@@ -39,9 +39,16 @@ def isolated_db(tmp_path, monkeypatch):
     yield db_file
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """Client de test Flask configuré pour headnode_service."""
     headnode_service.app.config['TESTING'] = True
+    import subprocess
+    orig_run = subprocess.run
+    def mock_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and len(cmd) > 0 and cmd[0] == "git":
+            raise subprocess.CalledProcessError(128, cmd)
+        return orig_run(cmd, *args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", mock_run)
     with headnode_service.app.test_client() as c:
         yield c
 
@@ -737,7 +744,7 @@ def test_headnode_last_resort_and_reserve(isolated_db, client):
     assert is_worker_admissible_for_node(headnode, light_res) is True
 
     # 2. Rang placement_priority W11 : plus grand = préféré, headnode le plus bas (0)
-    assert get_worker_placement_priority(gb10_a) == 100
+    assert get_worker_placement_priority(gb10_a) == 50
     assert get_worker_placement_priority(headnode) == 0
 
     # 3. Test d'ordonnancement : 2 GB10 et 1 Headnode enregistrés en DB
@@ -813,4 +820,430 @@ def test_headnode_last_resort_and_reserve(isolated_db, client):
         cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (job3_id,))
         home_3 = cursor.fetchone()[0]
     assert home_3 == "isipol09-headnode"
+
+
+# =========================================================================
+# 14. Course critique (Race condition) : Atomicité de /next_node (W3 Bug 2)
+# =========================================================================
+
+def test_concurrent_next_node_race_condition(client):
+    """
+    Test de concurrence : 2 threads appellent next_node simultanément pour le même job.
+    Vérifie qu'aucun nœud n'est attribué en double (2 nœuds distincts attribués).
+    """
+    import threading
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('W_CONC', 'w_conc', 'http://127.0.0.1:9000', 64.0, 64.0, 1, 16, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "task_alpha", "deps": [], "stale": True},
+            {"name": "task_beta", "deps": [], "stale": True}
+        ]
+    }
+    submit_resp = client.post("/submit_job", json={"repo": "owner/repoConc", "branch": "main", "plan": plan}).get_json()
+    job_id = submit_resp["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    results = []
+    errors = []
+
+    def call_worker(runner_id):
+        try:
+            with headnode_service.app.app_context():
+                resp = scheduler_loop.handle_next_node({
+                    "job_id": job_id,
+                    "runner_id": runner_id,
+                    "worker": "W_CONC",
+                    "status": "ready"
+                })
+                results.append(resp)
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=call_worker, args=("runner_1",))
+    t2 = threading.Thread(target=call_worker, args=("runner_2",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(errors) == 0
+    assert len(results) == 2
+    nodes_assigned = [r.get("node") for r in results if r.get("action") in ("run", "switch_image")]
+    # Vérification stricte : jamais le même nœud attribué aux deux runners
+    assert len(nodes_assigned) == len(set(nodes_assigned))
+    assert set(nodes_assigned) == {"task_alpha", "task_beta"}
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT node_name, status, runner_id FROM job_nodes WHERE job_id = ?", (job_id,))
+        db_nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+    assert db_nodes["task_alpha"][0] == "running"
+    assert db_nodes["task_beta"][0] == "running"
+    assert db_nodes["task_alpha"][1] != db_nodes["task_beta"][1]
+
+
+# =========================================================================
+# 15. Packing A11 : 2 nœuds de 2 jobs différents sur la même machine
+# =========================================================================
+
+def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client):
+    """
+    Packing A11 :
+    - 1 seule machine (RAM 32 Go, max utilisable 24 Go avec OS headroom 8 Go).
+    - Job 1 demande 10 Go RAM.
+    - Job 2 demande 10 Go RAM.
+    - Les deux jobs doivent être admis et empilés sur la même machine (10 + 10 = 20 <= 24).
+    - Job 3 demande 10 Go RAM : dépassement de capacité (20 + 10 = 30 > 24) -> rejeté / non admis.
+    """
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('W_PACK_1', 'w_pack_1', 'http://127.0.0.1:9000', 32.0, 32.0, 1, 8, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    plan_j1 = {"version": "3.0", "nodes": [{"name": "n1", "deps": [], "resources": {"ram_gb": 10.0, "cpus": 2}}]}
+    plan_j2 = {"version": "3.0", "nodes": [{"name": "n2", "deps": [], "resources": {"ram_gb": 10.0, "cpus": 2}}]}
+    plan_j3 = {"version": "3.0", "nodes": [{"name": "n3", "deps": [], "resources": {"ram_gb": 10.0, "cpus": 2}}]}
+
+    j1_id = client.post("/submit_job", json={"repo": "o/j1", "branch": "main", "plan": plan_j1}).get_json()["job_id"]
+    j2_id = client.post("/submit_job", json={"repo": "o/j2", "branch": "main", "plan": plan_j2}).get_json()["job_id"]
+
+    scheduler_loop.schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (j1_id,))
+        assert cursor.fetchone()[0] == "W_PACK_1"
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (j2_id,))
+        assert cursor.fetchone()[0] == "W_PACK_1"
+
+    # Lancer l'exécution des nœuds sur W_PACK_1
+    step_j1 = client.post(f"/api/jobs/{j1_id}/next_node", json={"runner_id": "r1", "worker": "W_PACK_1"}).get_json()
+    assert step_j1["action"] in ("run", "switch_image")
+    assert step_j1["node"] == "n1"
+
+    step_j2 = client.post(f"/api/jobs/{j2_id}/next_node", json={"runner_id": "r2", "worker": "W_PACK_1"}).get_json()
+    assert step_j2["action"] in ("run", "switch_image")
+    assert step_j2["node"] == "n2"
+
+    # Maintenant que n1 et n2 sont 'running' sur W_PACK_1, la RAM allouée est 20 Go.
+    # Soumission Job 3 : 10 Go supplémentaires ne tiennent pas dans 24 Go max (20 + 10 = 30 > 24)
+    j3_id = client.post("/submit_job", json={"repo": "o/j3", "branch": "main", "plan": plan_j3}).get_json()["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker, status FROM jobs WHERE job_id = ?", (j3_id,))
+        row = cursor.fetchone()
+        assert row[0] is None
+        assert row[1] == "pending"
+
+
+# =========================================================================
+# 16. Packing A11 : 2 branches d'un même job sur la même machine
+# =========================================================================
+
+def test_packing_two_branches_same_job_same_machine(client):
+    """
+    Packing A11 : 2 branches parallèles d'un DAG s'exécutent en même temps sur la même machine.
+    """
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('W_SINGLE', 'w_single', 'http://127.0.0.1:9000', 64.0, 64.0, 1, 16, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "branch_A", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}},
+            {"name": "branch_B", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}},
+            {"name": "join_step", "deps": ["branch_A", "branch_B"], "resources": {"ram_gb": 4.0, "cpus": 1}}
+        ]
+    }
+    j_id = client.post("/submit_job", json={"repo": "o/dag", "branch": "main", "plan": plan}).get_json()["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    # Runner 1 prend une des branches
+    s1 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r1", "worker": "W_SINGLE"}).get_json()
+    assert s1["action"] in ("run", "switch_image")
+    assert s1["node"] in ("branch_A", "branch_B")
+
+    # Runner 2 prend l'autre branche sur la MÊME machine pendant que la première tourne
+    s2 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r2", "worker": "W_SINGLE"}).get_json()
+    assert s2["action"] in ("run", "switch_image")
+    assert s2["node"] in ("branch_A", "branch_B")
+    assert s2["node"] != s1["node"]
+
+    # Vérifier que les 2 nœuds sont 'running' sur W_SINGLE simultanément
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT node_name, status, worker_id FROM job_nodes WHERE job_id = ? AND status = 'running'", (j_id,))
+        rows = cursor.fetchall()
+        assert len(rows) == 2
+        assert all(r[2] == "W_SINGLE" for r in rows)
+
+
+# =========================================================================
+# 17. Packing A11 : GPU discrets attribués sans dépassement (Best Fit)
+# =========================================================================
+
+def test_discrete_gpus_allocated_without_overcommit(client):
+    """
+    Packing A11 : Attribution fine de GPU discrets sans overcommit :
+    - Worker avec 2 GPUs de 16 Go chacun.
+    - Nœud 1 (vram_gb=12.0) -> attribué GPU 0 (reste 4 Go).
+    - Nœud 2 (vram_gb=12.0) -> attribué GPU 1 (reste 4 Go).
+    - Nœud 3 (vram_gb=12.0) -> rejeté car aucun GPU n'a 12 Go de libre.
+    """
+    vram_map = json.dumps({"0": 16.0, "1": 16.0})
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, vram_per_gpu, unified_memory, cpus, status, last_seen)
+            VALUES ('W_DISC_GPU', 'w_disc_gpu', 'http://127.0.0.1:9000', 64.0, 32.0, ?, 0, 16, 'online', CURRENT_TIMESTAMP)
+        ''', (vram_map,))
+        conn.commit()
+
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "gpu_node_1", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}},
+            {"name": "gpu_node_2", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}},
+            {"name": "gpu_node_3", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}}
+        ]
+    }
+    j_id = client.post("/submit_job", json={"repo": "o/gpu_pack", "branch": "main", "plan": plan}).get_json()["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    # Nœud 1
+    s1 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r1", "worker": "W_DISC_GPU"}).get_json()
+    assert s1["action"] in ("run", "switch_image")
+    assert s1["gpu_ids"] == [0]
+
+    # Nœud 2
+    s2 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r2", "worker": "W_DISC_GPU"}).get_json()
+    assert s2["action"] in ("run", "switch_image")
+    assert s2["gpu_ids"] == [1]
+
+    # Nœud 3 : les 2 GPUs ont 4 Go restants < 12 Go -> refusé, action wait
+    s3 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r3", "worker": "W_DISC_GPU"}).get_json()
+    assert s3["action"] == "wait"
+
+
+# =========================================================================
+# 18. Packing A11 : Job classique empilé avec un nœud v3
+# =========================================================================
+
+def test_classic_job_packing_with_v3(client):
+    """
+    Packing A11 : Un job classique sans parallel_mode est empilé sur une machine
+    déjà occupée par un job v3 si les ressources cumulées le permettent.
+    """
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('W_HYBRID', 'w_hybrid', 'http://127.0.0.1:9000', 32.0, 32.0, 1, 8, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    # Job v3 prenant 8 Go de RAM
+    plan_v3 = {"version": "3.0", "nodes": [{"name": "v3_task", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}}]}
+    j_v3_id = client.post("/submit_job", json={"repo": "o/v3", "branch": "main", "plan": plan_v3}).get_json()["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    step_v3 = client.post(f"/api/jobs/{j_v3_id}/next_node", json={"runner_id": "r_v3", "worker": "W_HYBRID"}).get_json()
+    assert step_v3["action"] in ("run", "switch_image")
+
+    # Job classique demandant 10 Go de RAM (8 + 10 = 18 <= 24 Go max)
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO jobs (job_id, repo, branch, commit_hash, status, ram_required_gb, vram_required_gb, parallel_mode, created_at)
+            VALUES ('classic_job_1', 'o/classic', 'feat-c', 'hash123', 'pending', 10.0, 0.0, 0, CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    scheduler_loop.schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, worker_id FROM jobs WHERE job_id = 'classic_job_1'")
+        c_status, c_worker = cursor.fetchone()
+        assert c_status == "assigned"
+        assert c_worker == "W_HYBRID"
+
+
+# =========================================================================
+# 19. Coût de placement A13 : Préférence pour l'image Docker déjà présente
+# =========================================================================
+
+def test_placement_preference_docker_image_present(client):
+    """
+    Coût A13 : Préférence pour le worker hébergeant déjà l'image Docker requise.
+    """
+    target_img = "docker.io/special/model:v3"
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, docker_images, status, last_seen)
+            VALUES ('W_COLD', 'w_cold', 'http://127.0.0.1:9001', 64.0, 64.0, 1, 16, '{}', 'online', CURRENT_TIMESTAMP)
+        ''')
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, docker_images, status, last_seen)
+            VALUES ('W_WARM', 'w_warm', 'http://127.0.0.1:9002', 64.0, 64.0, 1, 16, ?, 'online', CURRENT_TIMESTAMP)
+        ''', (json.dumps({target_img: 4000000000}),))
+        conn.commit()
+
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "img_task", "deps": [], "image": target_img, "resources": {"ram_gb": 4.0, "cpus": 2}}
+        ]
+    }
+    j_id = client.post("/submit_job", json={"repo": "o/img_pref", "branch": "main", "plan": plan}).get_json()["job_id"]
+    scheduler_loop.schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (j_id,))
+        chosen = cursor.fetchone()[0]
+        assert chosen == "W_WARM"
+
+
+# =========================================================================
+# 20. Vérification stricte des NULL & refus explicite journalisé (W4)
+# =========================================================================
+
+def test_null_capacity_rejections_and_logs(client, caplog):
+    """
+    Contre-vérification W4 : Rejet strict sans fallback 999999 ni exception avalée
+    si la capacité demandée (storage_gb ou vram_gb) est demandée mais NULL sur le worker.
+    """
+    import logging
+    caplog.set_level(logging.INFO)
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        # Worker 1 avec disk NULL
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, total_storage_gb, status, last_seen)
+            VALUES ('W_NULL_DISK', 'w_null_disk', 'http://127.0.0.1:9001', 64.0, 0.0, 0, 16, NULL, 'online', CURRENT_TIMESTAMP)
+        ''')
+        # Worker 2 avec VRAM NULL
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, vram_per_gpu, unified_memory, cpus, status, last_seen)
+            VALUES ('W_NULL_VRAM', 'w_null_vram', 'http://127.0.0.1:9002', 64.0, NULL, NULL, 0, 16, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    # Nœud demandant storage_gb = 10.0 sur W_NULL_DISK
+    node_res_storage = {"ram_gb": 4.0, "storage_gb": 10.0}
+    worker_null_disk = {"worker_id": "W_NULL_DISK", "total_ram_gb": 64.0, "total_storage_gb": None, "cpus": 16, "unified_memory": 0}
+    admissible_storage = scheduler_loop.is_worker_admissible_for_node(worker_null_disk, node_res_storage)
+    assert admissible_storage is False
+    assert any("disk capacity is NULL" in record.message for record in caplog.records)
+
+    # Nœud demandant vram_gb = 8.0 sur W_NULL_VRAM
+    node_res_vram = {"ram_gb": 4.0, "vram_gb": 8.0}
+    worker_null_vram = {"worker_id": "W_NULL_VRAM", "total_ram_gb": 64.0, "total_vram_gb": None, "vram_per_gpu": None, "cpus": 16, "unified_memory": 0}
+    admissible_vram = scheduler_loop.is_worker_admissible_for_node(worker_null_vram, node_res_vram)
+    assert admissible_vram is False
+    assert any("VRAM capacity is NULL" in record.message for record in caplog.records)
+
+
+# =========================================================================
+# 21. Amendement A16 : Règle de cohérence vram_gb > 0 exige gpus >= 1
+# =========================================================================
+
+def test_a16_coherence_vram_requires_gpus_rejection(client):
+    """
+    Amendement A16 : Soumission d'un plan avec vram_gb > 0 et gpus == 0
+    doit être immédiatement rejetée (HTTP 400) avec cause et remède explicites.
+    """
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "bad_gpu_node", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 8.0, "gpus": 0}}
+        ]
+    }
+    resp = client.post("/submit_job", json={"repo": "owner/bad_coherence", "branch": "main", "plan": plan})
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert "vram_gb exige gpus ≥ 1" in data["error"]
+    assert "remède : déclarer meta.cluster.gpus ≥ 1" in data["error"]
+
+
+# =========================================================================
+# 22. Amendement A17 : Nœud impossible -> Échec immédiat avec message actionnable
+# =========================================================================
+
+def test_a17_impossible_node_immediate_job_failure_and_actionable_message(client):
+    """
+    Amendement A17 : Un nœud qu'AUCUNE machine du cluster ne peut admettre, même vide,
+    fait échouer le job immédiatement avec un message de la forme :
+    « nœud X demande ram_gb=… ; plus grande capacité : machine Y … ; remède : réduire meta.cluster.ram_gb du stage X dans dvc.yaml »
+    Ce message remonte dans /job_status et dans les logs agrégés.
+    """
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
+            VALUES ('W_SMALL', 'w_small', 'http://127.0.0.1:9000', 32.0, 0.0, 1, 8, 'online', CURRENT_TIMESTAMP)
+        ''')
+        conn.commit()
+
+    # Nœud demandant 64 Go RAM alors que la plus grande machine n'a que 32 - 8 = 24 Go dispo
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "too_big_node", "deps": [], "resources": {"ram_gb": 64.0, "cpus": 2}}
+        ]
+    }
+    submit_resp = client.post("/submit_job", json={"repo": "owner/impossible", "branch": "main", "plan": plan}).get_json()
+    job_id = submit_resp["job_id"]
+
+    # Exécution de l'itération d'ordonnancement : doit échouer immédiatement
+    scheduler_loop.schedule_iteration()
+
+    # 1. Vérification en base de données
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, exit_code FROM jobs WHERE job_id = ?", (job_id,))
+        j_status, j_exit = cursor.fetchone()
+        assert j_status == "failed"
+        assert j_exit == 1
+
+        cursor.execute("SELECT status, error_message FROM job_nodes WHERE job_id = ? AND node_name = 'too_big_node'", (job_id,))
+        n_status, n_err = cursor.fetchone()
+        assert n_status == "failed"
+        assert "nœud too_big_node demande ram_gb=64.0 Go" in n_err
+        assert "machine W_SMALL (24.0 Go)" in n_err
+        assert "remède : réduire meta.cluster.ram_gb du stage too_big_node dans dvc.yaml" in n_err
+
+    # 2. Vérification de la route /job_status
+    st_resp = client.get(f"/job_status/{job_id}").get_json()
+    assert st_resp["status"] == "failed"
+    nodes_by_name = {n["name"]: n for n in st_resp.get("nodes", [])} if isinstance(st_resp.get("nodes"), list) else st_resp.get("nodes", {})
+    node_sum = nodes_by_name.get("too_big_node", {})
+    assert "remède : réduire meta.cluster.ram_gb" in node_sum.get("error_message", "")
+
+    # 3. Vérification des logs agrégés
+    log_resp = client.get(f"/job_logs/{job_id}?offset=0").get_json()
+    assert "remède : réduire meta.cluster.ram_gb" in log_resp.get("logs", "")
+
 

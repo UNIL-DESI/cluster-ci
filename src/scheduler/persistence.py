@@ -238,6 +238,12 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # --- v3 Migrations: Job Nodes additions ---
+    try:
+        cursor.execute("ALTER TABLE job_nodes ADD COLUMN gpu_ids TEXT DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass
+
     # --- v3 Migrations: Workers table additions ---
     for col_def in [
         'cpus INTEGER DEFAULT 4',
@@ -248,7 +254,8 @@ def init_db():
         'disk_free_gb REAL DEFAULT 0',
         'assigned_job_id TEXT DEFAULT NULL',
         'role TEXT DEFAULT "worker"',
-        'placement_priority INTEGER DEFAULT 0'
+        'placement_priority INTEGER DEFAULT 0',
+        "docker_images TEXT DEFAULT '{}'"
     ]:
         col_name = col_def.split()[0]
         try:
@@ -285,17 +292,15 @@ def get_db_conn():
 import json
 from datetime import datetime
 try:
-    from defaults import (
-        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB,
+    from src.scheduler.defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_GPUS, DEFAULT_RAM_GB,
         DEFAULT_VRAM_GB, DEFAULT_STORAGE_GB, RUNNER_HEARTBEAT_TIMEOUT_S
     )
 except ImportError:
-    DEFAULT_DOCKER_IMAGE = "nvcr.io/nvidia/pytorch:26.05-py3"
-    DEFAULT_CPUS = 4
-    DEFAULT_RAM_GB = 10.0
-    DEFAULT_VRAM_GB = 0.0
-    DEFAULT_STORAGE_GB = 0.0
-    RUNNER_HEARTBEAT_TIMEOUT_S = 60.0
+    from defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_GPUS, DEFAULT_RAM_GB,
+        DEFAULT_VRAM_GB, DEFAULT_STORAGE_GB, RUNNER_HEARTBEAT_TIMEOUT_S
+    )
 
 def init_job_nodes_from_plan(job_id, plan_data):
     """
@@ -320,12 +325,13 @@ def init_job_nodes_from_plan(job_id, plan_data):
             stale_reason = node.get("stale_reason")
 
             res = dict(node.get("resources", {}))
-            image = res.get("image") or defaults.get("image") or DEFAULT_DOCKER_IMAGE
+            image = node.get("image") or res.get("image") or defaults.get("image") or DEFAULT_DOCKER_IMAGE
             merged_res = {
                 "image": image,
                 "image_arm64": res.get("image_arm64") or defaults.get("image_arm64"),
                 "image_amd64": res.get("image_amd64") or defaults.get("image_amd64"),
                 "cpus": res.get("cpus") or defaults.get("cpus") or DEFAULT_CPUS,
+                "gpus": res.get("gpus") if res.get("gpus") is not None else defaults.get("gpus", DEFAULT_GPUS),
                 "ram_gb": res.get("ram_gb") if res.get("ram_gb") is not None else defaults.get("ram_gb", DEFAULT_RAM_GB),
                 "vram_gb": res.get("vram_gb") if res.get("vram_gb") is not None else defaults.get("vram_gb", DEFAULT_VRAM_GB),
                 "storage_gb": res.get("storage_gb") if res.get("storage_gb") is not None else defaults.get("storage_gb", DEFAULT_STORAGE_GB),
