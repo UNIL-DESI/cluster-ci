@@ -37,9 +37,24 @@ DEFAULT_RAM_MARGIN_GB: float = 0.0          # Extra margin if requested
 
 PRIORITY_HEADNODE_LAST: int = 0
 PRIORITY_DEDICATED_DISCRETE: int = 50
-PRIORITY_DEDICATED_UNIFIED_GB10: int = 100
-
 HEADNODE_HOSTNAMES = {"isipol09", "headnode"}
+
+try:
+    from src.config.defaults import (
+        DEFAULT_PLACEMENT_PRIORITY,
+        HEADNODE_PLACEMENT_PRIORITY,
+        should_enforce_node_memory_limit,
+    )
+except ImportError:
+    DEFAULT_PLACEMENT_PRIORITY = 50
+    HEADNODE_PLACEMENT_PRIORITY = 0
+
+    def should_enforce_node_memory_limit(role: str) -> bool:
+        return str(role or "").strip().lower() in ("headnode", "headnode_worker")
+
+# Backward compatibility alias
+PRIORITY_HEADNODE_LAST = HEADNODE_PLACEMENT_PRIORITY
+PRIORITY_DEFAULT_WORKER = DEFAULT_PLACEMENT_PRIORITY
 
 
 def is_headnode_host(host_profile: Dict[str, Any]) -> bool:
@@ -93,17 +108,41 @@ def is_unified_memory_host(host_profile: Dict[str, Any]) -> bool:
 def placement_priority(host_profile: Dict[str, Any]) -> int:
     """Calculate scheduling placement priority for a host.
     
-    Higher score means higher preference during worker dispatch.
-    The headnode is always assigned the lowest priority (0) to ensure
-    it is only chosen when no other capable worker is available (worker of last resort).
+    Convention: Higher value = preferred first.
+    Default:
+      - Headnode: HEADNODE_PLACEMENT_PRIORITY (0) -> strictly worker of last resort.
+      - All non-headnode workers: DEFAULT_PLACEMENT_PRIORITY (50).
+    Override:
+      - Host-level: 'placement_priority' or 'priority' key in host_profile.
+      - Environment: CLUSTER_CI_PLACEMENT_PRIORITY (allows Henri to favor specific nodes).
     """
+    # 1. Check explicit override in host_profile
+    if "placement_priority" in host_profile and host_profile["placement_priority"] is not None:
+        try:
+            return int(host_profile["placement_priority"])
+        except (ValueError, TypeError):
+            pass
+
+    if "priority" in host_profile and host_profile["priority"] is not None:
+        try:
+            return int(host_profile["priority"])
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Check environment variable override
+    env_override = os.environ.get("CLUSTER_CI_PLACEMENT_PRIORITY")
+    if env_override is not None and env_override.strip() != "":
+        try:
+            return int(env_override.strip())
+        except ValueError:
+            pass
+
+    # 3. Headnode check: worker of last resort
     if is_headnode_host(host_profile):
-        return PRIORITY_HEADNODE_LAST
+        return HEADNODE_PLACEMENT_PRIORITY
 
-    if is_unified_memory_host(host_profile):
-        return PRIORITY_DEDICATED_UNIFIED_GB10
-
-    return PRIORITY_DEDICATED_DISCRETE
+    # 4. Standard default for all other machines
+    return DEFAULT_PLACEMENT_PRIORITY
 
 
 def format_memory_value(gb: float) -> str:
@@ -126,6 +165,7 @@ def docker_resource_args(
     oom_score_adj: int = DEFAULT_CONTAINER_OOM_SCORE_ADJ,
     pids_limit: int = DEFAULT_CONTAINER_PIDS_LIMIT,
     ram_margin_gb: float = DEFAULT_RAM_MARGIN_GB,
+    enforce_node_memory_limit: Optional[bool] = None,
 ) -> List[str]:
     """Calculate docker run resource constraints for a job container.
     
@@ -138,6 +178,7 @@ def docker_resource_args(
             - 'disk_free_gb': float
             - 'unified_memory': bool/int
             - 'is_headnode': Optional[bool]
+            - 'enforce_node_memory_limit': Optional[bool]
         node_resources: Dict with requested resources:
             - 'ram_gb': float (default 2.0)
             - 'vram_gb': float (default 0.0)
@@ -149,10 +190,12 @@ def docker_resource_args(
         oom_score_adj: Docker oom-score-adj value (default +500).
         pids_limit: Maximum allowed PIDs per container (default 4096).
         ram_margin_gb: Additional safety RAM margin in GB (default 0.0).
+        enforce_node_memory_limit: If None, resolved from ENFORCE_NODE_MEMORY_LIMIT by role.
+            Default is True for headnode (strict defense), False for dedicated workers (GB10).
 
     Returns:
         List of CLI arguments for docker run, e.g.:
-        ['--memory=2g', '--memory-swap=2g', '--oom-score-adj=500', '--cpus=4', '--pids-limit=4096']
+        ['--memory=2g', '--memory-swap=2g', '--memory-swappiness=0', '--oom-score-adj=500', '--cpus=4', '--pids-limit=4096']
 
     Raises:
         ValueError: If headnode cannot admit the job due to strict reserve violations.
@@ -162,6 +205,14 @@ def docker_resource_args(
 
     is_headnode = is_headnode_host(host_profile)
     unified = is_unified_memory_host(host_profile)
+
+    # Resolve whether node memory limits should be enforced
+    if enforce_node_memory_limit is None:
+        if "enforce_node_memory_limit" in host_profile:
+            enforce_node_memory_limit = bool(host_profile["enforce_node_memory_limit"])
+        else:
+            role_key = "headnode" if is_headnode else str(host_profile.get("role", "worker"))
+            enforce_node_memory_limit = should_enforce_node_memory_limit(role_key)
 
     # 1. Total Host Resources
     host_ram = float(host_profile.get("total_ram_gb") or host_profile.get("ram_gb") or 125.0)
@@ -175,10 +226,6 @@ def docker_resource_args(
     req_disk = float(node_resources.get("storage_gb", 0.0))
 
     # 3. Memory Calculation (Unified Memory vs Discrete GPU)
-    # On GB10 (unified memory), RAM and VRAM share the same physical LPDDR5X pool.
-    # Therefore, the Docker cgroup memory limit MUST cover BOTH ram_gb AND vram_gb.
-    # On discrete GPU systems (e.g., isipol09 RTX 3090), VRAM lives on dedicated PCIe boards
-    # and is not tracked by the host Linux memory cgroup.
     if unified:
         base_mem = req_ram + req_vram
     else:
@@ -208,7 +255,6 @@ def docker_resource_args(
                 f"(available: {host_disk:.1f}GB, reserve: {headnode_disk_reserve_gb:.1f}GB)."
             )
     else:
-        # Standard dedicated worker: reserve minimal system buffer (e.g. 4GB or 8GB)
         system_buffer = 8.0 if unified else 4.0
         max_allowed_ram = max(1.0, host_ram - system_buffer)
         if effective_mem > max_allowed_ram:
@@ -216,25 +262,23 @@ def docker_resource_args(
 
         effective_cpus = min(req_cpus, max(1, host_cpus))
 
-    # 5. Format Memory String
-    mem_str = format_memory_value(effective_mem)
+    args: List[str] = []
 
-    # 6. Assemble Strict Docker Flags
-    # - --memory: Hard limit on cgroup RAM
-    # - --memory-swap: Equal to --memory disables swapping entirely (prevents host IO thrashing)
-    # - --memory-swappiness=0: Hard guard against host swap leakage on kernels lacking memsw cgroup accounting
-    # - --oom-score-adj: Positive integer (e.g. 500) ensures container is selected for OOM kill
-    #   before any host or headnode daemons (which have OOMScoreAdjust=-900)
-    # - --cpus: CPU quota enforcement
-    # - --pids-limit: Process tree limit to prevent thread exhaustion or fork bombs
-    args = [
-        f"--memory={mem_str}",
-        f"--memory-swap={mem_str}",
-        "--memory-swappiness=0",
+    # 5. Assemble Docker Flags
+    # If memory limit is enforced (default on headnode): strict cgroups + swap prevention
+    if enforce_node_memory_limit:
+        mem_str = format_memory_value(effective_mem)
+        args.extend([
+            f"--memory={mem_str}",
+            f"--memory-swap={mem_str}",
+            "--memory-swappiness=0",
+        ])
+
+    args.extend([
         f"--oom-score-adj={oom_score_adj}",
         f"--cpus={effective_cpus}",
         f"--pids-limit={pids_limit}",
-    ]
+    ])
 
     return args
 
@@ -322,6 +366,20 @@ def main() -> None:
         help="Filter host profile into headnode-safe capacity JSON",
     )
 
+    parser.add_argument(
+        "--enforce-memory-limit",
+        dest="enforce_memory_limit",
+        action="store_true",
+        default=None,
+        help="Explicitly enforce container memory limits",
+    )
+    parser.add_argument(
+        "--no-enforce-memory-limit",
+        dest="enforce_memory_limit",
+        action="store_false",
+        help="Explicitly disable container memory limits",
+    )
+
     args = parser.parse_args()
 
     # Load host profile
@@ -362,7 +420,11 @@ def main() -> None:
         node_resources["cpus"] = args.cpus
 
     try:
-        flags_str = docker_resource_args_string(host_profile, node_resources)
+        flags_str = docker_resource_args_string(
+            host_profile,
+            node_resources,
+            enforce_node_memory_limit=args.enforce_memory_limit,
+        )
         print(flags_str)
     except Exception as e:
         sys.stderr.write(f"Error: {e}\n")
