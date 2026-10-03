@@ -5,9 +5,9 @@
 | [Headnode/Worker Topology](#headnodeworker-topology-and-dynamic-scheduling) | Description of the new distributed computing architecture | 2026-05-05 | Up to date |
 | [JIT GC](tasks/jit_gc.md) | LRU-based Garbage Collector for managing disk space. | 2026-05-05 | Up to date |
 | [Concurrency Management](tasks/concurrency_management.md) | Management of obsolete job cancellations. | 2026-05-05 | Up to date |
-| [Docker Multi-Arch Strategy](architecture/docker_arm_strategy.md) | Stratégie multi-architecture Docker (ARM64/AMD64) avec sélection per-arch via `DOCKER_IMAGE_AMD64`/`DOCKER_IMAGE_ARM64` et fallback `DOCKER_BASE_IMAGE`. | 2026-06-03 | Up to date |
-| [Zombie Prevention](architecture/zombie_prevention.md) | Stratégie d'éradication et de prévention des processus orphelins dvc-viewer et conteneurs zombies (Issue #94). | 2026-05-24 | Up to date |
-| [Resilient Logging](architecture/resilient_logging.md) | Stratégie de reconconnexion résiliente des logs et protocole de heartbeat pour ppng.io (Issue #111). | 2026-06-04 | Up to date |
+| [Docker Multi-Arch Strategy](architecture/docker_arm_strategy.md) | Docker multi-architecture strategy (ARM64/AMD64) with per-arch selection via `DOCKER_IMAGE_AMD64`/`DOCKER_IMAGE_ARM64` and `DOCKER_BASE_IMAGE` fallback. | 2026-06-03 | Up to date |
+| [Zombie Prevention](architecture/zombie_prevention.md) | Strategy for eradicating and preventing orphaned dvc-viewer processes and zombie containers (Issue #94). | 2026-05-24 | Up to date |
+| [Resilient Logging](architecture/resilient_logging.md) | Resilient log reconnection strategy and heartbeat protocol for ppng.io (Issue #111). | 2026-06-04 | Up to date |
 
 
 ## Headnode/Worker Topology and Dynamic Scheduling

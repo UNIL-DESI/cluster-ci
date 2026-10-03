@@ -1,7 +1,7 @@
 # Cluster CI
 
-L'orchestrateur GitOps minimaliste et décentralisé pour le traitement de données et l'entraînement de modèles sur un **cluster hétérogène multi-architecture** (workers ARM64 Blackwell + headnode AMD x86_64 dual-mode scheduler/executor).
-**État actuel** : Système opérationnel. Le cluster hétérogène supporte nativement les architectures ARM64 et AMD64 grâce à la détection automatique de l'architecture hôte (`uname -m`) et la sélection dynamique de l'image Docker appropriée (`DOCKER_IMAGE_AMD64` / `DOCKER_IMAGE_ARM64`). Le conteneur NGC unifié `nvcr.io/nvidia/pytorch:26.05-py3` (Python 3.12, PyTorch 2.12, CUDA 13.2) est utilisé sur les deux architectures avec injection automatique du flag `--platform`. Intégration du système d'init Docker natif (`--init`) pour l'éradication complète et structurelle des processus zombies DVC `[dvc] <defunct>` dans le conteneur principal, support natif du streaming de logs en direct en temps réel ligne par ligne sans perte (via une attente active et un streaming linéaire direct pour éliminer tout bruit ANSI/tmux et prévenir les troncatures et coupures de mots parasites), drainage robuste du buffer de logs distants (ppng.io) de 5 secondes à la complétion du run pour éviter toute perte de trace finale, support d'un tableau de bord interactif et transparent de la file d'attente pour les chercheurs (position de file d'attente, statut détaillé des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante), synchronisation intermédiaire en temps réel et automatique des métriques, plots et `dvc.lock` localement après chaque étape DVC réussie (évitant toute perte de progression en cours d'exécution), homogénéisation complète inter-workers (liaison SSH RSA et synchronisation automatique du cache de modèles), sauvegarde asynchrone optimisée des gros fichiers de données DVC via le Garbage Collector asynchrone (Lazy GC) pour préserver la bande passante réseau à chaque fin de job CI, système d'auto-annulation avancée par catégorie de branche (cluster-draft vs normales) avec annulation cross-repo par utilisateur pour les cluster-run (un seul cluster-run actif par chercheur) et file d'attente intelligente avec raisons d'attente, streaming de logs en direct hautement résilient aux fluctuations et coupures réseau (avec reconconnexion automatique via exponential backoff, déduplication intelligente à base de lignes traitées, et élimination des blocages d'appels CLI synchrones grâce aux timeouts stricts) éliminant tout blocage des workflows GitHub Actions à la fin des exécutions, Watchdog souverain centralisé garantissant l'application stricte des limites de temps d'exécution (timeouts) avec grâce de 5 minutes, mécanisme de retry robuste avec exponential backoff pour l'agent worker résistant aux micro-coupures de l'API Headnode pendant les phases de redémarrage/GitOps, auto-guérison complète de l'hôte via un mécanisme d'instance unique stricte (Single Instance Enforcement) couplé à une purge JIT (Just-In-Time) ultra-déterministe des conteneurs zombies et processus runners orphelins (protégeant les runners GHA actifs en mode delegation lors du dual-mode headnode-as-worker), et **système de réconciliation ultra-rapide des ressources physiques** (libération de la RAM physique et de la VRAM d'Ollama sur Blackwell en moins de 5 secondes) propageant les signaux d'annulation externes de bout en bout pour une éfficacité et réactivité de file d'attente optimales.
+A minimalist, decentralized GitOps orchestrator for data processing and model training on a **heterogeneous multi-architecture cluster** (ARM64 Blackwell workers + AMD x86_64 dual-mode scheduler/executor headnode).
+**Current Status**: Operational system. The heterogeneous cluster natively supports ARM64 and AMD64 architectures through automatic host architecture detection (`uname -m`) and dynamic Docker image selection (`DOCKER_IMAGE_AMD64` / `DOCKER_IMAGE_ARM64`). The unified NGC container `nvcr.io/nvidia/pytorch:26.05-py3` (Python 3.12, PyTorch 2.12, CUDA 13.2) is used across both architectures with automatic injection of the `--platform` flag. Integration of the native Docker init system (`--init`) structurally eradicates zombie DVC processes `[dvc] <defunct>` in the main container, native real-time lossless line-by-line log streaming (via active polling and direct linear streaming to eliminate ANSI/tmux noise and prevent word truncation), robust 5-second remote log buffer drainage (ppng.io) upon run completion to prevent final trace loss, an interactive and transparent queue dashboard for researchers (queue position, detailed running job status per researcher with RAM/duration, and automated physical RAM diagnostics), real-time intermediate automatic synchronization of metrics, plots, and `dvc.lock` locally after each successful DVC stage (preventing progress loss during execution), complete inter-worker homogenization (SSH RSA pairing and automatic model cache synchronization), optimized asynchronous backup of large DVC data files via the Lazy Garbage Collector to preserve network bandwidth at the end of each CI job, an advanced auto-cancellation system by branch category (cluster-draft vs normal) with cross-repo per-user cancellation for cluster-run (only one active cluster-run per researcher) and an intelligent queue with waiting reasons, highly resilient live log streaming against network blips (with automatic exponential backoff reconnection, line-based deduplication, and elimination of synchronous CLI blocking via strict timeouts) eliminating GitHub Actions workflow hang-ups, a sovereign centralized Watchdog guaranteeing strict enforcement of execution timeouts with a 5-minute grace period, a robust exponential backoff retry mechanism for the worker agent resisting transient Headnode API blips during restart/GitOps phases, complete host self-healing via strict Single Instance Enforcement coupled with ultra-deterministic JIT (Just-In-Time) purging of zombie containers and orphaned runner processes (protecting active GHA runners in delegation mode during dual-mode headnode-as-worker), and an **ultra-fast physical resource reconciliation system** (freeing physical RAM and Ollama VRAM on Blackwell in under 5 seconds) propagating external cancellation signals end-to-end for optimal queue efficiency and responsiveness.
 
 Asynchronous continuous integration system for research pipelines, designed as a pull-based replacement for the legacy SlurmRay push-based architecture. This repository hosts the scripts necessary to configure a GitHub Actions Self-Hosted Runner on the target Ubuntu machine, orchestrating `uv run dvc repro` executions in local environments and managing silent authentication with Google Drive. It also provides the client script allowing any research repository to interface with this cluster.
 
@@ -12,7 +12,7 @@ Asynchronous continuous integration system for research pipelines, designed as a
 | **Role** | Executor | Scheduler + Executor (dual-mode) |
 | **GPU** | NVIDIA GB10 (Blackwell) | 2× NVIDIA RTX 3090 (48 GB VRAM) |
 | **CPU** | ARM64 — Cortex-X925 + Cortex-A725 | AMD Ryzen 9 3900X (24 threads) |
-| **RAM** | 128 GB unified memory | 125 GB (séparée) |
+| **RAM** | 128 GB unified memory | 125 GB (discrete) |
 | **OS** | Ubuntu 24.04.4 LTS | Ubuntu 20.04 |
 | **Docker Image** | `nvcr.io/nvidia/pytorch:26.05-py3` (`DOCKER_IMAGE_ARM64`) | `nvcr.io/nvidia/pytorch:26.05-py3` (`DOCKER_IMAGE_AMD64`) |
 | **Python** | 3.12 | 3.12 |
@@ -32,9 +32,9 @@ See the complete documentation at [https://unil-desi.github.io/cluster-ci/](http
 
 # Installation
 
-### 1. Client Installation (Projet de recherche)
+### 1. Client Installation (Research Project)
 
-Exécutez cette commande à la racine de votre dépôt Git pour l'intégration automatique :
+Run this command at the root of your Git repository for automatic integration:
 
 ```bash
 curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=$(date +%s)" | bash
@@ -43,33 +43,33 @@ curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.
 > [!IMPORTANT]
 > **Windows User Note**: Execute this command using a **Git Bash** terminal. Executing it directly in PowerShell will fail because `curl` is aliased to `Invoke-WebRequest`, which handles headers differently. Alternatively, run: `bash -c "curl -H 'Cache-Control: no-cache, no-store' -sSL \"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=\$(date +%s)\" | bash"`.
 
-Ce script injecte :
-1. Le workflow Github Actions (`.github/workflows/cluster-ci.yml`)
-2. Le fichier de contrôle DVC (`.cluster-ci`)
-3. **Le fichier de directives pour agents (`AGENTS.md`)** contenant les contraintes d'architecture du cluster (Python 3.12, PyTorch 2.12, CUDA 13.2) afin d'éviter les erreurs de dépendances de l'IA sur ce dépôt.
-4. **Le Scanner Pre-flight (Git Hook)** : Un hook de pre-commit interactif qui valide la compatibilité locale avec le cluster ARM64 et propose des corrections automatiques (avec détection robuste du binaire Python évitant le stub factice du Windows Store sur Windows).
-5. **Le CLI `cluster-run`** : Commande locale pour soumettre et suivre des jobs directement depuis votre terminal (voir ci-dessous).
+This script injects:
+1. The GitHub Actions workflow (`.github/workflows/cluster-ci.yml`)
+2. The DVC control file (`.cluster-ci`)
+3. **The agent guidelines file (`AGENTS.md`)** containing cluster architecture constraints (Python 3.12, PyTorch 2.12, CUDA 13.2) to prevent AI dependency errors on this repository.
+4. **The Pre-flight Scanner (Git Hook)**: An interactive pre-commit hook that validates local compatibility with the ARM64 cluster and proposes automated fixes (with robust Python binary detection avoiding dummy Windows Store stubs on Windows).
+5. **The `cluster-run` CLI**: Local command to submit and track jobs directly from your terminal (see below).
 
-#### Commande `cluster-run`
+#### `cluster-run` Command
 
-La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), Linux et macOS**. Elle utilise le mécanisme de "Shadow Push" pour soumettre vos modifications locales (y compris les fichiers non commités et fichiers untracked) au cluster distant sans polluer votre historique git.
+The `cluster-run` command is **100% compatible with Windows (PowerShell/CMD), Linux, and macOS**. It uses "Shadow Push" to submit your local changes (including uncommitted and untracked files) to the remote cluster without polluting your Git history.
 
-- **Sur Linux / macOS** : Après exécution du script `install.sh` ci-dessus, le binaire est disponible dans `~/.local/bin/cluster-run`.
-- **Sur Windows (Natif)** : Les scripts wrappers `cluster-run.bat` et `cluster-run.ps1` sont directement disponibles à la racine de votre dépôt de recherche. Vous pouvez exécuter `.\cluster-run` sous PowerShell ou `cluster-run` sous CMD en toute transparence. Pour y accéder globalement, ajoutez simplement le dossier de votre dépôt à votre `PATH` Windows.
+- **On Linux / macOS**: After running the `install.sh` script above, the binary is available in `~/.local/bin/cluster-run`.
+- **On Windows (Native)**: The wrapper scripts `cluster-run.bat` and `cluster-run.ps1` are directly available at the root of your research repository. You can run `.\cluster-run` under PowerShell or `cluster-run` under CMD seamlessly. To access it globally, simply add your repository directory to your Windows `PATH`.
 
-| Commande | Description |
+| Command | Description |
 |---|---|
-| `cluster-run` | Soumet un job et streame en temps réel et en direct les logs d'exécution ligne par ligne dans votre terminal d'origine sans perte |
-| `cluster-run --local` | Exécution directe sur Headnode pour données sensibles/confidentielles (zéro push GitHub, ingestion locale, validation HTTP 400) |
-| `cluster-run list` | Liste les runs récents |
-| `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
-| `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |
-| `cluster-run sync` | Rapatrie manuellement les résultats (métriques, plots, dvc.lock) depuis le cluster |
+| `cluster-run` | Submits a job and streams execution logs line-by-line in real time to your original terminal without data loss |
+| `cluster-run --local` | Direct execution on Headnode for sensitive/confidential data (zero GitHub push, local ingestion, HTTP 400 validation) |
+| `cluster-run list` | Lists recent runs |
+| `cluster-run view [run_id]` | Displays logs for a run (latest by default) |
+| `cluster-run cancel [run_id]` | Cancels a run and cleans up the branch |
+| `cluster-run sync` | Manually retrieves results (metrics, plots, dvc.lock) from the cluster |
 
 > [!NOTE]
-> Pour traiter des données confidentielles ou soumises à un NDA sans aucun upload vers GitHub, consultez le guide **[Sensitive Data & Local Execution](docs/user/sensitive_data.md)**.
+> To process confidential or NDA-bound data without any upload to GitHub, see the guide **[Sensitive Data & Local Execution](docs/user/sensitive_data.md)**.
 
-**Robustesse** : Les résultats partiels sont automatiquement synchronisés localement quelle que soit l'issue du run (succès, échec, Ctrl+C). En cas de force-kill du processus local, le prochain appel à `cluster-run` détecte et nettoie automatiquement le run orphelin sur GitHub Actions. Les logs complets sont redirigés dans un dossier local `.cluster-ci-logs/` (automatiquement exclu via `.gitignore`), avec affichage intégral en console et duplication complète dans un fichier de logs local (avec rotation automatique conservant uniquement les 5 fichiers les plus récents). Pour éviter tout bruit visuel inutile dans la console, les fichiers d'infrastructure internes (les fichiers sous `.dvc-viewer/hashes/` et `dvc.lock`) sont rapatriés de manière totalement silencieuse, tandis que seuls les métriques et plots utilisateur sont listés explicitement à la complétion.
+**Robustness**: Partial results are automatically synchronized locally regardless of run outcome (success, failure, Ctrl+C). In case of local process force-kill, the next `cluster-run` invocation automatically detects and cleans up the orphaned run on GitHub Actions. Complete logs are redirected to a local `.cluster-ci-logs/` folder (automatically excluded via `.gitignore`), with full console output and complete duplication to a local log file (with automatic rotation keeping only the 5 most recent files). To avoid unnecessary console noise, internal infrastructure files (files under `.dvc-viewer/hashes/` and `dvc.lock`) are retrieved completely silently, while user metrics and plots are explicitly listed upon completion.
 
 ### Cluster Deployment (Headnode & Workers)
 
@@ -97,7 +97,7 @@ cd ~/cluster-ci
 ./src/cluster/uninstall_runner.sh owner/repo
 ```
 
-# Description détaillée
+# Detailed Description
 
 Cluster CI is based on GitOps principles. Instead of the agent trying to maintain a continuous interactive session on the remote machine (a structural issue with the Joules Agent on long research jobs), execution is delegated to a self-hosted GitHub Actions runner installed as a `systemd` service on the machine.
 
@@ -108,14 +108,14 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 4. **Execution**: The orchestrator detects the `.cluster-ci` file, prepares the environment via `uv sync`, and runs `uv run dvc repro` with the provided arguments.
 5. **Authentication**: The runner silently injects credentials (Google Drive) by sourcing the global cluster `.env` and `.env.secrets` files.
 6. **CI Feedback**: Joules receives native failure and success notifications via GitHub PR integration.
-7. **Configuration `.cluster-ci`**: Les jobs nécessitant d'être schedulés peuvent déclarer les paramètres suivants à la racine :
-    - `REQUIRED_RAM=16GB` : Contrainte de placement RAM (défaut : 10GB).
-    - `REQUIRED_VRAM=24GB` : Contrainte de placement VRAM **par GPU** (défaut : 0, pas de contrainte). Deux GPU de 24GB ne satisfont pas une demande de 32GB. Le watchdog contrôle la carte la plus chargée, sans additionner les cartes ; sur les GB10, il surveille la RAM système. Voir [les limites et tests du watchdog](docs/gpu-watchdog.md).
-    - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
-    - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
-   Une fois alloué, le conteneur a accès à 100% de la RAM hôte pour éviter les limites artificielles.
-8. **Résilience et Robustesse de l'Agent** : Pour éviter qu'un crash de thread n'isole un worker (problématique historique lors des micro-coupures réseau avec le Headnode ou des verrous SQLite), la boucle de traitement de l'agent intègre un gestionnaire d'exceptions global avec auto-nettoyage d'urgence. Toutes les opérations de libération physique (destruction de conteneur par isolation du PID hôte et déchargement de la VRAM d'Ollama) s'exécutent de façon inconditionnelle dans des blocs `finally` ou dans des daemons asynchrones de nettoyage, garantissant une remise à zéro matérielle propre en moins de 5 secondes.
-# Principaux résultats
+7. **`.cluster-ci` Configuration**: Jobs requiring scheduling can declare the following parameters at the root:
+    - `REQUIRED_RAM=16GB`: RAM placement constraint (default: 10GB).
+    - `REQUIRED_VRAM=24GB`: VRAM placement constraint **per GPU** (default: 0, no constraint). Two 24GB GPUs do not satisfy a 32GB request. The watchdog monitors the most loaded card, without summing cards; on GB10 nodes, it monitors system RAM. See [watchdog limits and tests](docs/gpu-watchdog.md).
+    - `MAX_RUNTIME_HOURS=24`: Maximum execution duration (**MANDATORY**, max 24h) to avoid zombie processes.
+    - `EXPOSED_PORT=8501`: Enables routing to a web GUI (e.g. Streamlit, Gradio) on the specified port.
+   Once allocated, the container has access to 100% of host RAM to avoid artificial limits.
+8. **Agent Resilience and Robustness**: To prevent thread crashes from isolating a worker (a historical issue during network blips with the Headnode or SQLite locks), the agent worker loop incorporates a global exception handler with emergency auto-cleanup. All physical release operations (container destruction by isolating host PID and offloading Ollama VRAM) execute unconditionally in `finally` blocks or asynchronous cleanup daemons, ensuring a clean hardware reset in under 5 seconds.
+# Key Results
 
 - **Status**: Operational & secured against zombie processes, featuring robust client/server log streaming heartbeats and auto-reconnection watchdogs (Last updated: 29 June 2026 - resolved original draft branch from cluster-run tag for auto-cancellation). Includes hardware-level VRAM purging and a clean codebase free from legacy debugging/testing artifacts.
 
@@ -125,14 +125,14 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 |--------------|-------------|
 | [User Documentation Index (Home)](docs/index.md) | Main entry point for researchers: Onboarding, CLI Client, DVC, CI Queue, Dashboard, and Support |
 | [Architecture Index](docs/index_architecture.md) | Architecture specifications and design notes |
-| [Dashboard Index](docs/index_dashboard.md) | Spécifications du dashboard de monitoring premium et de l'explorateur d'artefacts bidirectionnel |
+| [Dashboard Index](docs/index_dashboard.md) | Specifications for the premium monitoring dashboard and bidirectional artifact explorer |
 | [Pre-flight Index](docs/index_preflight.md) | Validation scanner and pre-commit logic |
-| [Scheduler Index](docs/index_scheduler.md) | Résilience, réconciliation matérielle JIT (<5s VRAM purge), chaos-engineering et robustesse du scheduler |
-| [Security Index](docs/index_security.md) | Sécurité, analyses de risques et failles connues |
-| [Tasks Index](docs/index_tasks.md) | Index des spécifications et suivi des tâches de développement |
+| [Scheduler Index](docs/index_scheduler.md) | Resilience, JIT hardware reconciliation (<5s VRAM purge), chaos-engineering, and scheduler robustness |
+| [Security Index](docs/index_security.md) | Security, risk analysis, and known vulnerability audit |
+| [Tasks Index](docs/index_tasks.md) | Specifications index and development task tracking |
 | [vLLM Index](docs/index_vllm.md) | Technical resolution of C++ ABI incompatibilities under NVIDIA NGC PyTorch containers |
 
-# Plan du repo
+# Repository Layout
 
 ```text
 cluster-ci/
@@ -145,7 +145,7 @@ cluster-ci/
     └── scheduler/  # Headnode API, Worker Agent, and Persistence (SQLite)
 ```
 
-# Scripts d'entrée principaux
+# Main Entry Scripts
 
 | Command | Description |
 |----------|-------------|
@@ -153,7 +153,7 @@ cluster-ci/
 | `src/cluster/setup_runner.sh` | Installs and configures the GitHub Actions runner as a `systemd` service |
 | `src/cluster/uninstall_runner.sh` | Completely uninstalls the runner (Systemd, GitHub, local) |
 
-# Scripts exécutables secondaires & Utilitaires
+# Secondary Executables & Utility Scripts
 
 | Command | Description |
 |----------|-------------|
@@ -161,7 +161,7 @@ cluster-ci/
 | `src/scheduler/headnode_service.py` | Headnode HTTP API exposing scheduler routes (including public `/scheduler_status`) |
 | `src/scheduler/runner_manager.py` | Manages the lifecycle of ephemeral GitHub Actions runners (slot1, slot2) |
 | `update_cluster.sh` | Updates the Headnode and Workers via SSH, uses an `.env` file to store credentials |
-| `scripts/get_worker_details.py` | Audit et collecte des caractéristiques matérielles et logicielles des workers distants via SSH |
+| `scripts/get_worker_details.py` | Audit and collection of hardware and software specs from remote workers via SSH |
 | `uv run --with mkdocs-material mkdocs build` | Build the documentation site locally |
 | `uv run --with mkdocs-material mkdocs serve` | Serve the documentation site locally with live reload |
 
@@ -180,58 +180,58 @@ cluster-ci/
 - [x] GitHub OAuth support for the Dashboard (with reverse proxy and IPv4 fallback support)
 - [x] Dashboard UX improvement (date formatting, DVC path corrections under systemd, historical DVC run fixes)
 - [x] Migration to Docker Worker execution (NVIDIA/ARM support)
-- [x] Real-time Log Streaming via Headnode & Live Direct Terminal Stream (sans sous-terminal interactif ni perte de logs)
-- [x] Résolution de la bufferisation GHA : Streaming direct en temps réel via watch natif GHA sans dépendance tmate/SSH
-- [x] Propagation du jeton d'authentification (GH_TOKEN) de bout en bout en mode Délégation
-- [x] Migration vers conteneur NGC moderne (Python 3.12, PyTorch 2.12, CUDA 13.2)
+- [x] Real-time Log Streaming via Headnode & Live Direct Terminal Stream (lossless direct streaming without interactive sub-terminal)
+- [x] Resolution of GHA log buffering: Native direct real-time watch streaming without tmate/SSH dependency
+- [x] End-to-end authentication token (GH_TOKEN) propagation in Delegation mode
+- [x] Migration to modern NGC container (Python 3.12, PyTorch 2.12, CUDA 13.2)
 - [x] [Cluster-CI Pre-flight Scanner & Pre-commit Validator](https://github.com/UNIL-DESI/cluster-ci/issues/55)
-- [x] [Auto-génération des contraintes ARM64 via CI](https://github.com/UNIL-DESI/cluster-ci/issues/56)
+- [x] [Auto-generation of ARM64 constraints via CI](https://github.com/UNIL-DESI/cluster-ci/issues/56)
 - [x] [Smart Environment Shims & Dynamic Client Sync](https://github.com/UNIL-DESI/cluster-ci/issues/57)
 - [x] [Native GitHub Secrets Injection](https://github.com/UNIL-DESI/cluster-ci/issues/58)
-- [x] [Isolation stricte des environnements Python et intégration GC](https://github.com/UNIL-DESI/cluster-ci/issues/59)
+- [x] [Strict Python environment isolation and GC integration](https://github.com/UNIL-DESI/cluster-ci/issues/59)
 - [x] [Full Monitoring Dashboard & Real-time Logs](https://github.com/UNIL-DESI/cluster-ci/issues/60)
 - [x] Smart Dependency Caching (hash-based skip of `uv pip install` when `pyproject.toml` unchanged)
 - [x] Fix false-positive Exit Code -98 (Heartbeat/Worker crash detection race condition)
-- [x] Résolution de l'échec du DVC P2P Pull (fichiers résiduels) dans le cache persistant
-- [x] Résolution de l'erreur HTTP 404 du Live DVC Viewer derrière le reverse proxy (chemins relatifs & `<base href>`)
-- [x] DVC Historical Extraction: Injection dynamique des identifiants (GITHUB_PAT) dans les miroirs Git locaux pour `dvc get`
-- [x] Limitation de la prévisualisation des fichiers texte à 100 lignes dans le Dashboard pour optimisation UI
-- [x] Restreindre le *Live Viewer* en mode "Lecture Seule" et corriger la détection des étapes DVC s'exécutant dans les wrappers Bash des workers.
+- [x] Resolution of DVC P2P Pull failure (residual files) in persistent cache
+- [x] Resolution of HTTP 404 error for Live DVC Viewer behind reverse proxy (relative paths & `<base href>`)
+- [x] DVC Historical Extraction: Dynamic credential injection (GITHUB_PAT) into local Git mirrors for `dvc get`
+- [x] Text file preview truncation at 100 lines in Dashboard for UI optimization
+- [x] Restrict *Live Viewer* to "Read-Only" mode and fix detection of DVC stages running inside worker Bash wrappers.
 - [x] [Robust Docker Container Lifecycle and Orphan Process Eradication](https://github.com/UNIL-DESI/cluster-ci/pull/66)
 - [x] [Hybrid Liveness Watchdog — JIT Zombie Detection](https://github.com/UNIL-DESI/cluster-ci/pull/67)
 - [x] Fix Scheduler assigning jobs to busy workers (single-threaded worker exclusion)
-- [x] Inversion de l'ordre DVC/P2P (Pull avant le Hash) et suppression des erreurs de suppression Docker.
-- [x] Segmented Pipeline Logs: Modal de logs interactif avec navigation par étape (Setup, DVC stages, Sync/GC), regroupement intelligent et déduplication robuste de toutes les exécutions de stages répétées, couleurs d'état cumulatives, lazy loading progressif, indicateur de lignes, copie presse-papier robuste (copiant l'intégralité de la section active avec fallback automatique pour les contextes HTTP non-sécurisés), bouton "Last Error" intelligent restreint à la fin de l'exécution ciblant la section en échec, animation de chargement pour l'étape en cours, et emoji ☠️ avec raison pour les jobs tués
-- [x] Fix Bug: `submit_job.py` lisait `.cluster-ci` depuis le CWD cluster-ci au lieu du repo cible → RAM toujours à 2GB en mode Delegation. Correction via shallow clone du `.cluster-ci` distant.
-- [x] Fix Bug: Jobs en `pending` infini en cas de demande de RAM dépassant la capacité physique des workers (fail-fast implémenté).
-- [x] Fix Bug: `dvc-viewer` connection refused (port binding explicitement forcé sur 0.0.0.0 pour contourner l'isolation IPv6/loopback de Docker).
-- [x] Fix Bug: UI Frontend affichait prématurément le label `Post-Run` au lieu de `System/Logs` durant le run de la pipeline.
-- [x] Suppression de l'option obsolète `SHARED_MEMORY` (rendue inutile par `--ipc=host` qui alloue automatiquement 50% de la RAM hôte à `/dev/shm`) et ajout de la détection OOM en direct dans `submit_job.py` pour GitHub Actions.
-- [x] Fix Bug: Ghost Workers — Le scheduler marque automatiquement les workers offline après 120s sans heartbeat, empêchant le dashboard de mentir sur l'état réel du cluster.
-- [x] Hardening: Ajout de `timeout=10` explicite sur toutes les requêtes HTTP du worker agent pour prévenir les deadlocks TCP silencieux (firewall universitaire).
-- [x] Support Windows Universel & PATH Automatique (PowerShell/CMD) : Détection et enregistrement automatique de `~/.local/bin` dans le PATH Windows User via PowerShell, wrappers natifs, résolution définitive du bug de figeage du terminal et fin de tâche instantanée dès la complétion du run.
-- [x] Transparence de la file d'attente (Interactive Queue Dashboard) : Position dans la file d'attente, logs interactifs en direct des tâches occupantes par chercheur avec RAM/durée, et diagnostics automatisés de RAM physique insuffisante dans `submit_job.py`.
-- [x] Homogénéisation complète inter-workers : Liaison inter-worker SSH RSA robuste sans mot de passe et synchronisation automatisée du cache des modèles Ollama (Gemma-4-31B de 20 Go) via rsync.
-- [x] Fix Bug: Résolution définitive des Ghost Jobs via timeouts explicites et daemon thread de purge.
-- [x] [Global Execution Timeout](docs/tasks/global_timeout.md) : Empêcher le gel du worker sur un job bloqué (arrêt Docker propre et notification chercheur).
-- [x] [OOM cgroups silencieux : Ajouter un message d'erreur explicite lors du dépassement de REQUIRED_RAM](https://github.com/UNIL-DESI/cluster-ci/issues/91)
-- [x] [Architecture : Implémenter un Watchdog Asynchrone pour la sauvegarde incrémentale de DVC](https://github.com/UNIL-DESI/cluster-ci/issues/92)
-- [x] [Architecture : Implémenter le streaming en direct des logs pour les jobs asynchrones (cluster-run view)](https://github.com/UNIL-DESI/cluster-ci/issues/93)
-- [x] [Garde-fous Systémiques : Prévention et éradication des processus orphelins et conteneurs zombies](https://github.com/UNIL-DESI/cluster-ci/issues/94)
+- [x] Reversal of DVC/P2P order (Pull before Hash) and removal of Docker deletion errors.
+- [x] Segmented Pipeline Logs: Interactive modal with per-stage navigation (Setup, DVC stages, Sync/GC), stage deduplication, cumulative status colors, progressive lazy loading, line indicators, robust clipboard copy with insecure HTTP fallback, smart "Last Error" button targeting failed sections, running stage animation, and ☠️ emoji with kill reasons
+- [x] Fix Bug: `submit_job.py` read `.cluster-ci` from cluster-ci CWD instead of target repo → RAM always at 2GB in Delegation mode. Fixed via shallow clone of remote `.cluster-ci`.
+- [x] Fix Bug: Jobs hung in infinite `pending` when RAM requested exceeded worker physical capacity (fail-fast implemented).
+- [x] Fix Bug: `dvc-viewer` connection refused (port binding explicitly forced to 0.0.0.0 to bypass Docker IPv6/loopback isolation).
+- [x] Fix Bug: Frontend UI prematurely showed `Post-Run` instead of `System/Logs` during pipeline execution.
+- [x] Removed obsolete `SHARED_MEMORY` option (rendered unnecessary by `--ipc=host` which automatically allocates 50% of host RAM to `/dev/shm`) and added live OOM detection in `submit_job.py` for GitHub Actions.
+- [x] Fix Bug: Ghost Workers — Scheduler automatically marks workers offline after 120s without heartbeat, preventing dashboard desynchronization.
+- [x] Hardening: Added explicit `timeout=10` on all worker agent HTTP requests to prevent silent TCP deadlocks (university firewall).
+- [x] Universal Windows Support & Automatic PATH (PowerShell/CMD): Automatic detection and registration of `~/.local/bin` into Windows User PATH via PowerShell, native wrappers, terminal freeze fix, and instant task completion.
+- [x] Queue Transparency (Interactive Queue Dashboard): Queue position, live interactive logs of running tasks per researcher with RAM/duration, and automated physical RAM diagnostics in `submit_job.py`.
+- [x] Inter-Worker Homogenization: Robust passwordless SSH RSA inter-worker link and automated Ollama model cache synchronization (20 GB Gemma-4-31B) via rsync.
+- [x] Fix Bug: Definitive Ghost Jobs resolution via explicit timeouts and purge daemon thread.
+- [x] [Global Execution Timeout](docs/tasks/global_timeout.md): Prevent worker hang on stalled jobs (clean Docker stop and researcher notification).
+- [x] [Silent cgroups OOM: Add explicit error message when exceeding REQUIRED_RAM](https://github.com/UNIL-DESI/cluster-ci/issues/91)
+- [x] [Architecture: Implement Asynchronous Watchdog for incremental DVC backups](https://github.com/UNIL-DESI/cluster-ci/issues/92)
+- [x] [Architecture: Implement live log streaming for asynchronous jobs (cluster-run view)](https://github.com/UNIL-DESI/cluster-ci/issues/93)
+- [x] [Systemic Guardrails: Prevention and eradication of orphaned processes and zombie containers](https://github.com/UNIL-DESI/cluster-ci/issues/94)
 
 **Phase 3 (Stability & Correctness — In Progress)**
-- [x] [cluster-run CLI : Merge fantôme, affichage DAG inversé et fuite stdout Docker](https://github.com/UNIL-DESI/cluster-ci/issues/105)
-- [x] [Orchestrateur : Fallback silencieux de HEADNODE_URL et absence de feedback réseau](https://github.com/UNIL-DESI/cluster-ci/issues/109)
-- [x] [Docker : Conteneur bridé à 2 Go de RAM sur machine 128 Go (Fausse alerte)](https://github.com/UNIL-DESI/cluster-ci/issues/107)
-- [x] [Fix(logs) : Streaming résilient, reconconnexion et résolution de la fausse erreur d'infrastructure en fin de job](https://github.com/UNIL-DESI/cluster-ci/issues/111)
-- [🔄] [Runner DVC : Double exécution de stages et message de commit trompeur](https://github.com/UNIL-DESI/cluster-ci/issues/106)
-- [ ] [Bugs Interface Web : Tri aléatoire des dates et heures dans l'Historique DVC](https://github.com/UNIL-DESI/cluster-ci/issues/101)
-- [x] Fix Zombie Jobs : Guard branch-level dans le scheduler, cancellation headnode-aware dans `cluster-run`, auto-cancel dans la version déployée, et correction du crash HTTP 500 sur `/api/jobs/{id}/stop`
-- [x] Fix Scheduling cluster-run : Annulation cross-repo par utilisateur pour les branches draft (un seul cluster-run par user, tous repos confondus), politique max 1 pending par repo+branche pour les branches normales, et affichage de la file d'attente avec raisons sur le dashboard web
-- [x] Fix Dashboard : Scan multi-branches temps réel des artefacts (watchdog commits intermédiaires), correction timezone UTC +2h sur les temps écoulés, et ajout de la date de lancement sur les Active Cluster Runs
-- [x] VRAM Tracking & Headnode-as-Worker : Détection automatique GPU/VRAM via `nvidia-smi`, contrainte `REQUIRED_VRAM` dans `.cluster-ci`, headnode enregistré comme worker dual-mode (scheduler + executor), affichage GPU/VRAM dans le dashboard et les diagnostics de file d'attente
-- [x] Fix Runner : Masquage des erreurs anxiogènes (`Checkout failed`) de `dvc checkout` en mode Best-Effort
-- [x] Fix Runner : Blocage infini du runner sur la phase sync après échec d'un stage (ajout de timeouts sur watchdog cleanup, git push/pull et docker exec sync)
-- [x] Job Execution Timeout : Passage de la limite de temps de GitHub Actions de 6h à 24h (via `timeout-minutes: 1440` dans le workflow et dans `install.sh`)
-- [ ] [Ordonnancement multi-GPU : Support multi-slot et isolation matérielle GPU](https://github.com/UNIL-DESI/cluster-ci/issues/110)
+- [x] [cluster-run CLI: Ghost merge, inverted DAG display, and Docker stdout leak](https://github.com/UNIL-DESI/cluster-ci/issues/105)
+- [x] [Orchestrator: Silent fallback of HEADNODE_URL and missing network feedback](https://github.com/UNIL-DESI/cluster-ci/issues/109)
+- [x] [Docker: Container throttled to 2 GB RAM on 128 GB machine (False alarm)](https://github.com/UNIL-DESI/cluster-ci/issues/107)
+- [x] [Fix(logs): Resilient streaming, reconnection, and false infrastructure error resolution at job completion](https://github.com/UNIL-DESI/cluster-ci/issues/111)
+- [🔄] [DVC Runner: Double stage execution and misleading commit message](https://github.com/UNIL-DESI/cluster-ci/issues/106)
+- [ ] [Web Interface Bugs: Random date and time sorting in DVC History](https://github.com/UNIL-DESI/cluster-ci/issues/101)
+- [x] Fix Zombie Jobs: Branch-level guard in scheduler, headnode-aware cancellation in `cluster-run`, auto-cancel in deployed version, and HTTP 500 crash fix on `/api/jobs/{id}/stop`
+- [x] Fix Scheduling cluster-run: Cross-repo per-user cancellation for draft branches (one cluster-run per user across all repos), max 1 pending policy per repo+branch for normal branches, and queue display with wait reasons on web dashboard
+- [x] Fix Dashboard: Real-time multi-branch artifact scan (intermediate commit watchdog), UTC +2h timezone correction for elapsed times, and launch date added to Active Cluster Runs
+- [x] VRAM Tracking & Headnode-as-Worker: Automatic GPU/VRAM detection via `nvidia-smi`, `REQUIRED_VRAM` constraint in `.cluster-ci`, headnode registered as dual-mode worker (scheduler + executor), GPU/VRAM display in dashboard and queue diagnostics
+- [x] Fix Runner: Suppressed noisy errors (`Checkout failed`) from `dvc checkout` in Best-Effort mode
+- [x] Fix Runner: Infinite runner stall on sync phase following stage failure (added timeouts on watchdog cleanup, git push/pull, and docker exec sync)
+- [x] Job Execution Timeout: GitHub Actions timeout increased from 6h to 24h (via `timeout-minutes: 1440` in workflow and `install.sh`)
+- [ ] [Multi-GPU Scheduling: Multi-slot support and GPU hardware isolation](https://github.com/UNIL-DESI/cluster-ci/issues/110)
 
