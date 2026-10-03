@@ -17,10 +17,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest"
+    "pytest",
+    "pytest-timeout>=2.4.0",
 ]
 
 [project.scripts]
 cluster-run = "cluster.cluster_run:main"
 cluster-update = "cluster.cluster_update:main"
+
+[tool.pytest.ini_options]
+timeout = 120
 

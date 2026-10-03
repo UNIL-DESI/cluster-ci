@@ -654,6 +654,71 @@ class TestV3W8Submission(unittest.TestCase):
         self.assertIn("no node started", out)
         self.assertIn("SIGKILL", out)
 
+    def test_planner_module_strict_w1_no_fallback(self):
+        """(Correction 3) Vérifie que le planificateur pointe strictement vers src.planner.stage_plan sans repli."""
+        mod = get_planner_module_name()
+        self.assertEqual(mod, "src.planner.stage_plan")
+
+    def test_wait_for_job_bounded_retries_on_network_errors(self):
+        """(Correction 4) Vérifie que submit_job gère les erreurs réseau par retries bornés avec message et fait remonter les autres."""
+        import requests
+
+        # 1. Erreur transitoire de connexion sur la récupération des logs
+        attempt_count = 0
+
+        def flaky_get(url, **kwargs):
+            nonlocal attempt_count
+            mock_resp = MagicMock()
+            if "/job_status/" in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"job_id": "flaky-job", "status": "completed", "exit_code": 0}
+                return mock_resp
+            elif "/job_logs/" in url or "/logs" in url:
+                attempt_count += 1
+                raise requests.exceptions.ConnectionError("Temporary network reset")
+            return MagicMock(status_code=404)
+
+        with patch("requests.get", side_effect=flaky_get):
+            with patch("time.sleep", return_value=None):
+                code = wait_for_job("http://fake:5000", "flaky-job")
+                self.assertEqual(code, 0)
+                self.assertGreater(attempt_count, 0)
+
+        # 2. Erreur persistante dépassant le seuil max_log_errors -> lève l'exception
+        persistent_count = 0
+
+        def persistent_error_get(url, **kwargs):
+            nonlocal persistent_count
+            mock_resp = MagicMock()
+            if "/job_status/" in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"job_id": "fail-job", "status": "running"}
+                return mock_resp
+            elif "/job_logs/" in url or "/logs" in url:
+                persistent_count += 1
+                raise requests.exceptions.ConnectionError("Permanent network dead")
+            return MagicMock(status_code=404)
+
+        with patch("requests.get", side_effect=persistent_error_get):
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(requests.exceptions.RequestException):
+                    wait_for_job("http://fake:5000", "fail-job")
+                self.assertGreaterEqual(persistent_count, 10)
+
+        # 3. Erreur persistante sur le statut -> lève l'exception
+        status_error_count = 0
+
+        def persistent_status_error_get(url, **kwargs):
+            nonlocal status_error_count
+            status_error_count += 1
+            raise requests.exceptions.ConnectionError("Headnode completely down")
+
+        with patch("requests.get", side_effect=persistent_status_error_get):
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(requests.exceptions.RequestException):
+                    wait_for_job("http://fake:5000", "fail-job")
+                self.assertGreaterEqual(status_error_count, 10)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1742,6 +1742,8 @@ def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None):
                     _job_logs_fallback_warned = True
                 continue
             break
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            raise
         except Exception:
             break
     return "", offset
@@ -1822,17 +1824,46 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     last_status_msg = ""
     last_nodes_summary = None
     current_nodes_data = None
+    max_status_errors = 10
+    max_log_errors = 10
+    max_network_downtime_seconds = 120.0
+    consecutive_status_errors = 0
+    consecutive_log_errors = 0
+    first_status_error_time = None
+    first_log_error_time = None
 
     while True:
         # 1. Fetch latest logs from Headnode API (priorité /job_logs, repli /api/jobs/{id}/logs)
         try:
             new_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
             if new_logs and isinstance(new_logs, str):
+                consecutive_log_errors = 0
+                first_log_error_time = None
                 for line in new_logs.splitlines():
                     formatted_line = format_multi_machine_log_line(line, current_nodes_data)
                     print_line(formatted_line)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            consecutive_log_errors += 1
+            now = time.monotonic()
+            if first_log_error_time is None:
+                first_log_error_time = now
+            downtime = now - first_log_error_time
+            sys.stderr.write(
+                f"\n⚠️ [Network] Temporary failure retrieving logs ({e}) "
+                f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
+            )
+            if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
+                print(
+                    f"\n❌ [Network] Exceeded maximum log retries ({consecutive_log_errors}/{max_log_errors}) "
+                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
+                    f"Cause: Headnode log service unreachable ({e}).\n"
+                    f"Remedy: Check headnode at {headnode_url} and network connectivity.",
+                    file=sys.stderr,
+                )
+                close_log_redirection()
+                return 1
         except Exception:
-            # Silently continue on temporary network glitches while polling logs
+            # Silently continue on temporary formatting glitches while polling logs
             pass
 
         # 2. Check job status
@@ -1843,6 +1874,8 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                 req.add_header("Authorization", f"Bearer {cluster_token}")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
+                    consecutive_status_errors = 0
+                    first_status_error_time = None
                     job_data = json.loads(resp.read().decode("utf-8"))
                     status = job_data.get("status")
                     exit_code = job_data.get("exit_code")
@@ -1924,6 +1957,26 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                                 if not has_node_failure and not job_error:
                                     print(f"\n❌ [ERROR] Local job completed with status: {status} (Exit code: {ret_code})", file=sys.stderr)
                             return int(ret_code)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            consecutive_status_errors += 1
+            now = time.monotonic()
+            if first_status_error_time is None:
+                first_status_error_time = now
+            downtime = now - first_status_error_time
+            sys.stderr.write(
+                f"\n⚠️ [Network] Temporary failure checking status: {e} "
+                f"({consecutive_status_errors}/{max_status_errors}, downtime {downtime:.1f}s)\n"
+            )
+            if consecutive_status_errors >= max_status_errors or downtime >= max_network_downtime_seconds:
+                print(
+                    f"\n❌ [Network] Exceeded maximum status check retries ({consecutive_status_errors}/{max_status_errors}) "
+                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
+                    f"Cause: Headnode status endpoint unreachable ({e}).\n"
+                    f"Remedy: Ensure headnode is running at {headnode_url} and network connectivity is active.",
+                    file=sys.stderr,
+                )
+                close_log_redirection()
+                return 1
         except Exception:
             # Status check temporary error
             pass

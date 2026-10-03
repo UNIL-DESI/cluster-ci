@@ -37,20 +37,13 @@ except ImportError:
 
 
 def get_planner_module_name():
-    """Détecte ou retourne le nom du module planificateur fourni par W1."""
+    """Retourne le module du planificateur W1 (src.planner.stage_plan).
+
+    Aucun repli vers un autre module : erreur explicite si introuvable.
+    """
     env_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE")
     if env_mod:
         return env_mod
-    candidates = [
-        ("src.planner.stage_plan", "src/planner/stage_plan.py"),
-        ("src.scheduler.planner", "src/scheduler/planner.py"),
-        ("scheduler.planner", "scheduler/planner.py"),
-    ]
-    for mod_name, file_rel in candidates:
-        if os.path.exists(file_rel) or os.path.exists(
-            os.path.join(os.path.dirname(__file__), "..", "..", file_rel)
-        ):
-            return mod_name
     return "src.planner.stage_plan"
 
 
@@ -203,6 +196,7 @@ def format_nodes_status_summary(nodes):
         "ready": 0,
         "failed": 0,
         "blocked": 0,
+        "missing_deps": 0,
         "pending": 0,
         "skipped": 0,
     }
@@ -229,6 +223,9 @@ def format_nodes_status_summary(nodes):
         elif st == "blocked":
             counts["blocked"] += 1
             blocked_nodes.append(name)
+        elif st in ("missing_deps", "missing-deps"):
+            counts["missing_deps"] += 1
+            blocked_nodes.append(f"{name} (missing_deps)")
         elif st == "skipped":
             counts["skipped"] += 1
         else:
@@ -238,6 +235,8 @@ def format_nodes_status_summary(nodes):
         f"📊 [Nodes] done={counts['done']}, running={counts['running']}, "
         f"ready={counts['ready']}, failed={counts['failed']}, blocked={counts['blocked']}"
     )
+    if counts["missing_deps"]:
+        summary_line += f", missing_deps={counts['missing_deps']}"
     if counts["skipped"]:
         summary_line += f", skipped={counts['skipped']}"
     if counts["pending"]:
@@ -778,11 +777,20 @@ def wait_for_job(headnode_url, job_id, branch=None):
     last_status = None
     last_queue_diagnostic = None
     last_nodes_summary = None
+    consecutive_log_errors = 0
+    max_log_errors = 10
+    first_log_error_time = None
+    consecutive_status_errors = 0
+    max_status_errors = 10
+    first_status_error_time = None
+    max_network_downtime_seconds = 120.0
 
     while True:
         try:
             resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
+            consecutive_status_errors = 0
+            first_status_error_time = None
             job = resp.json()
             status = job['status']
             worker_url = job.get('worker_service_url')
@@ -971,20 +979,56 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
-                except requests.exceptions.RequestException:
-                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except requests.exceptions.RequestException as e:
+                    consecutive_log_errors += 1
+                    now = time.monotonic()
+                    if first_log_error_time is None:
+                        first_log_error_time = now
+                    downtime = now - first_log_error_time
+                    sys.stderr.write(
+                        f"\n⚠️ [Network] Temporary failure retrieving logs from headnode: {e} "
+                        f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
+                    )
+                    if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
+                        err_msg = (
+                            f"❌ [Network] Exceeded maximum network retries ({consecutive_log_errors}/{max_log_errors}) "
+                            f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s) while polling job logs.\n"
+                            f"Cause: Headnode log service unreachable ({e}).\n"
+                            f"Remedy: Check network connection to headnode at {headnode_url} and worker service."
+                        )
+                        sys.stderr.write(f"{err_msg}\n")
+                        raise requests.exceptions.ConnectionError(err_msg) from e
                 except Exception as unexpected_err:
                     sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs headnode: {unexpected_err}\n")
 
             if logs_resp is None and worker_url:
                 try:
                     logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
-                except requests.exceptions.RequestException:
-                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except requests.exceptions.RequestException as e:
+                    consecutive_log_errors += 1
+                    now = time.monotonic()
+                    if first_log_error_time is None:
+                        first_log_error_time = now
+                    downtime = now - first_log_error_time
+                    sys.stderr.write(
+                        f"\n⚠️ [Network] Temporary failure retrieving logs from worker: {e} "
+                        f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
+                    )
+                    if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
+                        err_msg = (
+                            f"❌ [Network] Exceeded maximum network retries ({consecutive_log_errors}/{max_log_errors}) "
+                            f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s) while polling worker logs.\n"
+                            f"Cause: Worker log service unreachable ({e}).\n"
+                            f"Remedy: Check worker service at {worker_url} or headnode connectivity."
+                        )
+                        sys.stderr.write(f"{err_msg}\n")
+                        raise requests.exceptions.ConnectionError(err_msg) from e
                 except Exception as unexpected_err:
                     sys.stderr.write(f"\n⚠️ Unexpected error polling worker logs: {unexpected_err}\n")
 
             if logs_resp and logs_resp.status_code == 200:
+                consecutive_log_errors = 0
+                first_log_error_time = None
                 try:
                     logs_data = logs_resp.json()
                     new_logs = logs_data.get('logs', '')
@@ -1101,8 +1145,30 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 sys.stdout.flush()
                 last_status = status
 
+        except requests.exceptions.RequestException as e:
+            if consecutive_log_errors >= max_log_errors:
+                raise
+            consecutive_status_errors += 1
+            now = time.monotonic()
+            if first_status_error_time is None:
+                first_status_error_time = now
+            downtime = now - first_status_error_time
+            sys.stderr.write(
+                f"\n⚠️ [Network] Error checking status: {e} "
+                f"({consecutive_status_errors}/{max_status_errors})\n"
+            )
+            if consecutive_status_errors >= max_status_errors or downtime >= max_network_downtime_seconds:
+                err_msg = (
+                    f"❌ [Network] Exceeded maximum status check retries ({consecutive_status_errors}/{max_status_errors}) "
+                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
+                    f"Cause: Headnode status endpoint unreachable ({e}).\n"
+                    f"Remedy: Check that headnode is running at {headnode_url} and network is functional."
+                )
+                sys.stderr.write(f"{err_msg}\n")
+                raise requests.exceptions.ConnectionError(err_msg) from e
         except Exception as e:
-            print(f"\n⚠️ Error checking status: {e}")
+            sys.stderr.write(f"\n⚠️ Unexpected error checking status: {e}\n")
+            raise
 
         time.sleep(2)
 
