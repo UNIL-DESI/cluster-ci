@@ -774,7 +774,7 @@ class BranchExecutor:
             f"chown -R {self.user_id}:{self.group_id} /home/user && "
             f"chown -R {self.user_id}:{self.group_id} /workspace && "
             'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && '
-            '[ -n "$SITE" ] && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth" || true'
+            '[ -n "$SITE" ] && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null | sort -u > "$SITE/cluster-ci-prefix.pth" && chmod 644 "$SITE/cluster-ci-prefix.pth" || true'
         )
         self.docker.exec_in_container(self.current_container, init_cmd, user="root")
 
@@ -802,6 +802,32 @@ class BranchExecutor:
                 self.current_container,
                 smart_cmd,
                 stream_prefix=f"[{image_slug}@{self.worker_id}]",
+            )
+
+        # 4. Régénération idempotente du .pth post-installation et vérification fail-fast
+        sync_pth_cmd = (
+            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && '
+            '[ -n "$SITE" ] && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null | sort -u > "$SITE/cluster-ci-prefix.pth" && chmod 644 "$SITE/cluster-ci-prefix.pth" || true'
+        )
+        self.docker.exec_in_container(self.current_container, sync_pth_cmd, user="root")
+
+        verify_pth_cmd = (
+            'python3 -c "'
+            'import site, sys, os; '
+            'print(\'[Cluster-CI] sys.path:\', sys.path); '
+            'cands = [os.path.join(r, d) for r, ds, _ in os.walk(\'/home/user\') for d in ds if d in (\'site-packages\', \'dist-packages\')]; '
+            'missing = [p for p in cands if p not in sys.path]; '
+            '(sys.stderr.write(f\'❌ [Cluster-CI] FAIL-FAST: Installation path exists but is not in sys.path: {missing}\\n\'), sys.exit(1)) if missing else print(f\'✅ [Cluster-CI] All {len(cands)} installation paths verified in sys.path\')'
+            '"'
+        )
+        vcode, vout = self.docker.exec_in_container(
+            self.current_container,
+            verify_pth_cmd,
+            stream_prefix=f"[{image_slug}@{self.worker_id}]",
+        )
+        if vcode != 0:
+            raise RuntimeError(
+                f"Fail-fast verification failed for container {self.current_container} (code {vcode}):\n{vout}"
             )
 
     def stop_current_container(self) -> None:
