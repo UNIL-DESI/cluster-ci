@@ -114,7 +114,7 @@ class TestGC(unittest.TestCase):
                 with open(registry_path, "r+") as f:
                     fcntl.flock(f, fcntl.LOCK_EX)
                     registry = json.load(f)
-                    registry[p]["last_execution"] = time.time() - (100 - i * 10)
+                    registry[p]["last_execution"] = time.time() - (8 * 3600 - i * 3600)
                     f.seek(0)
                     f.truncate()
                     json.dump(registry, f)
@@ -143,6 +143,17 @@ class TestGC(unittest.TestCase):
             p1_path.mkdir(parents=True, exist_ok=True)
             with open(p1_path / "file.txt", "w") as f: f.write("data")
             gc_orchestrator.update_idle("p1", str(p1_path))
+
+            # Make last_execution older than protect threshold (8 hours ago)
+            registry_path = gc_orchestrator.get_registry_path()
+            with open(registry_path, "r+") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                registry = json.load(f)
+                registry["p1"]["last_execution"] = time.time() - (8 * 3600)
+                f.seek(0)
+                f.truncate()
+                json.dump(registry, f)
+                fcntl.flock(f, fcntl.LOCK_UN)
 
             # No remote configured, so it should be evicted immediately
             gc_orchestrator.run_transfer_gc()
