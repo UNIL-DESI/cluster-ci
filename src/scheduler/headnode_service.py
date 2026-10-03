@@ -1383,6 +1383,8 @@ def update_job_status():
                     error_message = COALESCE(?, error_message)
                 WHERE job_id = ?
             ''', (status, exit_code, commit_hash, err_msg, job_id))
+            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+            cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
             cleanup_local_archive(job_id)
             if status == 'failed' and err_msg:
                 try:
