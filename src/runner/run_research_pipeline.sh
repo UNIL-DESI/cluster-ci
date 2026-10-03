@@ -772,7 +772,7 @@ if [ "$CLUSTER_CI_PARALLEL_MODE" = "1" ]; then
     log_info "=========================================================================="
 
     set +e
-    python3 -u "$BASE_DIR/src/runner/branch_executor.py" \
+    PYTHONPATH="${BASE_DIR}:${PYTHONPATH}" python3 -u "$BASE_DIR/src/runner/branch_executor.py" \
         --headnode-url "$HEADNODE_URL" \
         --job-id "${CLUSTER_CI_JOB_ID:-$JOB_ID}" \
         --runner-id "${CLUSTER_CI_RUNNER_ID:-runner-${SAFE_JOB_ID}-$$}" \

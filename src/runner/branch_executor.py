@@ -30,6 +30,11 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+# Bootstrap BASE_DIR in sys.path to ensure src.* packages are discoverable
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _BASE_DIR not in sys.path:
+    sys.path.insert(0, _BASE_DIR)
+
 try:
     from src.runner import dvc_git_helper
 except (ImportError, SystemExit):
