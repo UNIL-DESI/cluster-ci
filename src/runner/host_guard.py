@@ -37,14 +37,24 @@ DEFAULT_RAM_MARGIN_GB: float = 0.0          # Extra margin if requested
 
 PRIORITY_HEADNODE_LAST: int = 0
 PRIORITY_DEDICATED_DISCRETE: int = 50
-PRIORITY_DEDICATED_UNIFIED_GB10: int = 100
 HEADNODE_HOSTNAMES = {"isipol09", "headnode"}
 
 try:
-    from src.config.defaults import should_enforce_node_memory_limit
+    from src.config.defaults import (
+        DEFAULT_PLACEMENT_PRIORITY,
+        HEADNODE_PLACEMENT_PRIORITY,
+        should_enforce_node_memory_limit,
+    )
 except ImportError:
+    DEFAULT_PLACEMENT_PRIORITY = 50
+    HEADNODE_PLACEMENT_PRIORITY = 0
+
     def should_enforce_node_memory_limit(role: str) -> bool:
         return str(role or "").strip().lower() in ("headnode", "headnode_worker")
+
+# Backward compatibility alias
+PRIORITY_HEADNODE_LAST = HEADNODE_PLACEMENT_PRIORITY
+PRIORITY_DEFAULT_WORKER = DEFAULT_PLACEMENT_PRIORITY
 
 
 def is_headnode_host(host_profile: Dict[str, Any]) -> bool:
@@ -98,17 +108,41 @@ def is_unified_memory_host(host_profile: Dict[str, Any]) -> bool:
 def placement_priority(host_profile: Dict[str, Any]) -> int:
     """Calculate scheduling placement priority for a host.
     
-    Higher score means higher preference during worker dispatch.
-    The headnode is always assigned the lowest priority (0) to ensure
-    it is only chosen when no other capable worker is available (worker of last resort).
+    Convention: Higher value = preferred first.
+    Default:
+      - Headnode: HEADNODE_PLACEMENT_PRIORITY (0) -> strictly worker of last resort.
+      - All non-headnode workers: DEFAULT_PLACEMENT_PRIORITY (50).
+    Override:
+      - Host-level: 'placement_priority' or 'priority' key in host_profile.
+      - Environment: CLUSTER_CI_PLACEMENT_PRIORITY (allows Henri to favor specific nodes).
     """
+    # 1. Check explicit override in host_profile
+    if "placement_priority" in host_profile and host_profile["placement_priority"] is not None:
+        try:
+            return int(host_profile["placement_priority"])
+        except (ValueError, TypeError):
+            pass
+
+    if "priority" in host_profile and host_profile["priority"] is not None:
+        try:
+            return int(host_profile["priority"])
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Check environment variable override
+    env_override = os.environ.get("CLUSTER_CI_PLACEMENT_PRIORITY")
+    if env_override is not None and env_override.strip() != "":
+        try:
+            return int(env_override.strip())
+        except ValueError:
+            pass
+
+    # 3. Headnode check: worker of last resort
     if is_headnode_host(host_profile):
-        return PRIORITY_HEADNODE_LAST
+        return HEADNODE_PLACEMENT_PRIORITY
 
-    if is_unified_memory_host(host_profile):
-        return PRIORITY_DEDICATED_UNIFIED_GB10
-
-    return PRIORITY_DEDICATED_DISCRETE
+    # 4. Standard default for all other machines
+    return DEFAULT_PLACEMENT_PRIORITY
 
 
 def format_memory_value(gb: float) -> str:

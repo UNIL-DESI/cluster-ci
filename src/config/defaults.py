@@ -174,3 +174,11 @@ def should_enforce_node_memory_limit(role: str) -> bool:
     role_normalized = str(role or "worker").strip().lower()
     return ENFORCE_NODE_MEMORY_LIMIT.get(role_normalized, False)
 
+
+# Scheduling: Worker placement priority defaults
+# Convention: Higher value = preferred first.
+# Default: All non-headnode machines share the same standard priority (50).
+# Headnode is strictly the worker of last resort (0).
+DEFAULT_PLACEMENT_PRIORITY: int = 50
+HEADNODE_PLACEMENT_PRIORITY: int = 0
+

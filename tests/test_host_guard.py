@@ -6,9 +6,6 @@ from src.runner.host_guard import (
     DEFAULT_HEADNODE_CPU_RESERVE,
     DEFAULT_HEADNODE_DISK_RESERVE_GB,
     DEFAULT_HEADNODE_RAM_RESERVE_GB,
-    PRIORITY_DEDICATED_DISCRETE,
-    PRIORITY_DEDICATED_UNIFIED_GB10,
-    PRIORITY_HEADNODE_LAST,
     docker_resource_args,
     docker_resource_args_string,
     format_memory_value,
@@ -47,7 +44,9 @@ def test_is_unified_memory_detection():
     assert is_unified_memory_host({"gpu_name": "2x NVIDIA GeForce RTX 3090"}) is False
 
 
-def test_placement_priority():
+def test_placement_priority(monkeypatch):
+    from src.config.defaults import DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
+
     headnode_host = {
         "hostname": "isipol09",
         "role": "headnode",
@@ -71,16 +70,26 @@ def test_placement_priority():
         "cpus": 16,
     }
 
-    assert placement_priority(headnode_host) == PRIORITY_HEADNODE_LAST
-    assert placement_priority(gb10_host) == PRIORITY_DEDICATED_UNIFIED_GB10
-    assert placement_priority(discrete_worker) == PRIORITY_DEDICATED_DISCRETE
+    # 1. Par défaut : toutes les machines non-headnode ont la même valeur (50), headnode 0
+    assert placement_priority(headnode_host) == HEADNODE_PLACEMENT_PRIORITY  # 0
+    assert placement_priority(gb10_host) == DEFAULT_PLACEMENT_PRIORITY        # 50
+    assert placement_priority(discrete_worker) == DEFAULT_PLACEMENT_PRIORITY  # 50
 
-    # Tri : le headnode doit TOUJOURS être sélectionné en DERNIER
-    workers = [headnode_host, discrete_worker, gb10_host]
+    # 2. Surcharge explicite dans le dictionnaire du worker (ex: Henri favorise une machine spécifique)
+    gb10_favored = dict(gb10_host, placement_priority=90)
+    assert placement_priority(gb10_favored) == 90
+
+    # 3. Surcharge via variable d'environnement CLUSTER_CI_PLACEMENT_PRIORITY
+    monkeypatch.setenv("CLUSTER_CI_PLACEMENT_PRIORITY", "80")
+    assert placement_priority(discrete_worker) == 80
+    monkeypatch.delenv("CLUSTER_CI_PLACEMENT_PRIORITY", raising=False)
+
+    # 4. Tri : le headnode reste STRICTEMENT le dernier recours
+    workers = [headnode_host, discrete_worker, gb10_favored]
     sorted_workers = sorted(workers, key=placement_priority, reverse=True)
-    assert sorted_workers[0]["hostname"] == "HEC45801"
-    assert sorted_workers[1]["hostname"] == "worker-gpu-01"
-    assert sorted_workers[2]["hostname"] == "isipol09"
+    assert sorted_workers[0]["hostname"] == "HEC45801"      # 90 (favorisé)
+    assert sorted_workers[1]["hostname"] == "worker-gpu-01" # 50 (défaut)
+    assert sorted_workers[2]["hostname"] == "isipol09"      # 0 (dernier recours)
 
 
 def test_format_memory_value():
