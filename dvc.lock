@@ -16,3 +16,19 @@ stages:
       hash: md5
       md5: 863d5fcc6883363b582f561f26134070
       size: 138
+  pack_light_2:
+    cmd: python3 simulate_research.py pack_light_2
+    deps:
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/pack_light_2.bin
+      hash: md5
+      md5: 7a3da3fe48338bb7a947936ea99e64f6
+      size: 10485760
+    - path: metrics/pack_light_2.json
+      hash: md5
+      md5: aab0702935b3983a98de977a308aa942
+      size: 138
