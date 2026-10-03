@@ -80,6 +80,15 @@ if [ -z "$WORKER_COUNT" ]; then
     WORKER_COUNT=0
 fi
 
+# Auto-detect WORKER_1..N from environment variables (WORKER_<N>_IP)
+for var in $(compgen -v 2>/dev/null | grep '^WORKER_[0-9]\+_IP$' || true); do
+    num="${var#WORKER_}"
+    num="${num%_IP}"
+    if [ "$num" -gt "$WORKER_COUNT" ] 2>/dev/null; then
+        WORKER_COUNT=$num
+    fi
+done
+
 # Only enter worker addition flow if --add-worker flag is passed
 if [ "$ADD_WORKER" = true ]; then
     echo "--- Workers Configuration (--add-worker mode) ---"
@@ -184,6 +193,10 @@ for ((i=1; i<=WORKER_COUNT; i++)); do
     pass_val="${!pass_var}"
     
     if [ -n "$ip_val" ]; then
+        if [ "$ip_val" = "$HEADNODE_IP" ]; then
+            echo "ℹ️  Worker $i ($ip_val) is the Headnode (already updated in dual-mode). Skipping duplicate worker deployment."
+            continue
+        fi
         echo "==========================================================="
         echo "🚀 Updating Worker $i ($ip_val)..."
         echo "==========================================================="
