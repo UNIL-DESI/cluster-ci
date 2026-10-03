@@ -12,7 +12,7 @@ import yaml
 
 from dvc.repo import Repo
 from src.config.defaults import DEFAULT_RESOURCES, parse_project_cluster_ci, validate_and_resolve_resources
-from src.planner.stage_plan import compute_stage_plan
+from src.planner.stage_plan import compute_stage_plan, replan
 
 
 def _remove_readonly(func, path, exc_info):
@@ -319,7 +319,195 @@ def test_cli_execution(toy_repo):
         env={**os.environ, "PYTHONPATH": "."},
     )
     data = json.loads(res.stdout)
-    assert data["version"] == 1
+    assert data["version"] == "3.0"
     assert "defaults" in data
     assert "nodes" in data
     assert len(data["nodes"]) == 4  # prep_a, proc_b@item1, proc_b@item2, join_all
+
+
+def test_subpath_of_upstream_directory_output_no_false_mismatch():
+    """Bug fix (1): Dependency that is a subpath of an upstream directory output.
+
+    Verifies that when upstream produces a directory output (hashed as .dir in dvc.lock)
+    and downstream consumes a subpath inside it, the planner:
+    - Never compares file md5 to directory .dir md5 (no false upstream_hash_mismatch).
+    - Accurately reports downstream as not stale when the subpath is intact.
+    - Accurately detects when the subpath changes.
+    - Remains valid even when .dvc/cache is deleted (heavy data abstraction).
+    """
+    d = tempfile.mkdtemp(prefix="test_dir_subpath_")
+    try:
+        subprocess.run(["git", "init"], cwd=d, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Tester"], cwd=d, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=d, check=True)
+        subprocess.run(["dvc", "init"], cwd=d, check=True, capture_output=True)
+
+        # Producer creates a directory output 'generated_dir' with 2 files inside
+        with open(os.path.join(d, "producer.py"), "w", encoding="utf-8") as f:
+            f.write(
+                'import os\n'
+                'os.makedirs("generated_dir", exist_ok=True)\n'
+                'with open("generated_dir/sub_a.txt", "w") as f:\n'
+                '    f.write("content_a\\n")\n'
+                'with open("generated_dir/sub_b.txt", "w") as f:\n'
+                '    f.write("content_b\\n")\n'
+            )
+
+        # Consumer depends specifically on sub_a.txt inside generated_dir
+        with open(os.path.join(d, "consumer.py"), "w", encoding="utf-8") as f:
+            f.write(
+                'with open("generated_dir/sub_a.txt") as f_in, open("consumer_out.txt", "w") as f_out:\n'
+                '    f_out.write("consumed: " + f_in.read())\n'
+            )
+
+        dvc_yaml = """stages:
+  produce_dir:
+    cmd: python producer.py
+    deps:
+      - producer.py
+    outs:
+      - generated_dir
+
+  consume_sub:
+    cmd: python consumer.py
+    deps:
+      - consumer.py
+      - generated_dir/sub_a.txt
+    outs:
+      - consumer_out.txt
+"""
+        with open(os.path.join(d, "dvc.yaml"), "w", encoding="utf-8") as f:
+            f.write(dvc_yaml)
+
+        subprocess.run(["git", "add", "."], cwd=d, check=True)
+        subprocess.run(["git", "commit", "-m", "init dir subpath repo"], cwd=d, check=True)
+
+        # Run dvc repro so dvc.lock is generated with produce_dir output having a .dir hash
+        subprocess.run(["dvc", "repro"], cwd=d, check=True, capture_output=True)
+
+        # Verify dvc.lock structure: produce_dir has a .dir output, consume_sub has file md5
+        with open(os.path.join(d, "dvc.lock"), "r", encoding="utf-8") as f:
+            lock = yaml.safe_load(f)
+        prod_out = lock["stages"]["produce_dir"]["outs"][0]
+        assert prod_out["md5"].endswith(".dir")
+
+        cons_dep = next(dep for dep in lock["stages"]["consume_sub"]["deps"] if "sub_a.txt" in dep["path"])
+        assert not cons_dep["md5"].endswith(".dir")
+
+        # Compute plan: consume_sub must NOT be marked stale with upstream_hash_mismatch
+        plan = compute_stage_plan(d)
+        nodes = {n["name"]: n for n in plan["nodes"]}
+        assert nodes["produce_dir"]["stale"] is False
+        assert nodes["consume_sub"]["stale"] is False
+        assert nodes["consume_sub"]["stale_reason"] is None
+
+        # Even if .dvc/cache is deleted, plan remains not stale (heavy data abstraction)
+        cache_dir = os.path.join(d, ".dvc", "cache")
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir, onerror=_remove_readonly)
+        plan_no_cache = compute_stage_plan(d)
+        nodes_no_cache = {n["name"]: n for n in plan_no_cache["nodes"]}
+        assert nodes_no_cache["consume_sub"]["stale"] is False
+
+        # If sub_a.txt is modified on disk, consumer must become stale
+        with open(os.path.join(d, "generated_dir", "sub_a.txt"), "w", encoding="utf-8") as f:
+            f.write("content_a_modified\n")
+        plan_mod = compute_stage_plan(d)
+        nodes_mod = {n["name"]: n for n in plan_mod["nodes"]}
+        assert nodes_mod["consume_sub"]["stale"] is True
+        assert "code_dep_changed:generated_dir/sub_a.txt" in nodes_mod["consume_sub"]["stale_reason"]
+    finally:
+        shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
+
+
+def test_always_changed_no_blind_downstream_propagation_and_replan():
+    """Bug fix (2): always_changed stage must not blindly invalidate downstream stages.
+
+    Verifies that:
+    - An upstream stage with always_changed: true is stale (always_changed).
+    - Downstream stages are NOT stale if their inputs match dvc.lock.
+    - replan(repo, done_node) re-evaluates staleness after upstream execution.
+    - When upstream output actually changes, downstream stages become stale.
+    """
+    d = tempfile.mkdtemp(prefix="test_always_changed_")
+    try:
+        subprocess.run(["git", "init"], cwd=d, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Tester"], cwd=d, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=d, check=True)
+        subprocess.run(["dvc", "init"], cwd=d, check=True, capture_output=True)
+
+        with open(os.path.join(d, "stage_a.py"), "w", encoding="utf-8") as f:
+            f.write('with open("a_out.txt", "w") as f: f.write("fixed_value\\n")\n')
+
+        with open(os.path.join(d, "stage_b.py"), "w", encoding="utf-8") as f:
+            f.write('with open("a_out.txt") as f_in, open("b_out.txt", "w") as f_out: f_out.write("b: " + f_in.read())\n')
+
+        with open(os.path.join(d, "stage_c.py"), "w", encoding="utf-8") as f:
+            f.write('with open("b_out.txt") as f_in, open("c_out.txt", "w") as f_out: f_out.write("c: " + f_in.read())\n')
+
+        dvc_yaml = """stages:
+  stage_a:
+    cmd: python stage_a.py
+    always_changed: true
+    deps:
+      - stage_a.py
+    outs:
+      - a_out.txt
+
+  stage_b:
+    cmd: python stage_b.py
+    deps:
+      - stage_b.py
+      - a_out.txt
+    outs:
+      - b_out.txt
+
+  stage_c:
+    cmd: python stage_c.py
+    deps:
+      - stage_c.py
+      - b_out.txt
+    outs:
+      - c_out.txt
+"""
+        with open(os.path.join(d, "dvc.yaml"), "w", encoding="utf-8") as f:
+            f.write(dvc_yaml)
+
+        subprocess.run(["git", "add", "."], cwd=d, check=True)
+        subprocess.run(["git", "commit", "-m", "init always_changed pipeline"], cwd=d, check=True)
+
+        # Run initial repro
+        subprocess.run(["dvc", "repro"], cwd=d, check=True, capture_output=True)
+
+        # Plan initially: stage_a is stale (always_changed), but stage_b and stage_c are NOT stale!
+        plan = compute_stage_plan(d)
+        nodes = {n["name"]: n for n in plan["nodes"]}
+        assert nodes["stage_a"]["stale"] is True
+        assert nodes["stage_a"]["stale_reason"] == "always_changed"
+
+        # Crucial check: downstream nodes are NOT contaminated by always_changed
+        assert nodes["stage_b"]["stale"] is False
+        assert nodes["stage_b"]["stale_reason"] is None
+        assert nodes["stage_c"]["stale"] is False
+        assert nodes["stage_c"]["stale_reason"] is None
+
+        # Test replan function after stage_a finishes
+        re_plan = replan(d, done_node="stage_a")
+        re_nodes = {n["name"]: n for n in re_plan["nodes"]}
+        assert re_nodes["stage_b"]["stale"] is False
+        assert re_nodes["stage_c"]["stale"] is False
+
+        # Now simulate stage_a actually changing its output content
+        with open(os.path.join(d, "a_out.txt"), "w", encoding="utf-8") as f:
+            f.write("new_changed_output\\n")
+
+        # Now stage_b must be detected as stale because its input actually changed
+        plan_after_change = compute_stage_plan(d)
+        nodes_after = {n["name"]: n for n in plan_after_change["nodes"]}
+        assert nodes_after["stage_b"]["stale"] is True
+        assert "code_dep_changed:a_out.txt" in nodes_after["stage_b"]["stale_reason"]
+        # And stage_c is stale by upstream propagation of stage_b (which is NOT always_changed)
+        assert nodes_after["stage_c"]["stale"] is True
+        assert nodes_after["stage_c"]["stale_reason"] == "upstream_stale:stage_b"
+    finally:
+        shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
