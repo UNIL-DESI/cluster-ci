@@ -21,6 +21,10 @@ import shutil
 import signal
 import datetime
 from flask import abort, Flask, jsonify, send_from_directory, send_file, request, Response
+try:
+    from redaction import redact_secrets
+except ImportError:
+    from src.scheduler.redaction import redact_secrets
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -949,10 +953,10 @@ def get_job_logs(job_id):
             f.seek(offset)
             new_logs = f.read()
             new_offset = f.tell()
-        return jsonify({"logs": new_logs, "offset": new_offset})
+        return jsonify(redact_secrets({"logs": new_logs, "offset": new_offset}))
     except Exception as e:
         logger.error(f"Error reading logs for {job_id}: {e}")
-        return jsonify({"logs": "", "offset": offset}), 500
+        return jsonify(redact_secrets({"logs": "", "offset": offset})), 500
 
 @app.route('/viewer_logs', methods=['GET'])
 def get_viewer_logs():
@@ -963,9 +967,9 @@ def get_viewer_logs():
     try:
         with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
-        return jsonify({"logs": content[-2000:] if len(content) > 2000 else content})
+        return jsonify(redact_secrets({"logs": content[-2000:] if len(content) > 2000 else content}))
     except Exception as e:
-        return jsonify({"logs": f"Error reading dvc-viewer.log: {e}"}), 500
+        return jsonify(redact_secrets({"logs": f"Error reading dvc-viewer.log: {e}"})), 500
 
 @app.route('/crash_report', methods=['GET'])
 def get_crash_report():
@@ -979,12 +983,12 @@ def get_crash_report():
             "sudo journalctl -u cluster-worker -n 50 --no-pager",
             shell=True, capture_output=True, text=True
         )
-        return jsonify({
+        return jsonify(redact_secrets({
             "dmesg": res.stdout,
             "syslog": syslog.stdout
-        })
+        }))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(redact_secrets({"error": str(e)})), 500
 
 @app.route('/fetch_artifact/<path:file_path>', methods=['GET'])
 def fetch_artifact(file_path):
