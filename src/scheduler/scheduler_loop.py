@@ -1128,6 +1128,14 @@ def handle_next_node(req):
         except Exception:
             dep_paths_list = []
 
+    out_paths_list = []
+    raw_outs = next_node.get("out_paths")
+    if raw_outs:
+        try:
+            out_paths_list = json.loads(raw_outs) if isinstance(raw_outs, str) else list(raw_outs)
+        except Exception:
+            out_paths_list = []
+
     dep_sources_map = {}
     try:
         with get_db_conn() as conn:
@@ -1154,7 +1162,8 @@ def handle_next_node(req):
         "gpu_ids": gpu_ids,
         "dep_paths": dep_paths_list,
         "dep_sources": dep_sources_map,
-        "sources": dep_sources_map
+        "sources": dep_sources_map,
+        "out_paths": out_paths_list,
     }
 
 def check_resource_impossibility(resources, workers, item_name="job", is_classic=False):
