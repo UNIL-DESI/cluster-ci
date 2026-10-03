@@ -776,6 +776,7 @@ class BranchExecutor:
             f"chown -R {self.user_id}:{self.group_id} /home/user && "
             f"chown -R {self.user_id}:{self.group_id} /workspace && "
             "if [ -d /opt/Automodel ]; then chmod -R a+rX /opt/Automodel; fi && "
+            "if [ -d /opt/uv_cache ]; then chmod -R a+rwX /opt/uv_cache; fi && "
             'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '
             'if [ -d /home/user/.local ]; then find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u > "$SITE/cluster-ci-prefix.pth"; else touch "$SITE/cluster-ci-prefix.pth"; fi && '
             'chmod 644 "$SITE/cluster-ci-prefix.pth"'
