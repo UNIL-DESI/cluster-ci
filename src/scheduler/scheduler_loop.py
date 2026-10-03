@@ -21,6 +21,7 @@ try:
         HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
     )
     from artifact_registry import affinity_bytes, sources_for, record_node_outputs
+    from db_retention import run_retention_periodic
 except ImportError:
     from src.scheduler.persistence import (
         get_db_conn, init_db, update_dag_ready_states, mark_node_status,
@@ -34,6 +35,7 @@ except ImportError:
         HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
     )
     from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
+    from src.scheduler.db_retention import run_retention_periodic
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -755,13 +757,37 @@ def handle_next_node(req):
                 except Exception as e:
                     logger.debug(f"Failed to record node outputs in artifact registry: {e}")
         elif status == "failed":
+            if not error_message and exit_code == 137:
+                error_message = f"OOMKilled: Stage '{node_name}' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)"
+            elif exit_code == 137 and "OOMKilled" not in (error_message or ""):
+                error_message = f"OOMKilled: {error_message} (Exit code 137)"
             mark_node_status(job_id, node_name, "failed", duration_s=duration_s,
                              exit_code=exit_code or 1, error_message=error_message)
+            if error_message:
+                try:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    log_dir = os.path.join(repo_root, "job_logs")
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"{job_id}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"\n[CLUSTER-CI ERROR] Node '{node_name}' failed: {error_message}\n")
+                except Exception as e:
+                    logger.debug(f"Could not append node error to job log: {e}")
         elif status == "missing_deps":
             res = handle_missing_deps(job_id, node_name, missing_paths)
             if not res.get("success"):
+                err = f"Missing deps could not be recovered: {missing_paths}"
                 mark_node_status(job_id, node_name, "failed", exit_code=1,
-                                 error_message=f"Missing deps could not be recovered: {missing_paths}")
+                                 error_message=err)
+                try:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    log_dir = os.path.join(repo_root, "job_logs")
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"{job_id}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"\n[CLUSTER-CI ERROR] Node '{node_name}' failed: {err}\n")
+                except Exception:
+                    pass
 
     # Récupérer l'état du job et du worker
     with get_db_conn() as conn:
@@ -1076,9 +1102,9 @@ def check_job_impossible_nodes(job_id, conn, workers):
                 WHERE job_id = ? AND node_name = ?
             ''', (err_msg, job_id, n_name))
             cursor.execute('''
-                UPDATE jobs SET status = 'failed', exit_code = 1, finished_at = CURRENT_TIMESTAMP
+                UPDATE jobs SET status = 'failed', exit_code = 1, error_message = ?, finished_at = CURRENT_TIMESTAMP
                 WHERE job_id = ?
-            ''', (job_id,))
+            ''', (err_msg, job_id))
             conn.commit()
 
             try:
@@ -1501,11 +1527,18 @@ def schedule_iteration():
 
 def schedule_jobs():
     """Boucle continue d'ordonnancement cadencée toutes les 5 secondes."""
+    last_retention_ts = 0.0
     while True:
         try:
             schedule_iteration()
         except Exception as e:
             logger.error(f"Error in scheduler loop: {e}")
+        try:
+            last_retention_ts, report = run_retention_periodic(last_retention_ts)
+            if report and report.jobs_purged > 0:
+                logger.info(f"Database retention: purged {report.jobs_purged} pathological jobs")
+        except Exception as e:
+            logger.error(f"Error in retention periodic: {e}")
         time.sleep(5)
 
 if __name__ == '__main__':

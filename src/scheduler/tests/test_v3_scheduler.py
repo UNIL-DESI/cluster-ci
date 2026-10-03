@@ -1247,3 +1247,126 @@ def test_a17_impossible_node_immediate_job_failure_and_actionable_message(client
     assert "remède : réduire meta.cluster.ram_gb" in log_resp.get("logs", "")
 
 
+# =========================================================================
+# 23. Persistance des capacités W4 & docker_images dans register_worker / heartbeat
+# =========================================================================
+
+def test_register_worker_persists_w4_capacities_and_docker_images(client):
+    """
+    Vérifie que /register_worker et /heartbeat persistent les capacités fines W4
+    (cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images)
+    et que /workers les restitue fidèlement.
+    """
+    target_img = "docker.io/nvidia/pytorch:26.05-py3"
+    worker_payload = {
+        "worker_id": "W_GPU_A13",
+        "hostname": "worker-gpu-a13",
+        "service_url": "http://10.0.0.42:6000",
+        "total_ram_gb": 128.0,
+        "available_ram_gb": 110.0,
+        "total_storage_gb": 1000.0,
+        "available_storage_gb": 850.0,
+        "total_vram_gb": 24.0,
+        "available_vram_gb": 24.0,
+        "gpu_count": 2,
+        "gpu_name": "NVIDIA GeForce RTX 3090",
+        "cpus": 32,
+        "ram_gb": 128.0,
+        "vram_per_gpu": [24.0, 24.0],
+        "unified_memory": 0,
+        "arch": "x86_64",
+        "disk_free_gb": 850.0,
+        "role": "worker",
+        "docker_images": {target_img: 5000000000}
+    }
+
+    # 1. Enregistrement via /register_worker
+    resp = client.post("/register_worker", json=worker_payload)
+    assert resp.status_code == 200
+
+    # 2. Vérification directe en base SQLite
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT cpus, ram_gb, vram_per_gpu, arch, docker_images FROM workers WHERE worker_id = 'W_GPU_A13'")
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == 32
+        assert row[1] == 128.0
+        assert json.loads(row[2]) == [24.0, 24.0]
+        assert row[3] == "x86_64"
+        assert json.loads(row[4]) == {target_img: 5000000000}
+
+    # 3. Vérification de la route /workers
+    workers_resp = client.get("/workers").get_json()
+    w_found = next((w for w in workers_resp if w["worker_id"] == "W_GPU_A13"), None)
+    assert w_found is not None
+    assert w_found["cpus"] == 32
+    assert w_found["docker_images"] == {target_img: 5000000000}
+
+    # 4. Vérification via l'alias /heartbeat
+    worker_payload["docker_images"][target_img] = 6000000000
+    hb_resp = client.post("/heartbeat", json=worker_payload)
+    assert hb_resp.status_code == 200
+
+    workers_resp2 = client.get("/workers").get_json()
+    w_found2 = next((w for w in workers_resp2 if w["worker_id"] == "W_GPU_A13"), None)
+    assert w_found2["docker_images"][target_img] == 6000000000
+
+
+# =========================================================================
+# 24. Messages A17 / OOMKilled dans /job_status et /job_logs
+# =========================================================================
+
+def test_a17_oomkilled_message_in_job_status_and_job_logs(client):
+    """
+    Vérifie qu'un échec OOM (exit code 137 ou mention OOMKilled) remonté par
+    l'exécuteur apparaît explicitement dans /job_status et dans /job_logs.
+    """
+    # Cas A : Exécuteur v3 par DAG (/api/jobs/<job_id>/next_node)
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "heavy_stage", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}}
+        ]
+    }
+    j_resp = client.post("/submit_job", json={"repo": "owner/oom-test", "branch": "main", "plan": plan}).get_json()
+    job_id_v3 = j_resp["job_id"]
+
+    # Remontée d'un échec exit code 137 par le runner
+    fail_payload = {
+        "runner_id": "runner_oom_1",
+        "worker": "w1",
+        "node": "heavy_stage",
+        "status": "failed",
+        "exit_code": 137,
+        "error_message": "Container killed by system OOM Killer"
+    }
+    next_node_resp = client.post(f"/api/jobs/{job_id_v3}/next_node", json=fail_payload)
+    assert next_node_resp.status_code == 200
+
+    # Vérification /job_status
+    st_v3 = client.get(f"/job_status/{job_id_v3}").get_json()
+    assert "OOMKilled" in st_v3.get("error_message", "")
+    nodes = {n["name"]: n for n in st_v3.get("nodes", [])}
+    assert "OOMKilled" in nodes["heavy_stage"].get("error_message", "")
+
+    # Vérification /job_logs
+    logs_v3 = client.get(f"/job_logs/{job_id_v3}?offset=0").get_json()
+    assert "OOMKilled" in logs_v3.get("logs", "")
+
+    # Cas B : Job classique (/update_job_status avec exit_code 137)
+    j_classic = client.post("/submit_job", json={"repo": "owner/oom-classic", "branch": "main", "ram_required_gb": 4.0}).get_json()
+    job_id_classic = j_classic["job_id"]
+
+    update_resp = client.post("/update_job_status", json={"job_id": job_id_classic, "status": "failed", "exit_code": 137})
+    assert update_resp.status_code == 200
+
+    st_classic = client.get(f"/job_status/{job_id_classic}").get_json()
+    assert st_classic["status"] == "failed"
+    assert "OOMKilled" in st_classic.get("error_message", "")
+
+    logs_classic = client.get(f"/job_logs/{job_id_classic}?offset=0").get_json()
+    assert "OOMKilled" in logs_classic.get("logs", "")
+
+
+

@@ -230,7 +230,8 @@ def init_db():
         'home_worker TEXT',
         'parallel_mode INTEGER DEFAULT 0',
         'plan_json TEXT',
-        'active_workers TEXT DEFAULT "[]"'
+        'active_workers TEXT DEFAULT "[]"',
+        'error_message TEXT'
     ]:
         col_name = col_def.split()[0]
         try:

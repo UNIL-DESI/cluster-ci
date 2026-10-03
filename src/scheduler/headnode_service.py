@@ -534,8 +534,10 @@ def submit_maintenance_job():
     }), 201
 
 @app.route('/register_worker', methods=['POST'])
+@app.route('/heartbeat', methods=['POST'])
+@app.route('/api/worker/heartbeat', methods=['POST'])
 def register_worker():
-    data = request.json
+    data = request.json or {}
     worker_id = data.get('worker_id')
     hostname = data.get('hostname')
     service_url = data.get('service_url')
@@ -549,26 +551,69 @@ def register_worker():
     gpu_name = data.get('gpu_name')
     available_vram_gb = data.get('available_vram_gb', 0)
 
+    # W4 Capacités & Docker images (A13)
+    cpus = data.get('cpus') or 4
+    ram_gb = data.get('ram_gb')
+    if ram_gb is None and total_ram_gb is not None:
+        ram_gb = total_ram_gb
+    vram_per_gpu = data.get('vram_per_gpu')
+    if isinstance(vram_per_gpu, (list, dict)):
+        vram_per_gpu = json.dumps(vram_per_gpu)
+    unified_memory = 1 if data.get('unified_memory') else 0
+    arch = data.get('arch') or 'x86_64'
+    disk_free_gb = data.get('disk_free_gb')
+    if disk_free_gb is None:
+        disk_free_gb = available_storage_gb if available_storage_gb is not None else (total_storage_gb or 0.0)
+    role = data.get('role') or 'worker'
+    docker_images = data.get('docker_images')
+    if isinstance(docker_images, (dict, list)):
+        docker_images = json.dumps(docker_images)
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
         # available_ram_gb is now a derived state, but we keep the column for backward compatibility
         # (it will be ignored by the dynamic calculation).
         cursor.execute('''
-            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb, last_seen, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
+            INSERT INTO workers (
+                worker_id, hostname, service_url,
+                total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb,
+                total_vram_gb, gpu_count, gpu_name, available_vram_gb,
+                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images,
+                last_seen, status
+            )
+            VALUES (
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '{}'),
+                CURRENT_TIMESTAMP, 'online'
+            )
             ON CONFLICT(worker_id) DO UPDATE SET
-                hostname = ?,
-                service_url = ?,
-                total_ram_gb = ?,
-                total_storage_gb = ?,
-                available_storage_gb = ?,
-                total_vram_gb = ?,
-                gpu_count = ?,
-                gpu_name = ?,
-                available_vram_gb = ?,
+                hostname = excluded.hostname,
+                service_url = excluded.service_url,
+                total_ram_gb = excluded.total_ram_gb,
+                total_storage_gb = excluded.total_storage_gb,
+                available_storage_gb = excluded.available_storage_gb,
+                total_vram_gb = excluded.total_vram_gb,
+                gpu_count = excluded.gpu_count,
+                gpu_name = excluded.gpu_name,
+                available_vram_gb = excluded.available_vram_gb,
+                cpus = COALESCE(excluded.cpus, workers.cpus),
+                ram_gb = COALESCE(excluded.ram_gb, workers.ram_gb),
+                vram_per_gpu = COALESCE(excluded.vram_per_gpu, workers.vram_per_gpu),
+                unified_memory = COALESCE(excluded.unified_memory, workers.unified_memory),
+                arch = COALESCE(excluded.arch, workers.arch),
+                disk_free_gb = COALESCE(excluded.disk_free_gb, workers.disk_free_gb),
+                role = COALESCE(excluded.role, workers.role),
+                docker_images = COALESCE(excluded.docker_images, workers.docker_images, '{}'),
                 last_seen = CURRENT_TIMESTAMP,
                 status = 'online'
-        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb))
+        ''', (
+            worker_id, hostname, service_url,
+            total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb,
+            total_vram_gb, gpu_count, gpu_name, available_vram_gb,
+            cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images
+        ))
         
         # If a worker re-registers (is_startup=True), it means it restarted and lost any running jobs.
         # We only fail 'running' jobs. Jobs that were merely 'assigned' are safely reverted to 'pending'
@@ -930,10 +975,22 @@ def list_workers():
                     FROM jobs
                     WHERE worker_id = workers.worker_id AND status IN ('running', 'assigned')
                 )) as available_ram_gb,
-                total_storage_gb, available_storage_gb, total_vram_gb, available_vram_gb, gpu_count, gpu_name, last_seen, status
+                total_storage_gb, available_storage_gb, total_vram_gb, available_vram_gb, gpu_count, gpu_name, last_seen, status,
+                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, docker_images, role
             FROM workers
         ''')
         workers = [dict(row) for row in cursor.fetchall()]
+        for w in workers:
+            if w.get('docker_images') and isinstance(w['docker_images'], str):
+                try:
+                    w['docker_images'] = json.loads(w['docker_images'])
+                except Exception:
+                    pass
+            if w.get('vram_per_gpu') and isinstance(w['vram_per_gpu'], str):
+                try:
+                    w['vram_per_gpu'] = json.loads(w['vram_per_gpu'])
+                except Exception:
+                    pass
     return jsonify(workers)
 
 @app.route('/scheduler_status', methods=['GET'])
@@ -1029,6 +1086,15 @@ def job_status(job_id):
                     job_dict["worker_service_url"] = headnode_base
             except Exception:
                 pass
+            if not job_dict.get("error_message"):
+                for n in nodes_list:
+                    if n.get("error_message"):
+                        job_dict["error_message"] = n["error_message"]
+                        break
+        else:
+            if job_dict.get("status") == "failed" and job_dict.get("exit_code") == 137:
+                if not job_dict.get("error_message"):
+                    job_dict["error_message"] = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
 
         return jsonify(redact_secrets(job_dict))
 
@@ -1302,8 +1368,27 @@ def update_job_status():
                 WHERE job_id = ?
             ''', (status, commit_hash, viewer_port, job_id))
         elif status in ['completed', 'failed']:
-            cursor.execute('UPDATE jobs SET status = ?, finished_at = CURRENT_TIMESTAMP, exit_code = COALESCE(?, exit_code), commit_hash = COALESCE(?, commit_hash) WHERE job_id = ?', (status, exit_code, commit_hash, job_id))
+            err_msg = data.get('error_message')
+            if status == 'failed':
+                if not err_msg and exit_code == 137:
+                    err_msg = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
+                elif exit_code == 137 and "OOMKilled" not in (err_msg or ""):
+                    err_msg = f"OOMKilled: {err_msg} (Exit code 137)"
+            cursor.execute('''
+                UPDATE jobs SET
+                    status = ?,
+                    finished_at = CURRENT_TIMESTAMP,
+                    exit_code = COALESCE(?, exit_code),
+                    commit_hash = COALESCE(?, commit_hash),
+                    error_message = COALESCE(?, error_message)
+                WHERE job_id = ?
+            ''', (status, exit_code, commit_hash, err_msg, job_id))
             cleanup_local_archive(job_id)
+            if status == 'failed' and err_msg:
+                try:
+                    _append_job_logs(job_id, f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+                except Exception:
+                    pass
         else:
             cursor.execute('UPDATE jobs SET status = ? WHERE job_id = ?', (status, job_id))
         conn.commit()
