@@ -1334,7 +1334,7 @@ def workspace_path(repo, local=False):
 @app.before_request
 def require_local_file_token():
     local = request.args.get('local') == '1'
-    protected = request.endpoint in {'local_viewer_proxy', 'dvc_viewer_authenticated_proxy'}
+    protected = request.endpoint == 'local_viewer_proxy'
     if request.endpoint in {'worker_dvc_get', 'worker_dvc_list', 'start_dvc_viewer'}:
         protected = protected or local
     if request.endpoint == 'fetch_artifact':
@@ -1371,42 +1371,6 @@ def local_viewer_proxy(owner, repo, path):
         })
     except (OSError, ValueError, requests.RequestException):
         return jsonify({"error": "Local viewer unavailable"}), 502
-
-
-@app.route('/api/worker/dvc-viewer/proxy/<int:port>/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-@app.route('/api/worker/dvc-viewer/proxy/<int:port>/<path:path>', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-def dvc_viewer_authenticated_proxy(port, path):
-    """Proxy authenticated cluster requests from headnode to loopback dvc-viewer on this worker.
-    Blocks any mutating endpoints like /api/stop, /api/run, /api/stage/freeze.
-    """
-    if not (1024 <= port <= 65535):
-        abort(400)
-
-    # Block mutating routes to protect dvc-viewer and active calculations
-    blocked_endpoints = ['api/stop', 'api/run', 'api/stage/freeze', 'api/stage/unfreeze', 'api/update']
-    clean_path = path.lstrip('/')
-    for blocked in blocked_endpoints:
-        if clean_path.startswith(blocked):
-            return jsonify({"error": f"Mutating action '{blocked}' is disabled in Cluster-CI proxy"}), 403
-
-    target_url = f"http://127.0.0.1:{port}/{path}"
-    try:
-        response = requests.request(
-            request.method, target_url, params=request.args,
-            data=request.get_data(), headers={'Content-Type': request.content_type} if request.content_type else {},
-            stream=True, timeout=10, allow_redirects=False,
-        )
-        def generate():
-            try:
-                yield from response.iter_content(65536)
-            finally:
-                response.close()
-        excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
-        return Response(generate(), status=response.status_code, headers={
-            k: v for k, v in response.headers.items() if k.lower() not in excluded
-        })
-    except (OSError, ValueError, requests.RequestException):
-        return jsonify({"error": "DVC Viewer unavailable on loopback"}), 502
 
 
 def _async_job_cleanup(job_id, safe_job_id, process_to_kill):
@@ -1920,35 +1884,32 @@ def start_dvc_viewer():
     if not os.path.exists(repo_path):
         return jsonify({"error": f"Repository '{repo}' not found on this worker"}), 404
 
-    local = request.args.get('local') == '1' or data.get('local') is True
-    live = request.args.get('live') == '1' or data.get('live') is True
+    # Deterministic worktree path: same repo+rev reuses the same directory
     repo_safe = repo.replace('/', '-')
     rev_short = (rev or 'main')[:12]
-    worktree_name = f"dvc-viewer-{repo_safe}-live" if live else f"dvc-viewer-{repo_safe}-{rev_short}"
-    # NEVER run inside repo_path when live! Only local desktop mode runs in repo_path if requested
-    worktree_dir = repo_path if (local and not live) else f"/tmp/{worktree_name}"
-    target_rev = rev or ("HEAD" if live else "origin/main")
+    worktree_name = f"dvc-viewer-{repo_safe}-{rev_short}"
+    local = request.args.get('local') == '1'
+    worktree_dir = repo_path if local else f"/tmp/{worktree_name}"
+    target_rev = rev or "origin/main"
 
     with dvc_viewer_lock:
         proc = None
         try:
-            # 1. Fast reuse of existing listening port
-            port_file = os.path.join(worktree_dir, '.cluster-ci-viewer-port')
-            if os.path.exists(port_file):
+            # 1. Prepare worktree & DVC cache (with Fast-Path and defensive fallback)
+            if local:
                 try:
-                    with open(port_file) as handle:
+                    with open(os.path.join(repo_path, '.cluster-ci-viewer-port')) as handle:
                         existing_port = int(handle.read().strip())
                     with socket.create_connection(('127.0.0.1', existing_port), timeout=0.5):
                         return jsonify({'status': 'ok', 'port': existing_port})
                 except (OSError, ValueError):
                     pass
-
-            if not (local and not live):
+            else:
                 prepare_dvc_worktree(repo_path, worktree_dir, target_rev)
 
-            # 2. Start dvc-viewer on loopback (127.0.0.1) for live/local or 0.0.0.0 for historical
+            # 2. Start dvc-viewer in the isolated worktree
             port = get_free_port()
-            logger.info(f"Starting {'live' if live else ('local' if local else 'historical')} dvc-viewer for {repo} on port {port}")
+            logger.info(f"Starting historical dvc-viewer for {repo} on port {port}")
 
             viewer_env = os.environ.copy()
             viewer_env["CLUSTER_CI_MODE"] = "executor"
@@ -1956,8 +1917,7 @@ def start_dvc_viewer():
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
             dvc_viewer_bin = get_executable("dvc-viewer")
-            bind_host = "127.0.0.1" if (live or local) else "0.0.0.0"
-            cmd = [dvc_viewer_bin, "--port", str(port), "--host", bind_host]
+            cmd = [dvc_viewer_bin, "--port", str(port), "--host", "127.0.0.1" if request.args.get("local") == "1" else "0.0.0.0"]
 
             proc = subprocess.Popen(
                 cmd,
@@ -1991,28 +1951,24 @@ def start_dvc_viewer():
                     proc.terminate()
                 except Exception:
                     pass
-                if not (local and not live):
+                if not local:
                     safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
                 return jsonify({"error": "dvc-viewer failed to start or open port"}), 500
 
-            if os.path.isdir(worktree_dir):
-                try:
-                    with open(os.path.join(worktree_dir, '.cluster-ci-viewer-port'), 'w') as handle:
-                        handle.write(str(port))
-                except OSError as pe:
-                    logger.warning(f"Could not persist .cluster-ci-viewer-port: {pe}")
-
-            logger.info(f"{'Live' if live else 'Historical'} dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
+            if local:
+                with open(os.path.join(repo_path, '.cluster-ci-viewer-port'), 'w') as handle:
+                    handle.write(str(port))
+            logger.info(f"Historical dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
             return jsonify({"status": "ok", "port": port})
 
         except Exception as e:
-            logger.error(f"Error starting {'live' if live else 'historical'} dvc-viewer: {e}")
+            logger.error(f"Error starting historical dvc-viewer: {e}")
             if proc:
                 try:
                     proc.terminate()
                 except Exception:
                     pass
-            if not (local and not live):
+            if not local:
                 safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
             return jsonify({"error": str(e)}), 500
 
