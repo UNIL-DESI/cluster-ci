@@ -255,6 +255,22 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 EOF
+    # Cluster-CI v3 (W11): Install hardening drop-ins for all headnode services
+    echo "🛡️ Installing headnode hardening drop-ins (OOM protection & CPU priority)..."
+    for svc in cluster-scheduler cluster-scheduler-loop cluster-runner-manager cluster-worker; do
+        sudo mkdir -p "/etc/systemd/system/${svc}.service.d"
+        cat <<EOF_GUARD | sudo tee "/etc/systemd/system/${svc}.service.d/10-headnode-guard.conf" > /dev/null
+[Service]
+# Cluster-CI v3 (W11) - Headnode Service Hardening Drop-in
+OOMScoreAdjust=-900
+CPUWeight=1000
+CPUShares=2048
+MemoryMin=512M
+MemoryLow=2G
+EOF_GUARD
+    done
+    echo "✅ Headnode hardening drop-ins installed."
+
     sudo systemctl daemon-reload
     sudo systemctl enable cluster-worker
     sudo systemctl restart cluster-worker
