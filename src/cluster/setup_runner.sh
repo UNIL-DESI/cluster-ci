@@ -232,6 +232,19 @@ EOF
     sudo systemctl restart cluster-scheduler cluster-scheduler-loop cluster-runner-manager
     echo "🚀 Scheduler and Runner Manager services started."
 
+    # Configure Logrotate and Journald Retention on Headnode
+    echo "🧹 Configuring log rotation and journald retention on headnode..."
+    if [ -f "$BASE_DIR/scripts/logrotate-cluster-ci.conf" ]; then
+        sudo cp "$BASE_DIR/scripts/logrotate-cluster-ci.conf" /etc/logrotate.d/cluster-ci
+        sudo chmod 644 /etc/logrotate.d/cluster-ci
+    fi
+    if [ -f "$BASE_DIR/scripts/journald-cluster-ci.conf" ]; then
+        sudo mkdir -p /etc/systemd/journald.conf.d
+        sudo cp "$BASE_DIR/scripts/journald-cluster-ci.conf" /etc/systemd/journald.conf.d/cluster-ci.conf
+        sudo chmod 644 /etc/systemd/journald.conf.d/cluster-ci.conf
+        sudo systemctl restart systemd-journald 2>/dev/null || true
+    fi
+
     # Also install the Worker Agent on the headnode so it can execute jobs too
     echo "⚙️ Also installing Worker Agent on headnode (dual role)..."
     cat <<EOF | sudo tee /etc/systemd/system/cluster-worker.service
