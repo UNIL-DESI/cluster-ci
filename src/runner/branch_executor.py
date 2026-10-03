@@ -322,6 +322,7 @@ class BranchExecutor:
         # État d'exécution
         self.current_container: Optional[str] = current_container
         self.current_image: Optional[str] = current_image
+        self.current_resource_args: Optional[List[str]] = None
         self.current_node: Optional[str] = None
         self.is_running = False
         self.total_containers_started = 0
@@ -548,6 +549,19 @@ class BranchExecutor:
     # Cycle de Vie des Conteneurs
     # -----------------------------------------------------------------
 
+    def compute_docker_resource_args(self, resources: Optional[Dict[str, Any]] = None) -> List[str]:
+        from src.runner.host_guard import docker_resource_args
+
+        host_profile = {
+            "role": os.environ.get("CLUSTER_CI_ROLE", "worker"),
+            "is_headnode": os.environ.get("IS_HEADNODE") == "1" or os.environ.get("CLUSTER_CI_ROLE") == "headnode",
+            "verify_cgroup": False,
+        }
+        node_res = dict(resources or {})
+        node_res.setdefault("ram_gb", self.ram_limit)
+        node_res.setdefault("vram_gb", self.vram_limit)
+        return docker_resource_args(host_profile, node_res)
+
     def start_container_for_image(
         self,
         image: str,
@@ -602,6 +616,7 @@ class BranchExecutor:
 
         self.current_container = container_name
         self.current_image = image
+        self.current_resource_args = self.compute_docker_resource_args(resources)
         self.total_containers_started += 1
 
         # 1. Initialisation root
@@ -647,6 +662,7 @@ class BranchExecutor:
             self.docker.remove_container(self.current_container)
             self.current_container = None
             self.current_image = None
+            self.current_resource_args = None
 
     def execute_node_in_container(
         self,
@@ -707,6 +723,8 @@ class BranchExecutor:
                 image = resp.get("image")
                 resources = resp.get("resources") or {}
                 gpu_ids = resp.get("gpu_ids")
+                if gpu_ids is not None:
+                    resources["gpu_ids"] = gpu_ids
                 dep_paths = resp.get("dep_paths") or resources.get("dep_paths") or []
                 dep_sources = resp.get("dep_sources")
                 out_paths = resp.get("out_paths") or resources.get("out_paths") or []
@@ -752,9 +770,21 @@ class BranchExecutor:
                         continue
 
                 elif action == "run":
-                    # Si aucun conteneur n'est actif, ou si l'image courante diffère
-                    if not self.current_container or (image and self.current_image != image):
+                    # Ne réutiliser le conteneur que si l'image ET TOUS les arguments de ressources
+                    # (memory, cpus, gpu_ids, shm, cgroup-parent) sont strictement identiques
+                    target_resource_args = self.compute_docker_resource_args(resources)
+                    resource_args_changed = (
+                        self.current_resource_args is None
+                        or self.current_resource_args != target_resource_args
+                    )
+                    image_changed = bool(image and self.current_image != image)
+
+                    if not self.current_container or image_changed or resource_args_changed:
                         if self.current_container:
+                            logger.info(
+                                "Recréation du conteneur pour le nœud %s : image_changed=%s, resource_args_changed=%s",
+                                target_node, image_changed, resource_args_changed
+                            )
                             self.stop_current_container()
                         self.start_container_for_image(image or self.current_image, resources)
                     if not target_node:

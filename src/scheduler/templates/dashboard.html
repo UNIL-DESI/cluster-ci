@@ -3971,7 +3971,9 @@
 
                     // GPU allocation & slot accounting
                     let totalGpus = 0;
-                    if (Array.isArray(w.vram_per_gpu) && w.vram_per_gpu.length > 0) {
+                    if (w.gpus_total !== undefined && w.gpus_total !== null && Number(w.gpus_total) >= 0) {
+                        totalGpus = parseInt(w.gpus_total, 10);
+                    } else if (Array.isArray(w.vram_per_gpu) && w.vram_per_gpu.length > 0) {
                         totalGpus = w.vram_per_gpu.length;
                     } else if (w.gpu_count !== undefined && w.gpu_count !== null && Number(w.gpu_count) > 0) {
                         totalGpus = parseInt(w.gpu_count, 10);
@@ -3985,30 +3987,41 @@
                     const gpuHoldersMap = {};
                     let allocatedGpus = 0;
 
-                    executors.forEach(ex => {
-                        const reqGpus = (ex.gpus !== undefined && ex.gpus !== null) ? Number(ex.gpus) : (ex.vramGb > 0 ? 1 : 0);
-                        if (reqGpus <= 0 && (!ex.gpuIds || ex.gpuIds.length === 0)) {
-                            return;
-                        }
-                        const holderLabel = ex.type === 'classic_job' ? `Job ${ex.jobId.substring(0, 8)}` : `${ex.nodeName} (${ex.jobId.substring(0, 8)})`;
-
-                        if (Array.isArray(ex.gpuIds) && ex.gpuIds.length > 0) {
-                            ex.gpuIds.forEach(gid => {
-                                const idx = parseInt(gid, 10);
-                                if (!gpuHoldersMap[idx]) gpuHoldersMap[idx] = [];
-                                gpuHoldersMap[idx].push(holderLabel);
-                            });
-                            allocatedGpus += ex.gpuIds.length;
-                        } else {
-                            const count = Math.max(1, reqGpus);
-                            allocatedGpus += count;
-                            for (let i = 0; i < count; i++) {
-                                const slot = (totalGpus > 0) ? Math.min(i, totalGpus - 1) : i;
-                                if (!gpuHoldersMap[slot]) gpuHoldersMap[slot] = [];
-                                gpuHoldersMap[slot].push(holderLabel);
+                    if (w.gpu_holders && typeof w.gpu_holders === 'object' && Object.keys(w.gpu_holders).length > 0) {
+                        Object.entries(w.gpu_holders).forEach(([gid, holders]) => {
+                            const idx = parseInt(gid, 10);
+                            gpuHoldersMap[idx] = Array.isArray(holders) ? holders : [holders];
+                        });
+                        allocatedGpus = (w.gpus_allocated !== undefined && w.gpus_allocated !== null) ? parseInt(w.gpus_allocated, 10) : Object.keys(gpuHoldersMap).length;
+                    } else {
+                        executors.forEach(ex => {
+                            const reqGpus = (ex.gpus !== undefined && ex.gpus !== null) ? Number(ex.gpus) : (ex.vramGb > 0 ? 1 : 0);
+                            if (reqGpus <= 0 && (!ex.gpuIds || ex.gpuIds.length === 0)) {
+                                return;
                             }
+                            const holderLabel = ex.type === 'classic_job' ? `Job ${ex.jobId.substring(0, 8)}` : `${ex.nodeName} (${ex.jobId.substring(0, 8)})`;
+
+                            if (Array.isArray(ex.gpuIds) && ex.gpuIds.length > 0) {
+                                ex.gpuIds.forEach(gid => {
+                                    const idx = parseInt(gid, 10);
+                                    if (!gpuHoldersMap[idx]) gpuHoldersMap[idx] = [];
+                                    gpuHoldersMap[idx].push(holderLabel);
+                                });
+                                allocatedGpus += ex.gpuIds.length;
+                            } else {
+                                const count = Math.max(1, reqGpus);
+                                allocatedGpus += count;
+                                for (let i = 0; i < count; i++) {
+                                    const slot = (totalGpus > 0) ? Math.min(i, totalGpus - 1) : i;
+                                    if (!gpuHoldersMap[slot]) gpuHoldersMap[slot] = [];
+                                    gpuHoldersMap[slot].push(holderLabel);
+                                }
+                            }
+                        });
+                        if (w.gpus_allocated !== undefined && w.gpus_allocated !== null) {
+                            allocatedGpus = parseInt(w.gpus_allocated, 10);
                         }
-                    });
+                    }
 
                     // Percentage calculations
                     const pctCpus = capCpus > 0 ? Math.min(100, (admCpus / capCpus * 100)).toFixed(1) : 0;

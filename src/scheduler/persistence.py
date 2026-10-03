@@ -429,7 +429,7 @@ def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None,
             cursor.execute('''
                 UPDATE job_nodes
                 SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
-                    finished_at = CURRENT_TIMESTAMP
+                    finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]'
                 WHERE job_id = ? AND node_name = ?
             ''', (status, duration_s, exit_code, error_message, job_id, node_name))
         else:
@@ -495,13 +495,13 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
         cursor.execute('''
             UPDATE job_nodes
             SET status = 'ready', stale_reason = 'outputs_missing',
-                worker_id = NULL, runner_id = NULL,
+                worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
                 missing_deps_retried = missing_deps_retried + 1
             WHERE job_id = ? AND node_name = ?
         ''', (job_id, prod_name))
         cursor.execute('''
             UPDATE job_nodes
-            SET status = 'pending', worker_id = NULL, runner_id = NULL
+            SET status = 'pending', worker_id = NULL, runner_id = NULL, gpu_ids = '[]'
             WHERE job_id = ? AND node_name = ?
         ''', (job_id, consumer_node_name))
         conn.commit()

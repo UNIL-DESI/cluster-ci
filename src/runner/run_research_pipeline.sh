@@ -554,6 +554,14 @@ else
 fi
 echo "$VIEWER_PORT" > .cluster-ci-viewer-port
 
+# GPU flag determination (A16: device-specific reservation only)
+DOCKER_GPU_FLAG=""
+if [ -n "$CLUSTER_CI_GPU_IDS" ]; then
+    DOCKER_GPU_FLAG="--gpus device=${CLUSTER_CI_GPU_IDS}"
+elif [ "${CLUSTER_CI_GPU_REQUIRED:-0}" = "1" ] || [ "${VRAM_LIMIT:-0}" != "0" ]; then
+    DOCKER_GPU_FLAG="--gpus device=0"
+fi
+
 docker run -d \
     --init \
     $PLATFORM_FLAG \
@@ -562,8 +570,8 @@ docker run -d \
     $DOCKER_PORT_MAPPING \
     $PROJECT_DOCKER_FLAGS \
     $DOCKER_MEMORY_FLAG \
+    $DOCKER_GPU_FLAG \
     --entrypoint "tail" \
-    --gpus all \
     -v "$(pwd):/workspace" \
     -v "$HOME_CACHE_VOLUME:/home/user" \
     -v /home/henri/ollama_poc:/home/user/.ollama \

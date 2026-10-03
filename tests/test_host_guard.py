@@ -170,6 +170,7 @@ def test_docker_resource_args_headnode_strict_ceiling():
         "cpus": 24,
         "disk_free_gb": 100.0,
         "unified_memory": False,
+        "verify_cgroup": False,
     }
 
     # Job modeste : admis, avec cgroup parent par défaut /cluster-jobs (A11)
@@ -217,7 +218,7 @@ def test_docker_resource_args_headnode_strict_ceiling():
 
 def test_docker_resource_args_string():
     # Sur headnode : drapeaux mémoire stricts et cgroup parent
-    headnode_host = {"role": "headnode", "total_ram_gb": 125.0, "cpus": 24}
+    headnode_host = {"role": "headnode", "total_ram_gb": 125.0, "cpus": 24, "verify_cgroup": False}
     node = {"ram_gb": 2.0, "cpus": 2}
     cli_str = docker_resource_args_string(headnode_host, node)
     assert "--memory=2g" in cli_str
@@ -282,7 +283,7 @@ def test_cli_invocation(monkeypatch, capsys):
     # 2. Test CLI docker flags on headnode (unconditional limits + cgroup parent)
     monkeypatch.setattr(
         "sys.argv",
-        ["host_guard.py", "--role", "headnode", "--host-profile", '{"total_ram_gb":125}', "--ram-gb", "4", "--cpus", "2"]
+        ["host_guard.py", "--role", "headnode", "--host-profile", '{"total_ram_gb":125,"verify_cgroup":false}', "--ram-gb", "4", "--cpus", "2"]
     )
     main()
     captured = capsys.readouterr()
@@ -308,7 +309,7 @@ def test_cli_invocation(monkeypatch, capsys):
     # 4. Test CLI custom cgroup parent
     monkeypatch.setattr(
         "sys.argv",
-        ["host_guard.py", "--role", "headnode", "--cgroup-parent", "/cluster-custom", "--host-profile", '{"total_ram_gb":125}', "--ram-gb", "4", "--cpus", "2"]
+        ["host_guard.py", "--role", "headnode", "--cgroup-parent", "/cluster-custom", "--host-profile", '{"total_ram_gb":125,"verify_cgroup":false}', "--ram-gb", "4", "--cpus", "2"]
     )
     main()
     captured = capsys.readouterr()
@@ -364,9 +365,13 @@ def test_docker_resource_args_gpus_and_shm():
     assert '--gpus="device=0"' in args_1
     assert "--shm-size=4g" in args_1
 
-    # gpus = 2 sans device ids -> all
-    args_2 = docker_resource_args(host, {"ram_gb": 16, "gpus": 2})
-    assert "--gpus=all" in args_2
+    # gpus = 2 sans device ids -> fail-fast (ValueError)
+    with pytest.raises(ValueError, match="requested but no gpu_ids assigned"):
+        docker_resource_args(host, {"ram_gb": 16, "gpus": 2})
+
+    # gpus = 2 avec device ids -> --gpus="device=0,1"
+    args_2 = docker_resource_args(host, {"ram_gb": 16, "gpus": 2, "gpu_ids": [0, 1]})
+    assert '--gpus="device=0,1"' in args_2
 
 
 

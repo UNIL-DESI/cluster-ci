@@ -98,7 +98,7 @@ def cancel_job_cleanly(job_id, exit_code=-15):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = 'blocked'
+                SET status = 'blocked', gpu_ids = '[]'
                 WHERE job_id = ? AND status NOT IN ('done', 'skipped')
             ''', (job_id,))
             cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
@@ -126,7 +126,7 @@ def cancel_job_cleanly(job_id, exit_code=-15):
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE jobs
-            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP
+            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]'
             WHERE job_id = ?
         ''', (exit_code, job_id))
         conn.commit()
@@ -292,6 +292,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
     gpu_holders = {}
     active_executors = len(running_nodes)
 
+    active_job_ids = set()
     for row in running_nodes:
         res_raw = row["resources"]
         res = {}
@@ -316,6 +317,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
 
         node_name_val = row["node_name"] if "node_name" in row.keys() else "node"
         job_id_val = row["job_id"] if "job_id" in row.keys() else ""
+        if job_id_val:
+            active_job_ids.add(job_id_val)
         holder_lbl = f"{node_name_val} ({job_id_val[:8]})" if job_id_val else str(node_name_val)
 
         for gid in gids:
@@ -350,6 +353,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         c_vram = float(cj["vram_required_gb"] or 0.0)
         used_vram_gb += c_vram
         c_job_id = cj["job_id"]
+        if c_job_id:
+            active_job_ids.add(c_job_id)
         c_lbl = f"Job {c_job_id[:8]}" if c_job_id else "Job classique"
 
         c_gids = []
@@ -381,7 +386,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         "allocated_vram_by_gpu": allocated_vram_by_gpu,
         "allocated_gpu_ids": allocated_gpu_ids,
         "gpu_holders": gpu_holders,
-        "active_executors": active_executors
+        "active_executors": active_executors,
+        "active_job_ids": active_job_ids
     }
 
 def get_worker_allocated_resources(conn=None, worker_id=None, exclude_node=None):
@@ -507,8 +513,18 @@ def is_worker_admissible_for_node(worker, node_resources, allocated=None):
             "used_vram_gb": 0.0,
             "used_storage_gb": 0.0,
             "allocated_vram_by_gpu": {},
-            "active_executors": 0
+            "active_executors": 0,
+            "active_job_ids": set()
         }
+
+    # 2.5 Anti-affinité machine intra-job : un worker exécutant déjà un nœud actif du job J
+    # n'est pas éligible pour un autre nœud de J (sérialisation de worker_agent)
+    req_job_id = node_resources.get("job_id")
+    if req_job_id and allocated:
+        active_jobs = allocated.get("active_job_ids") or set()
+        if req_job_id in active_jobs:
+            logger.debug(f"Worker {w_id} rejected for node: worker already has an active node for job {req_job_id}")
+            return False
 
     # 3. CPUs
     req_cpus = int(node_resources.get("cpus") if node_resources.get("cpus") is not None else DEFAULT_CPUS)
@@ -555,6 +571,15 @@ def is_worker_admissible_for_node(worker, node_resources, allocated=None):
         if used_mem + (req_ram + req_vram) > (w_total_ram - OS_HEADROOM_GB):
             logger.debug(f"Worker {w_id} rejected for node: unified memory exceeded ({used_mem} + {req_ram + req_vram} > {w_total_ram - OS_HEADROOM_GB})")
             return False
+        if req_gpus > 0 or req_vram > 0:
+            gpu_alloc = allocate_gpus(
+                worker, node_resources,
+                allocated_gpu_ids=allocated.get("allocated_gpu_ids"),
+                allocated_vram_by_gpu=allocated.get("allocated_vram_by_gpu")
+            )
+            if gpu_alloc is None:
+                logger.debug(f"Worker {w_id} rejected for node: unified GPU already held or unavailable")
+                return False
     else:
         if allocated["used_ram_gb"] + req_ram > (w_total_ram - 2.0):
             logger.debug(f"Worker {w_id} rejected for node: discrete RAM exceeded ({allocated['used_ram_gb']} + {req_ram} > {w_total_ram - 2.0})")
@@ -569,7 +594,11 @@ def is_worker_admissible_for_node(worker, node_resources, allocated=None):
             if not gpus:
                 logger.info(f"Worker {w_id} rejected for node: vram_gb={req_vram}/gpus={req_gpus} requested but worker has no parsed GPUs")
                 return False
-            gpu_alloc = allocate_gpus(worker, node_resources, allocated.get("allocated_vram_by_gpu", {}))
+            gpu_alloc = allocate_gpus(
+                worker, node_resources,
+                allocated_gpu_ids=allocated.get("allocated_gpu_ids"),
+                allocated_vram_by_gpu=allocated.get("allocated_vram_by_gpu")
+            )
             if gpu_alloc is None:
                 logger.debug(f"Worker {w_id} rejected for node: insufficient available VRAM or GPU count on discrete GPUs")
                 return False
@@ -823,9 +852,9 @@ def handle_next_node(req):
     Actions retournées : 'run' | 'switch_image' | 'yield' | 'finish' | 'wait'
     """
     job_id = req.get("job_id")
-    worker_id = req.get("worker")
+    worker_id = req.get("worker") or req.get("worker_id")
     runner_id = req.get("runner_id")
-    node_name = req.get("node")
+    node_name = req.get("node") or req.get("node_name")
     status = req.get("status")
     duration_s = req.get("duration_s")
     exit_code = req.get("exit_code")
@@ -1001,6 +1030,7 @@ def handle_next_node(req):
     admissible_ready_nodes = []
     for n in ready_nodes:
         n_res = json.loads(n["resources"]) if n["resources"] else {}
+        n_res.setdefault("job_id", job_id)
         if is_worker_admissible_for_node(worker, n_res, allocated=allocated):
             admissible_ready_nodes.append((n, n_res))
 
@@ -1036,10 +1066,24 @@ def handle_next_node(req):
     assigned_gpu_ids = None
 
     for candidate_node, candidate_res in admissible_ready_nodes:
-        cand_gpu_ids = allocate_gpus(worker, candidate_res, allocated["allocated_vram_by_gpu"])
         with get_db_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("BEGIN IMMEDIATE")
+            fresh_allocated = get_worker_allocated_resources(conn, worker_id, exclude_node=(job_id, node_name))
+            candidate_res.setdefault("job_id", job_id)
+            if not is_worker_admissible_for_node(worker, candidate_res, allocated=fresh_allocated):
+                conn.rollback()
+                continue
+            cand_gpu_ids = allocate_gpus(
+                worker, candidate_res,
+                allocated_gpu_ids=fresh_allocated.get("allocated_gpu_ids"),
+                allocated_vram_by_gpu=fresh_allocated.get("allocated_vram_by_gpu")
+            )
+            req_g = int(candidate_res.get("gpus") if candidate_res.get("gpus") is not None else 0)
+            req_v = float(candidate_res.get("vram_gb") or 0.0)
+            if (req_g > 0 or req_v > 0) and cand_gpu_ids is None:
+                conn.rollback()
+                continue
             cursor.execute('''
                 UPDATE job_nodes
                 SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, started_at = CURRENT_TIMESTAMP
@@ -1099,6 +1143,9 @@ def handle_next_node(req):
     except Exception as e:
         logger.debug(f"Failed to query artifact sources: {e}")
 
+    if gpu_ids is not None:
+        next_res["gpu_ids"] = gpu_ids
+
     return {
         "action": action,
         "node": next_node["node_name"],
@@ -1155,6 +1202,15 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
     max_unif_threshold = int(max([avail for _, avail, _ in unified_workers], default=113))
 
     if is_classic:
+        max_cluster_gpus = max([get_worker_total_gpus(w) for w in workers], default=0)
+        if req_gpus > max_cluster_gpus:
+            demande_str = f"requests {req_gpus} GPUs"
+            err_msg = (
+                f"Classic job {item_name} impossible: {demande_str}; "
+                f"maximum machine capacities: {max_caps_str}; "
+                f"remedy: decrease requested GPUs to <= {max_cluster_gpus}"
+            )
+            return True, err_msg
         if req_vram > 0:
             demande_str = (
                 f"requests REQUIRED_RAM={req_ram:.1f} GB and REQUIRED_VRAM={req_vram:.1f} GB "
@@ -1195,8 +1251,8 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
             max_worker = max_w_ram.get("worker_id") if max_w_ram else "none"
             max_val = f"{avail_ram:.1f} GB"
         elif req_gpus > 0:
-            max_w_gpu = max(workers, key=lambda w: len(parse_vram_per_gpu(w)), default=None)
-            avail_gpus = len(parse_vram_per_gpu(max_w_gpu)) if max_w_gpu else 0
+            max_w_gpu = max(workers, key=lambda w: get_worker_total_gpus(w), default=None)
+            avail_gpus = get_worker_total_gpus(max_w_gpu) if max_w_gpu else 0
             if req_gpus > avail_gpus:
                 res_key = "gpus"
                 req_val = req_gpus
@@ -1449,6 +1505,7 @@ def schedule_iteration():
                     w_alloc = allocated_map[w["worker_id"]]
                     for rr in ready_rows:
                         r_res = json.loads(rr["resources"]) if rr["resources"] else {}
+                        r_res.setdefault("job_id", jid)
                         if is_worker_admissible_for_node(w, r_res, allocated=w_alloc):
                             raw_dp = rr["dep_paths"]
                             dp_list = json.loads(raw_dp) if raw_dp else []
@@ -1487,6 +1544,7 @@ def schedule_iteration():
                 allocated_map[hw]["used_ram_gb"] += float(best_res.get("ram_gb") if best_res.get("ram_gb") is not None else DEFAULT_RAM_GB)
                 allocated_map[hw]["used_vram_gb"] += float(best_res.get("vram_gb") if best_res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
                 allocated_map[hw]["active_executors"] += 1
+                allocated_map[hw].setdefault("active_job_ids", set()).add(jid)
 
     # 3.2 Garantie 1ère machine pour les jobs classiques en attente (Amendement A2 + Packing A11)
     # Les jobs classiques entrent dans la même comptabilité comme un nœud unique et sont empilables
@@ -1594,13 +1652,18 @@ def schedule_iteration():
             if peers and peers[0][1] > 0 and peers[0][0].get('service_url'):
                 p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact".replace("1300.223.169.200", "130.223.169.200")
 
+        c_gpu_ids = allocate_gpus(
+            assigned_worker, c_res,
+            allocated_gpu_ids=allocated_map[assigned_worker["worker_id"]].get("allocated_gpu_ids"),
+            allocated_vram_by_gpu=allocated_map[assigned_worker["worker_id"]].get("allocated_vram_by_gpu")
+        )
         with get_db_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE jobs
-                SET status = 'assigned', worker_id = ?, p2p_url = ?
+                SET status = 'assigned', worker_id = ?, p2p_url = ?, gpu_ids = ?
                 WHERE job_id = ? AND status = 'pending'
-            ''', (assigned_worker['worker_id'], p2p_url, c_id))
+            ''', (assigned_worker['worker_id'], p2p_url, json.dumps(c_gpu_ids) if c_gpu_ids is not None else '[]', c_id))
             if cursor.rowcount > 0:
                 conn.commit()
                 classic_pending.remove(c_job)
@@ -1608,6 +1671,9 @@ def schedule_iteration():
                 allocated_map[assigned_worker["worker_id"]]["used_ram_gb"] += float(ram_required or DEFAULT_RAM_GB)
                 allocated_map[assigned_worker["worker_id"]]["used_vram_gb"] += float(vram_required or 0.0)
                 allocated_map[assigned_worker["worker_id"]]["active_executors"] += 1
+                if c_gpu_ids:
+                    for gid in c_gpu_ids:
+                        allocated_map[assigned_worker["worker_id"]]["allocated_gpu_ids"].add(gid)
                 busy_home_or_classic.add(assigned_worker["worker_id"])
 
     # 3.3 Répartition équitable des machines supplémentaires aux jobs parallèles (Packing A11 + W11)
@@ -1655,7 +1721,11 @@ def schedule_iteration():
 
             w_alloc = allocated_map[w["worker_id"]]
             can_run_any = any(
-                is_worker_admissible_for_node(w, json.loads(rr["resources"]) if rr["resources"] else {}, allocated=w_alloc)
+                is_worker_admissible_for_node(
+                    w,
+                    dict(json.loads(rr["resources"]) if rr["resources"] else {}, job_id=jid),
+                    allocated=w_alloc
+                )
                 for rr in ready_rows
             )
             if can_run_any:
@@ -1676,6 +1746,7 @@ def schedule_iteration():
             if wid not in cur_act:
                 cur_act.append(wid)
             job_active_map[jid] = cur_act
+            allocated_map[wid].setdefault("active_job_ids", set()).add(jid)
             with get_db_conn() as conn:
                 cursor = conn.cursor()
                 cursor.execute('UPDATE jobs SET active_workers = ? WHERE job_id = ?',

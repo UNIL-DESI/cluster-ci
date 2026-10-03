@@ -20,7 +20,10 @@ try:
         DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
         RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
     )
-    from scheduler_loop import validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node
+    from scheduler_loop import (
+        validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
+        get_worker_total_gpus, get_worker_allocated_resources
+    )
 except ImportError:
     from src.scheduler.persistence import (
         init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
@@ -33,7 +36,10 @@ except ImportError:
         DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
         RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
     )
-    from src.scheduler.scheduler_loop import validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node
+    from src.scheduler.scheduler_loop import (
+        validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
+        get_worker_total_gpus, get_worker_allocated_resources
+    )
 try:
     from redaction import redact_secrets
 except ImportError:
@@ -573,6 +579,10 @@ def register_worker():
     if disk_free_gb is None:
         disk_free_gb = available_storage_gb if available_storage_gb is not None else (total_storage_gb or 0.0)
     role = data.get('role') or 'worker'
+    docker_images = data.get('docker_images')
+    if isinstance(docker_images, (dict, list)):
+        docker_images = json.dumps(docker_images)
+
     # Détermination de la priorité de placement (A13)
     prio = data.get('placement_priority')
     if prio is None:
@@ -588,10 +598,6 @@ def register_worker():
             or str(role).strip().lower() in ('headnode', 'headnode_worker', 'master')
         )
         prio = HEADNODE_PLACEMENT_PRIORITY if is_hn else DEFAULT_PLACEMENT_PRIORITY
-
-    docker_images = data.get('docker_images')
-    if isinstance(docker_images, (dict, list)):
-        docker_images = json.dumps(docker_images)
 
     with get_db_conn() as conn:
         cursor = conn.cursor()
@@ -726,7 +732,7 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = 'blocked'
+                SET status = 'blocked', gpu_ids = '[]'
                 WHERE job_id = ? AND status NOT IN ('done', 'skipped')
             ''', (job_id,))
             cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
@@ -755,7 +761,7 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE jobs
-            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP
+            SET status = 'failed', exit_code = ?, finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]'
             WHERE job_id = ?
         ''', (exit_code, job_id))
         conn.commit()
@@ -1017,6 +1023,10 @@ def list_workers():
                     w['vram_per_gpu'] = json.loads(w['vram_per_gpu'])
                 except Exception:
                     pass
+            alloc = get_worker_allocated_resources(conn, w['worker_id'])
+            w['gpus_total'] = get_worker_total_gpus(w)
+            w['gpus_allocated'] = len(alloc.get('allocated_gpu_ids', []))
+            w['gpu_holders'] = alloc.get('gpu_holders', {})
     return jsonify(workers)
 
 @app.route('/scheduler_status', methods=['GET'])
@@ -1031,12 +1041,21 @@ def scheduler_status():
         
         # 1. Fetch all workers and dynamically attach any active job currently running or assigned
         cursor.execute('''
-            SELECT worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_count, gpu_name, status, last_seen
+            SELECT worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_count, gpu_name, status, last_seen, vram_per_gpu, unified_memory
             FROM workers
         ''')
         workers_list = [dict(row) for row in cursor.fetchall()]
         
         for w in workers_list:
+            if w.get('vram_per_gpu') and isinstance(w['vram_per_gpu'], str):
+                try:
+                    w['vram_per_gpu'] = json.loads(w['vram_per_gpu'])
+                except Exception:
+                    pass
+            alloc = get_worker_allocated_resources(conn, w['worker_id'])
+            w['gpus_total'] = get_worker_total_gpus(w)
+            w['gpus_allocated'] = len(alloc.get('allocated_gpu_ids', []))
+            w['gpu_holders'] = alloc.get('gpu_holders', {})
             cursor.execute('''
                 SELECT job_id, repo, branch, username, ram_required_gb, max_runtime_hours, status, created_at, started_at, is_local, job_type, is_maintenance
                 FROM jobs
@@ -1406,7 +1425,8 @@ def update_job_status():
                     finished_at = CURRENT_TIMESTAMP,
                     exit_code = COALESCE(?, exit_code),
                     commit_hash = COALESCE(?, commit_hash),
-                    error_message = COALESCE(?, error_message)
+                    error_message = COALESCE(?, error_message),
+                    gpu_ids = '[]'
                 WHERE job_id = ?
             ''', (status, exit_code, commit_hash, err_msg, job_id))
             cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))

@@ -335,7 +335,7 @@ def docker_resource_args(
                     ids_str = str(gpu_ids).strip()
                 args.append(f'--gpus="device={ids_str}"')
             else:
-                args.append("--gpus=all")
+                raise ValueError(f"req_gpus={req_gpus} requested but no gpu_ids assigned")
 
     return args
 

@@ -946,6 +946,18 @@ def execute_job(job):
         logger.info(f"Injecting GH_TOKEN for job {job_id}")
         env["GH_TOKEN"] = gh_token
 
+    gids = job.get("gpu_ids")
+    if gids:
+        try:
+            parsed_gids = json.loads(gids) if isinstance(gids, str) else list(gids)
+            if parsed_gids:
+                gpu_str = ",".join(str(g) for g in parsed_gids)
+                logger.info(f"Injecting CLUSTER_CI_GPU_IDS={gpu_str} for job {job_id}")
+                env["CLUSTER_CI_GPU_IDS"] = gpu_str
+                env["CUDA_VISIBLE_DEVICES"] = gpu_str
+        except Exception:
+            pass
+
     if is_parallel:
         env["CLUSTER_CI_PARALLEL_MODE"] = "1"
         env["CLUSTER_CI_RUNNER_ID"] = runner_id
