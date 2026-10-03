@@ -1889,30 +1889,19 @@ def start_dvc_viewer():
     rev_short = (rev or 'main')[:12]
     worktree_name = f"dvc-viewer-{repo_safe}-{rev_short}"
     local = request.args.get('local') == '1'
-    live = request.args.get('live') == '1' or data.get('live') is True
-    repo_path = workspace_path(repo, local=local)
-    if not os.path.exists(repo_path):
-        return jsonify({"error": f"Repository '{repo}' not found on this worker"}), 404
-
-    # Deterministic worktree path: same repo+rev reuses the same directory
-    repo_safe = repo.replace('/', '-')
-    rev_short = (rev or 'main')[:12]
-    worktree_name = f"dvc-viewer-{repo_safe}-{rev_short}"
-    worktree_dir = repo_path if (local or live) else f"/tmp/{worktree_name}"
+    worktree_dir = repo_path if local else f"/tmp/{worktree_name}"
     target_rev = rev or "origin/main"
 
     with dvc_viewer_lock:
         proc = None
         try:
             # 1. Prepare worktree & DVC cache (with Fast-Path and defensive fallback)
-            if local or live:
+            if local:
                 try:
-                    port_file = os.path.join(repo_path, '.cluster-ci-viewer-port')
-                    if os.path.exists(port_file):
-                        with open(port_file) as handle:
-                            existing_port = int(handle.read().strip())
-                        with socket.create_connection(('127.0.0.1', existing_port), timeout=0.5):
-                            return jsonify({'status': 'ok', 'port': existing_port})
+                    with open(os.path.join(repo_path, '.cluster-ci-viewer-port')) as handle:
+                        existing_port = int(handle.read().strip())
+                    with socket.create_connection(('127.0.0.1', existing_port), timeout=0.5):
+                        return jsonify({'status': 'ok', 'port': existing_port})
                 except (OSError, ValueError):
                     pass
             else:
@@ -1920,7 +1909,7 @@ def start_dvc_viewer():
 
             # 2. Start dvc-viewer in the isolated worktree
             port = get_free_port()
-            logger.info(f"Starting {'live' if live else ('local' if local else 'historical')} dvc-viewer for {repo} on port {port}")
+            logger.info(f"Starting historical dvc-viewer for {repo} on port {port}")
 
             viewer_env = os.environ.copy()
             viewer_env["CLUSTER_CI_MODE"] = "executor"
@@ -1928,7 +1917,7 @@ def start_dvc_viewer():
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
             dvc_viewer_bin = get_executable("dvc-viewer")
-            cmd = [dvc_viewer_bin, "--port", str(port), "--host", "127.0.0.1" if (local and not live) else "0.0.0.0"]
+            cmd = [dvc_viewer_bin, "--port", str(port), "--host", "127.0.0.1" if request.args.get("local") == "1" else "0.0.0.0"]
 
             proc = subprocess.Popen(
                 cmd,
@@ -1962,17 +1951,14 @@ def start_dvc_viewer():
                     proc.terminate()
                 except Exception:
                     pass
-                if not local and not live:
+                if not local:
                     safe_cleanup_worktree(repo_path, worktree_dir, worktree_name)
                 return jsonify({"error": "dvc-viewer failed to start or open port"}), 500
 
-            if local or live:
-                try:
-                    with open(os.path.join(repo_path, '.cluster-ci-viewer-port'), 'w') as handle:
-                        handle.write(str(port))
-                except Exception as pe:
-                    logger.warning(f"Could not write .cluster-ci-viewer-port: {pe}")
-            logger.info(f"{'Live' if live else 'Historical'} dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
+            if local:
+                with open(os.path.join(repo_path, '.cluster-ci-viewer-port'), 'w') as handle:
+                    handle.write(str(port))
+            logger.info(f"Historical dvc-viewer started for {repo} on port {port} (worktree: {worktree_dir})")
             return jsonify({"status": "ok", "port": port})
 
         except Exception as e:

@@ -1330,7 +1330,7 @@
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <button type="button" class="btn btn-sm btn-log-action btn-copy-logs" onclick="copyLogs()" title="Copy displayed logs">
-                            <i class="bi bi-clipboard"></i> <span class="d-none d-sm-inline">Copy</span>
+                            <i class="bi bi-clipboard"></i> <span class="d-none d-sm-inline">Copier</span>
                         </button>
                         <button type="button" class="btn btn-sm btn-log-action" onclick="downloadCurrentLogs()" title="Download logs">
                             <i class="bi bi-download"></i> <span class="d-none d-sm-inline">Download</span>
@@ -1374,14 +1374,11 @@
                         </div>
                     </div>
                     <div class="d-flex align-items-center gap-2">
-                        <a id="v3-dag-open-viewer-btn" href="#" target="_blank" class="btn btn-sm btn-primary rounded-pill" title="Open DVC-Viewer on home machine">
-                            <i class="bi bi-box-arrow-up-right"></i> <span class="d-none d-sm-inline">DVC-Viewer</span>
-                        </a>
                         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" onclick="refreshV3DagModal()" title="Refresh DAG statuses">
-                            <i class="bi bi-arrow-clockwise"></i> <span class="d-none d-sm-inline">Refresh</span>
+                            <i class="bi bi-arrow-clockwise"></i> <span class="d-none d-sm-inline">Actualiser</span>
                         </button>
                         <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" id="v3-dag-open-logs-btn" onclick="openLogsFromV3Modal()" title="Open logs for this job">
-                            <i class="bi bi-terminal"></i> <span class="d-none d-sm-inline">Job Logs</span>
+                            <i class="bi bi-terminal"></i> <span class="d-none d-sm-inline">Logs du Job</span>
                         </button>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
@@ -1743,7 +1740,7 @@
                 console.error('Error refreshing V3 DAG modal:', err);
                 const overviewEl = document.getElementById('v3-dag-overview-container');
                 if (overviewEl) {
-                    overviewEl.innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Error: ${escapeHtml(err.message)}</div>`;
+                    overviewEl.innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Erreur: ${escapeHtml(err.message)}</div>`;
                 }
             }
         }
@@ -1755,14 +1752,6 @@
             const subtitleEl = document.getElementById('v3-dag-modal-subtitle');
             const commitShort = job.commit_hash ? job.commit_hash.substring(0, 8) : 'HEAD';
             subtitleEl.innerHTML = `<span style="color: #f1f5f9; font-weight: 600;">${escapeHtml(job.repo || '')}</span> <span style="color: #cbd5e1;">@${escapeHtml(job.branch || '')} &bull; <span class="font-monospace" style="color: #e2e8f0;">Commit: ${commitShort}</span> &bull; Job ID: ${job.job_id.substring(0, 8)}…</span>`;
-
-            // Compute DVC-Viewer URL
-            const [owner, name] = (job.repo || '').split('/');
-            const viewerUrl = (job.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner || '') + '/' + encodeURIComponent(name || '') + '/';
-            const viewerBtn = document.getElementById('v3-dag-open-viewer-btn');
-            if (viewerBtn) {
-                viewerBtn.href = viewerUrl;
-            }
 
             // Active workers list
             let activeWorkersList = [];
@@ -1795,18 +1784,6 @@
             const aggStatusBadge = `<span class="badge-premium ${statusClassMap[job.status] || 'bg-secondary text-white'}">${escapeHtml(job.status || 'running').toUpperCase()}</span>`;
 
             overviewEl.innerHTML = `
-                <div class="mb-3 d-flex align-items-center justify-content-between p-3 rounded border flex-wrap gap-2" style="background: var(--bg-card); border-color: var(--border-color) !important;">
-                    <div class="d-flex align-items-center gap-2">
-                        <i class="bi bi-broadcast text-primary fs-5"></i>
-                        <div>
-                            <strong style="color: var(--text-primary);">DVC-Viewer Live Workspace</strong>
-                            <div class="text-muted small">Access interactive plots, metrics, and DVC artifact visualizer on the home machine.</div>
-                        </div>
-                    </div>
-                    <a href="${viewerUrl}" target="_blank" class="btn btn-primary d-flex align-items-center gap-2" style="font-weight: 600;">
-                        <i class="bi bi-box-arrow-up-right"></i> Open DVC-Viewer
-                    </a>
-                </div>
                 <div class="row g-3">
                     <div class="col-12 col-md-6 col-lg-3">
                         <div class="card h-100 p-3 shadow-sm border" style="background: var(--bg-card); border-color: var(--border-color) !important;">
@@ -1891,7 +1868,7 @@
                                     <strong class="text-dark">${escapeHtml(workerId)}</strong>
                                 </div>
                                 <span class="v3-badge ${isHome ? 'v3-badge-home' : 'v3-badge-extra'}">
-                                    ${isHome ? '<i class="bi bi-house-door-fill"></i> Primary' : '<i class="bi bi-lightning-charge-fill"></i> Auxiliary'}
+                                    ${isHome ? '<i class="bi bi-house-door-fill"></i> Principale' : '<i class="bi bi-lightning-charge-fill"></i> Auxiliaire'}
                                 </span>
                             </div>
                             ${nodeContent}
@@ -1930,7 +1907,7 @@
                 const tr = document.createElement('tr');
                 tr.className = 'v3-node-row';
                 tr.setAttribute('data-node-name', n.name.toLowerCase());
-                const statusLabels = {
+                const statusLabelsFr = {
                     done: 'DONE',
                     running: 'RUNNING',
                     ready: 'READY',
@@ -1940,8 +1917,8 @@
                     missing_deps: 'MISSING DEPENDENCIES',
                     skipped: 'SKIPPED'
                 };
-                const statusLabel = statusLabels[n.status] || (n.status || '').toUpperCase();
-                const statusBadge = `<span class="v3-node-status-badge v3-status-${n.status}">${escapeHtml(statusLabel)}</span>`;
+                const labelFr = statusLabelsFr[n.status] || (n.status || '').toUpperCase();
+                const statusBadge = `<span class="v3-node-status-badge v3-status-${n.status}">${escapeHtml(labelFr)}</span>`;
                 const machineStr = n.machine ? `<span class="badge bg-light text-dark border font-monospace"><i class="bi bi-pc-display-horizontal me-1"></i>${escapeHtml(n.machine)}</span>` : '<span class="text-muted small">—</span>';
                 
                 const res = n.resources || {};
@@ -2241,7 +2218,7 @@
             try {
                 const historyUrl = `/api/projects/${currentState.repo}/artifact/history?path=${encodeURIComponent(path)}`;
                 const resp = await fetch(historyUrl);
-                if (!resp.ok) throw new Error('Failed to load history');
+                if (!resp.ok) throw new Error('Impossible de charger l\'historique');
                 const history = await resp.json();
 
                 if (history && history.length > 0) {
@@ -2293,7 +2270,7 @@
 
             try {
                 const resp = await fetch(`/api/projects/${repo}/run/${commit}/hydra-params`);
-                if (!resp.ok) throw new Error('Server error');
+                if (!resp.ok) throw new Error('Erreur serveur');
                 const data = await resp.json();
 
                 if (!data.configs || data.configs.length === 0) {
@@ -2428,23 +2405,23 @@
                     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
                 });
                 const commitTitle = v.firstRun.commit_title || v.firstRun.job_id.substring(0, 8);
-                const sizeStr = v.size ? formatBytes(v.size) : 'Unknown size';
+                const sizeStr = v.size ? formatBytes(v.size) : 'Taille inconnue';
                 const branchStr = v.firstRun.branch ? ` [${v.firstRun.branch}]` : '';
                 const isSelected = idx === modalCurrentVersionIndex ? 'selected' : '';
-                selectOptionsHtml += `<option value="${idx}" ${isSelected}>Version ${modalUniqueVersions.length - idx} (${dateStr})${branchStr} - ${escapeHtml(commitTitle)} [${sizeStr}]</option>`;
+                selectOptionsHtml += `<option value="${idx}" ${isSelected}>Version ${modalUniqueVersions.length - idx} (du ${dateStr})${branchStr} - ${escapeHtml(commitTitle)} [${sizeStr}]</option>`;
             });
 
             navContainer.innerHTML = `
                 <div class="d-flex align-items-center justify-content-between flex-wrap gap-3 w-100 p-3 bg-slate-50 rounded-xl border border-slate-200 shadow-sm-subtle">
                     <!-- Prev button -->
                     <button id="preview-prev-btn" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 font-medium px-3" ${!hasPrev ? 'disabled' : ''}>
-                        <i class="bi bi-chevron-left"></i> Older
+                        <i class="bi bi-chevron-left"></i> Plus ancienne
                     </button>
                     
                     <!-- Centered Version Select and Details -->
                     <div class="d-flex align-items-center gap-3 flex-grow-1 justify-content-center" style="max-width: 65%; min-width: 250px;">
                         <div class="d-flex flex-column w-100">
-                            <label class="small text-slate-500 font-bold mb-1"><i class="bi bi-clock-history me-1"></i>Physical version history (unique MD5)</label>
+                            <label class="small text-slate-500 font-bold mb-1"><i class="bi bi-clock-history me-1"></i>Historique des versions physiques (MD5 unique)</label>
                             <select id="preview-version-select" class="form-select form-select-sm border-slate-200 rounded-lg text-slate-800 font-medium bg-white">
                                 ${selectOptionsHtml}
                             </select>
@@ -2454,7 +2431,7 @@
                     <div class="d-flex gap-2 align-items-center">
                         <!-- Go to run button -->
                         <button id="preview-goto-run-btn" class="btn btn-primary btn-sm d-flex align-items-center gap-1 font-medium px-3 text-white">
-                            <i class="bi bi-terminal"></i> View Run
+                            <i class="bi bi-terminal"></i> Consulter le Run
                         </button>
                         <!-- Next button -->
                         <button id="preview-next-btn" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 font-medium px-3" ${!hasNext ? 'disabled' : ''}>
@@ -2632,7 +2609,7 @@
 
             const homeLi = document.createElement('li');
             homeLi.className = 'breadcrumb-item ' + (currentState.view === 'root' ? 'active' : '');
-            homeLi.textContent = 'Home';
+            homeLi.textContent = 'Accueil';
             homeLi.onclick = navigateToRoot;
             breadcrumb.appendChild(homeLi);
 
@@ -2754,7 +2731,7 @@
                     
                     const divider = document.createElement('div');
                     divider.className = 'col-12 full-width mt-4 mb-3';
-                    divider.innerHTML = '<h4 class="text-secondary"><i class="bi bi-folder2-open"></i> Projects</h4><hr>';
+                    divider.innerHTML = '<h4 class="text-secondary"><i class="bi bi-folder2-open"></i> Projets</h4><hr>';
                     container.appendChild(divider);
                 }
 
@@ -2819,7 +2796,7 @@
                                                 <div>${reasonsHtml}</div>
                                             </div>
                                             <div class="d-flex align-items-center">
-                                                <div class="text-muted small text-end" style="min-width: 80px;" title="Submitted on ${queueDateFull}">
+                                                <div class="text-muted small text-end" style="min-width: 80px;" title="Soumis le ${queueDateFull}">
                                                     <div><i class="bi bi-clock me-1"></i>${elapsedStr}</div>
                                                     <div class="text-muted" style="font-size: 0.7rem;">${queueDateFull}</div>
                                                 </div>
@@ -2878,7 +2855,7 @@
                         const historyBtn = document.createElement('a');
                         historyBtn.href = `/view/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/`;
                         historyBtn.className = 'btn btn-sm btn-outline-primary w-100';
-                        historyBtn.innerHTML = '<i class="bi bi-clock-history me-1"></i>DVC-Viewer History';
+                        historyBtn.innerHTML = '<i class="bi bi-clock-history me-1"></i>Historique DVC-Viewer';
                         historyBtn.target = '_blank';
                         historyBtn.onclick = (e) => {
                             e.stopPropagation();
@@ -2950,7 +2927,7 @@
                         </li>
                         <li class="nav-item" role="presentation">
                             <button class="nav-link premium-tab-btn" id="artifacts-tab" data-bs-toggle="pill" data-bs-target="#artifacts-pane" type="button" role="tab" aria-controls="artifacts-pane" aria-selected="false">
-                                <i class="bi bi-box-seam me-2"></i>Current Artifacts
+                                <i class="bi bi-box-seam me-2"></i>Artefacts Actuels
                             </button>
                         </li>
                     </ul>
@@ -2972,7 +2949,7 @@
                                 <div class="card-body p-4">
                                     <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
                                         <h5 class="card-title text-slate-800 mb-0 font-bold d-flex align-items-center gap-2">
-                                            <i class="bi bi-folder2-open text-primary"></i> Current Artifacts Explorer
+                                            <i class="bi bi-folder2-open text-primary"></i> Explorateur d'Artefacts Actuels
                                         </h5>
                                         <div class="d-flex align-items-center gap-2">
                                             <button class="btn btn-sm btn-outline-secondary rounded-pill d-flex align-items-center gap-1" 
@@ -2981,7 +2958,7 @@
                                                     title="Force re-extraction and clear cache for this project" 
                                                     style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
                                                 <i class="bi bi-arrow-clockwise" id="artifact-refresh-icon"></i>
-                                                <span id="artifact-refresh-label">Refresh</span>
+                                                <span id="artifact-refresh-label">Actualiser</span>
                                             </button>
                                             <div class="dropdown">
                                                 <button class="btn btn-sm btn-outline-primary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-branch-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
@@ -2995,14 +2972,14 @@
                                             </div>
                                             <div class="dropdown">
                                                 <button class="btn btn-sm btn-outline-secondary rounded-pill dropdown-toggle d-flex align-items-center gap-1" type="button" id="artifact-sort-btn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.85rem; height: 42px; padding: 0 16px;">
-                                                    <i class="bi bi-sort-down"></i> Sort
+                                                    <i class="bi bi-sort-down"></i> Trier
                                                 </button>
                                                 <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="artifact-sort-btn">
                                                     <li><a class="dropdown-item" href="#" onclick="sortArtifacts('path-asc'); return false;"><i class="bi bi-sort-alpha-down me-2"></i>Path (A→Z)</a></li>
                                                     <li><a class="dropdown-item" href="#" onclick="sortArtifacts('path-desc'); return false;"><i class="bi bi-sort-alpha-up me-2"></i>Path (Z→A)</a></li>
                                                     <li><hr class="dropdown-divider"></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-asc'); return false;"><i class="bi bi-sort-alpha-down me-2"></i>File name (A→Z)</a></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-desc'); return false;"><i class="bi bi-sort-alpha-up me-2"></i>File name (Z→A)</a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-asc'); return false;"><i class="bi bi-sort-alpha-down me-2"></i>Nom fichier (A→Z)</a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="sortArtifacts('name-desc'); return false;"><i class="bi bi-sort-alpha-up me-2"></i>Nom fichier (Z→A)</a></li>
                                                     <li><hr class="dropdown-divider"></li>
                                                     <li><a class="dropdown-item" href="#" onclick="sortArtifacts('date-desc'); return false;"><i class="bi bi-sort-numeric-down me-2"></i>Date (newest→oldest)</a></li>
                                                     <li><a class="dropdown-item" href="#" onclick="sortArtifacts('date-asc'); return false;"><i class="bi bi-sort-numeric-up me-2"></i>Date (oldest→newest)</a></li>
@@ -3186,7 +3163,7 @@
             const icon = document.getElementById('artifact-refresh-icon');
             const label = document.getElementById('artifact-refresh-label');
             if (icon) icon.classList.add('spin-icon');
-            if (label) label.textContent = 'Refreshing...';
+            if (label) label.textContent = 'Actualisation...';
             if (btn) btn.disabled = true;
 
             try {
@@ -3195,7 +3172,7 @@
                 }
             } finally {
                 if (icon) icon.classList.remove('spin-icon');
-                if (label) label.textContent = 'Refresh';
+                if (label) label.textContent = 'Actualiser';
                 if (btn) btn.disabled = false;
             }
         }
@@ -3290,7 +3267,7 @@
                 container.innerHTML = `
                     <div class="alert alert-danger d-flex align-items-center gap-2">
                         <i class="bi bi-exclamation-triangle-fill"></i>
-                        <div>Error: ${err.message}</div>
+                        <div>Erreur: ${err.message}</div>
                     </div>
                 `;
             }
@@ -3372,7 +3349,7 @@
                 bg = 'var(--info-light)'; color = 'var(--info)'; icon = 'bi-diagram-2';
             }
             const displayName = isDraft ? branch.replace('cluster-draft/', '⚡') : branch;
-            return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};border:1px solid var(--border-color);" title="Branch: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
+            return `<span class="badge rounded-pill ms-2" style="font-size:0.65rem;font-weight:600;padding:2px 8px;background:${bg};color:${color};border:1px solid var(--border-color);" title="Branche: ${escapeHtml(branch)}"><i class="bi ${icon}" style="font-size:0.6rem;"></i> ${escapeHtml(displayName)}</span>`;
         }
 
         function renderArtifactView(files, mode, repo = null, commitHash = null) {
@@ -3438,7 +3415,7 @@
                 // Update button label
                 const labels = {'path-asc':'Path A→Z','path-desc':'Path Z→A','name-asc':'Name A→Z','name-desc':'Name Z→A','date-desc':'Newest','date-asc':'Oldest'};
                 const btn = document.getElementById('artifact-sort-btn');
-                if (btn) btn.innerHTML = `<i class="bi bi-sort-down"></i> ${labels[mode] || 'Sort'}`;
+                if (btn) btn.innerHTML = `<i class="bi bi-sort-down"></i> ${labels[mode] || 'Trier'}`;
             }
         }
 
@@ -3956,16 +3933,16 @@
                                 <i class="bi bi-cpu"></i> ${busyCount} active
                             </span>
                             <span class="badge-premium" style="background: var(--success-light); color: var(--success);">
-                                <i class="bi bi-pause-circle"></i> ${idleCount} idle
+                                <i class="bi bi-pause-circle"></i> ${idleCount} libre${idleCount > 1 ? 's' : ''}
                             </span>
                         </div>
                         <div class="cluster-stats-section">
                             <span class="badge-premium badge-warning-premium">
-                                <i class="bi bi-hourglass-split"></i> ${Array.isArray(queue) ? queue.length : 0} queued
+                                <i class="bi bi-hourglass-split"></i> ${Array.isArray(queue) ? queue.length : 0} en file
                             </span>
                             <span class="live-indicator">
                                 <span class="live-indicator-dot"></span>
-                                <span>live</span>
+                                <span>en direct</span>
                             </span>
                         </div>
                     </div>
@@ -4294,7 +4271,7 @@
                             <div class="mt-3 pt-2 border-top">
                                 <details class="small">
                                     <summary class="d-flex justify-content-between align-items-center text-secondary fw-semibold" style="cursor: pointer; user-select: none;">
-                                        <span><i class="bi bi-boxes text-info me-1"></i>Cached Local Docker Images</span>
+                                        <span><i class="bi bi-boxes text-info me-1"></i>Images Docker locales en cache</span>
                                         <span class="badge bg-info-subtle text-info rounded-pill">${dockerImagesCount}</span>
                                     </summary>
                                     <div class="mt-2 p-2 rounded bg-light border" style="max-height: 160px; overflow-y: auto;">
@@ -4358,7 +4335,7 @@
                                         ${isDiskCritical ? `
                                             <div class="alert alert-danger py-1 px-2 mt-1 mb-0 d-flex align-items-center gap-1 small" style="font-size: 0.72rem; border-radius: 4px;">
                                                 <i class="bi bi-exclamation-triangle-fill flex-shrink-0 text-danger"></i>
-                                                <span><strong>Disk Alert (&gt;85%):</strong> Critical saturation (${storageUsedPct}%).</span>
+                                                <span><strong>Alerte Disque (&gt;85%) :</strong> Saturation critique (${storageUsedPct}%).</span>
                                             </div>
                                         ` : ''}
                                     </div>
@@ -4366,7 +4343,7 @@
                                     <!-- List of Active Executors (A11) -->
                                     ${executorsListHtml}
 
-                                    <!-- Local Docker Images (A13) -->
+                                    <!-- Images Docker Locales (A13) -->
                                     ${dockerImagesHtml}
                                 </div>
                             </div>
@@ -4613,20 +4590,16 @@
             const grid = document.getElementById('log-stage-grid');
             grid.innerHTML = '';
 
-            const isOnlyFullLog = sections.length === 1 && sections[0].id === 'full_log';
-
-            // Add "Raw Log" button if multiple stages exist
-            if (!isOnlyFullLog) {
-                const allBtn = document.createElement('button');
-                allBtn.className = `log-stage-btn status-neutral ${currentSelectedStage === '__all__' ? 'active' : ''}`;
-                allBtn.innerHTML = `<i class="bi bi-file-text-fill"></i> Raw Log`;
-                allBtn.onclick = (e) => selectStage('__all__', sections, e);
-                grid.appendChild(allBtn);
-            }
+            // Add "All" button
+            const allBtn = document.createElement('button');
+            allBtn.className = `log-stage-btn status-neutral ${currentSelectedStage === '__all__' ? 'active' : ''}`;
+            allBtn.innerHTML = `<i class="bi bi-file-text-fill"></i> Raw Log`;
+            allBtn.onclick = (e) => selectStage('__all__', sections, e);
+            grid.appendChild(allBtn);
 
             sections.forEach(section => {
                 const btn = document.createElement('button');
-                const isActive = (currentSelectedStage === section.id) || (isOnlyFullLog && currentSelectedStage === '__all__');
+                const isActive = currentSelectedStage === section.id;
                 btn.className = `log-stage-btn status-${section.status} ${isActive ? 'active' : ''}`;
                 btn.innerHTML = `<i class="bi ${section.icon}"></i> ${escapeHtml(section.label)}`;
                 btn.title = section.label;
@@ -4978,7 +4951,7 @@
                 btn.innerHTML = '<i class="bi bi-check-lg"></i> Copied!';
                 setTimeout(() => {
                     btn.classList.remove('copied');
-                    btn.innerHTML = '<i class="bi bi-clipboard"></i> Copy';
+                    btn.innerHTML = '<i class="bi bi-clipboard"></i> Copier';
                 }, 2000);
             };
 
