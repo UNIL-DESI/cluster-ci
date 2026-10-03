@@ -89,14 +89,33 @@ def commit_and_push_node(
     if os.path.exists(dvc_lock):
         subprocess.run(["git", "add", "dvc.lock"], cwd=repo_dir, check=False)
 
+    uncached_outs: List[str] = []
     if out_paths:
         for item in out_paths:
             p = item if isinstance(item, str) else item.get("path")
             is_cache = False if isinstance(item, str) else item.get("cache", True)
             if p and not is_cache:
-                full_p = os.path.join(repo_dir, p)
-                if os.path.exists(full_p):
-                    subprocess.run(["git", "add", "-f", p], cwd=repo_dir, check=False)
+                uncached_outs.append(p)
+
+    # Extraire également les sorties non-cachées (cache: false) depuis dvc.yaml / DAG pour ce nœud
+    try:
+        from src.scheduler.artifact_registry import get_dag_stage_outputs
+        exact_outs, dir_outs, _ = get_dag_stage_outputs(repo_dir=repo_dir)
+        for p, info in exact_outs.items():
+            if info.get("stage") == node and info.get("cache") is False:
+                if p not in uncached_outs:
+                    uncached_outs.append(p)
+        for p, info in dir_outs.items():
+            if info.get("stage") == node and info.get("cache") is False:
+                if p not in uncached_outs:
+                    uncached_outs.append(p)
+    except Exception as exc:
+        logger.debug("Extraction des sorties non-cachées pour %s impossible: %s", node, exc)
+
+    for p in uncached_outs:
+        full_p = os.path.join(repo_dir, p)
+        if os.path.exists(full_p):
+            subprocess.run(["git", "add", "-f", p], cwd=repo_dir, check=False)
 
     status = subprocess.run(
         ["git", "status", "--porcelain"],
@@ -511,10 +530,51 @@ class BranchExecutor:
                 continue
 
             # -----------------------------------------------------------------
-            # Branche B : Dépendance qui est une SORTIE (outs) d'un autre stage
+            # Branche B : Dépendance qui est une SORTIE (outs) d'un stage du DAG
             # -----------------------------------------------------------------
             out_info = out_info or {}
-            expected_md5 = lock_hash_by_path.get(norm_p) or out_info.get("md5")
+            is_cached = out_info.get("cache", True)
+
+            if not is_cached:
+                # -------------------------------------------------------------
+                # Branche B.1 : Sortie de stage non-cachée (cache: false)
+                # DVC ne stocke JAMAIS ces fichiers dans le CAS.
+                # Elles sont suivies par Git et synchronisées par W5.
+                # Présence locale requise, JAMAIS de CAS.
+                # -------------------------------------------------------------
+                if not os.path.exists(local_path):
+                    prod_stage = out_info.get("stage", "upstream")
+                    cause = (
+                        f"Uncached stage output '{dep_path}' (cache: false) produced by stage '{prod_stage}' "
+                        f"was not found in the local repository checkout."
+                    )
+                    remedy = (
+                        f"Ensure stage '{prod_stage}' executed and committed its outputs to git "
+                        f"on branch '{self.target_branch}'."
+                    )
+                    logger.error(
+                        "❌ Dependency '%s' for node %s is an uncached stage output (cache: false) missing locally. Cause: %s Remedy: %s",
+                        dep_path,
+                        node,
+                        cause,
+                        remedy,
+                    )
+                    missing_paths.append(dep_path)
+                else:
+                    logger.info(
+                        "Uncached stage output (cache: false) from stage '%s' present locally: %s",
+                        out_info.get("stage"),
+                        dep_path,
+                    )
+                continue
+
+            # -----------------------------------------------------------------
+            # Branche B.2 : Sortie de stage CACHÉE (cache: true / CAS DVC)
+            # -----------------------------------------------------------------
+            # Priorité absolue au hash réellement produit par le stage producteur
+            # (out_info["md5"] extrait des outs du producteur dans dvc.lock après synchro W5),
+            # avant le hash résiduel dans deps du consommateur (lock_hash_by_path).
+            expected_md5 = out_info.get("md5")
             parent_dir_hash = out_info.get("parent_dir_hash")
 
             if not expected_md5 and parent_dir_hash:
@@ -527,6 +587,9 @@ class BranchExecutor:
                         if ent.get("relpath") == rel_sub:
                             expected_md5 = ent.get("md5")
                             break
+
+            if not expected_md5:
+                expected_md5 = lock_hash_by_path.get(norm_p)
 
             already_valid = False
             if expected_md5:

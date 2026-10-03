@@ -129,6 +129,40 @@ class TestRealDvcDagDepsResolution(unittest.TestCase):
         )
         subprocess.run([*dvc_cmd, "repro", "stage_b"], cwd=cls.temp_root, check=True, capture_output=True)
 
+        # 4. Stage C: produces hashes/sig.hash with cache: false (-O)
+        stage_c_script = cls.temp_root / "stage_c.py"
+        stage_c_script.write_text(
+            "import pathlib\n"
+            "p = pathlib.Path('hashes')\n"
+            "p.mkdir(parents=True, exist_ok=True)\n"
+            "(p / 'sig.hash').write_text('hash_value_1234')\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [*dvc_cmd, "stage", "add", "-n", "stage_c", "-O", "hashes/sig.hash", sys.executable, "stage_c.py"],
+            cwd=cls.temp_root,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run([*dvc_cmd, "repro", "stage_c"], cwd=cls.temp_root, check=True, capture_output=True)
+
+        # 5. Stage D: depends on scripts/d.py (git) and hashes/sig.hash (uncached from C)
+        script_d = scripts_dir / "d.py"
+        script_d.write_text("open('out_d.txt', 'w').write('done_d')", encoding="utf-8")
+        subprocess.run(
+            [
+                *dvc_cmd, "stage", "add", "-n", "stage_d",
+                "-d", "scripts/d.py",
+                "-d", "hashes/sig.hash",
+                "-o", "out_d.txt",
+                sys.executable, "scripts/d.py",
+            ],
+            cwd=cls.temp_root,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run([*dvc_cmd, "repro", "stage_d"], cwd=cls.temp_root, check=True, capture_output=True)
+
         # Commit everything to git
         subprocess.run(["git", "add", "."], cwd=cls.temp_root, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial pipeline commit"], cwd=cls.temp_root, check=True, capture_output=True)
@@ -239,6 +273,120 @@ class TestRealDvcDagDepsResolution(unittest.TestCase):
             self.assertEqual(missing, [])
             # Aucune récupération CAS requise !
             self.assertFalse(mock_fetch.called, "fetch_dependencies should NOT be called when outs are already valid locally")
+
+    def test_4_uncached_output_consumed_by_downstream_node(self):
+        """
+        Vérifie qu'une sortie avec cache: false (stage_c) consommée par un nœud aval (stage_d) :
+        - Est acceptée sans jamais solliciter le CAS lorsqu'elle est présente localement.
+        - Échoue explicitement avec cause/remède git sans solliciter le CAS lorsqu'elle est absente.
+        - Est automatiquement ajoutée à git (git add -f) par commit_and_push_node.
+        """
+        sig_file = self.temp_root / "hashes" / "sig.hash"
+        backup_sig = sig_file.read_text(encoding="utf-8")
+
+        # Cas A : Présente localement -> 0 CAS, 0 échec
+        with patch("src.runner.branch_executor.fetch_dependencies") as mock_fetch:
+            missing = self.executor.fetch_missing_deps(
+                "stage_d",
+                dep_paths=["scripts/d.py", "hashes/sig.hash"],
+            )
+            self.assertEqual(missing, [])
+            self.assertFalse(mock_fetch.called, "CAS fetch must NEVER be called for cache: false outputs")
+
+        # Cas B : Absente localement -> échec explicite sans CAS
+        sig_file.unlink()
+        try:
+            with patch("src.runner.branch_executor.fetch_dependencies") as mock_fetch:
+                missing = self.executor.fetch_missing_deps(
+                    "stage_d",
+                    dep_paths=["scripts/d.py", "hashes/sig.hash"],
+                )
+                self.assertIn("hashes/sig.hash", missing)
+                self.assertFalse(mock_fetch.called, "CAS fetch must NEVER be called even when cache: false output is missing")
+        finally:
+            sig_file.write_text(backup_sig, encoding="utf-8")
+
+        # Cas C : commit_and_push_node commite les sorties cache: false
+        from src.runner.branch_executor import commit_and_push_node
+        with patch("src.runner.dvc_git_helper.push_with_retries") as mock_push:
+            sig_file.write_text("modified_hash_val", encoding="utf-8")
+            ok = commit_and_push_node(str(self.temp_root), "stage_c", "main")
+            self.assertTrue(ok)
+            res = subprocess.run(["git", "status", "--porcelain"], cwd=self.temp_root, capture_output=True, text=True)
+            self.assertEqual(res.stdout.strip(), "")
+            self.assertTrue(mock_push.called)
+
+    def test_5_upstream_reproduced_new_md5_accepted_and_incoherent_refused(self):
+        """
+        Vérifie qu'une étape amont relancée qui change le md5 d'une sortie cachée :
+        - Le nœud aval accepte le nouveau md5 produit par l'amont (already_valid = True, 0 CAS).
+        - Le nœud aval refuse un md5 incohérent (ou ancien) et demande au CAS le NOUVEAU md5 de l'amont.
+        """
+        import yaml
+        from src.runner.fetch_cas_dependencies import compute_file_md5
+
+        out_parquet = self.temp_root / "data" / "out.parquet"
+        backup_parquet = out_parquet.read_bytes()
+
+        dvc_lock_file = self.temp_root / "dvc.lock"
+        with open(dvc_lock_file, "r", encoding="utf-8") as f:
+            lock_data = yaml.safe_load(f)
+
+        old_stage_a_md5 = next(o["md5"] for o in lock_data["stages"]["stage_a"]["outs"] if o.get("path") == "data/out.parquet")
+        old_stage_b_dep_md5 = next(d["md5"] for d in lock_data["stages"]["stage_b"]["deps"] if d.get("path") == "data/out.parquet")
+        self.assertEqual(old_stage_a_md5, old_stage_b_dep_md5)
+
+        try:
+            # Simuler que stage_a a produit un nouveau fichier avec un nouveau hash
+            new_content = b"brand_new_parquet_data_content_from_stage_a_repro"
+            out_parquet.write_bytes(new_content)
+            new_md5 = compute_file_md5(str(out_parquet))
+            self.assertNotEqual(new_md5, old_stage_a_md5)
+
+            # Mettre à jour dvc.lock uniquement pour stage_a.outs (comme après repro de stage_a)
+            # stage_b.deps CONSERVE l'ancien md5 (n'a pas encore été repro)
+            for o in lock_data["stages"]["stage_a"]["outs"]:
+                if o.get("path") == "data/out.parquet":
+                    o["md5"] = new_md5
+            with open(dvc_lock_file, "w", encoding="utf-8") as f:
+                yaml.dump(lock_data, f)
+
+            # 1. Le nœud aval (stage_b) doit ACCEPTER le nouveau md5 déjà présent sur disque
+            with patch("src.runner.branch_executor.fetch_dependencies") as mock_fetch:
+                missing = self.executor.fetch_missing_deps(
+                    "stage_b",
+                    dep_paths=["scripts/b.py", "configs/x.yaml", "data/out.parquet", "data/sub/f1.txt"],
+                )
+                self.assertEqual(missing, [])
+                self.assertFalse(mock_fetch.called, "New md5 produced by stage_a should be accepted directly without CAS")
+
+            # 2. Si le fichier sur disque a un md5 incohérent (ex. ancien ou corrompu),
+            # stage_b doit REFUSER et demander au CAS le NOUVEAU md5 de stage_a (pas l'ancien)
+            out_parquet.write_bytes(b"incoherent_or_stale_data")
+            with patch("src.runner.branch_executor.fetch_dependencies") as mock_fetch:
+                mock_res = MagicMock()
+                mock_res.success = True
+                mock_res.missing_deps = []
+                mock_res.missing_hashes = []
+                mock_fetch.return_value = mock_res
+
+                missing = self.executor.fetch_missing_deps(
+                    "stage_b",
+                    dep_paths=["scripts/b.py", "configs/x.yaml", "data/out.parquet", "data/sub/f1.txt"],
+                )
+                self.assertEqual(missing, [])
+                self.assertTrue(mock_fetch.called, "CAS fetch must be called when local file has incoherent hash")
+
+                # Vérifier que le hash demandé au CAS est bien NEW_MD5 (produit par stage_a), et NON l'ancien hash
+                called_deps = mock_fetch.call_args[1].get("dependencies") or mock_fetch.call_args[0][0]
+                parquet_dep = next(d for d in called_deps if d.get("path") == "data/out.parquet")
+                self.assertEqual(parquet_dep.get("md5"), new_md5, "Expected hash must be the FRESH producer hash, not stale consumer dep hash")
+
+        finally:
+            out_parquet.write_bytes(backup_parquet)
+            lock_data["stages"]["stage_a"]["outs"][0]["md5"] = old_stage_a_md5
+            with open(dvc_lock_file, "w", encoding="utf-8") as f:
+                yaml.dump(lock_data, f)
 
 
 if __name__ == "__main__":

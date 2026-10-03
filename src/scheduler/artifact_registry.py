@@ -519,27 +519,42 @@ def get_dag_stage_outputs(
                 if is_dir:
                     directory_outputs[norm_p] = info
 
-    def _extract_outs(outs_obj: Any) -> list[str]:
-        paths = []
+    def _extract_outs_meta(outs_obj: Any, default_cache: bool = True) -> list[tuple[str, bool]]:
+        """Extracts list of (path_string, is_cached_bool) from dvc.yaml outs/metrics/plots."""
+        results: list[tuple[str, bool]] = []
         if isinstance(outs_obj, list):
             for item in outs_obj:
                 if isinstance(item, str):
-                    paths.append(item)
+                    results.append((item, default_cache))
                 elif isinstance(item, Mapping):
-                    for k, v in item.items():
-                        if k == "path" and isinstance(v, str):
-                            paths.append(v)
-                        elif isinstance(k, str) and not isinstance(v, Mapping):
-                            paths.append(k)
-                        elif isinstance(item.get("path"), str):
-                            paths.append(item["path"])
+                    if "path" in item:
+                        p = str(item["path"])
+                        c = bool(item.get("cache", default_cache))
+                        results.append((p, c))
+                    else:
+                        for k, v in item.items():
+                            if isinstance(k, str):
+                                c = default_cache
+                                if isinstance(v, Mapping):
+                                    c = bool(v.get("cache", default_cache))
+                                elif isinstance(v, bool):
+                                    c = v
+                                results.append((k, c))
         elif isinstance(outs_obj, str):
-            paths.append(outs_obj)
+            results.append((outs_obj, default_cache))
         elif isinstance(outs_obj, Mapping):
-            for k in outs_obj.keys():
-                if isinstance(k, str):
-                    paths.append(k)
-        return paths
+            if "path" in outs_obj:
+                results.append((str(outs_obj["path"]), bool(outs_obj.get("cache", default_cache))))
+            else:
+                for k, v in outs_obj.items():
+                    if isinstance(k, str):
+                        c = default_cache
+                        if isinstance(v, Mapping):
+                            c = bool(v.get("cache", default_cache))
+                        elif isinstance(v, bool):
+                            c = v
+                        results.append((k, c))
+        return results
 
     # 2. Parse dvc.yaml stages
     yaml_stages = yaml_dict.get("stages", {}) if isinstance(yaml_dict, Mapping) else {}
@@ -551,9 +566,9 @@ def get_dag_stage_outputs(
             foreach_items = st_def.get("foreach")
             do_block = st_def.get("do", {})
             if foreach_items is not None and isinstance(do_block, Mapping):
-                do_outs = _extract_outs(do_block.get("outs", []))
-                do_outs.extend(_extract_outs(do_block.get("metrics", [])))
-                do_outs.extend(_extract_outs(do_block.get("plots", [])))
+                do_outs = _extract_outs_meta(do_block.get("outs", []), default_cache=True)
+                do_outs.extend(_extract_outs_meta(do_block.get("metrics", []), default_cache=False))
+                do_outs.extend(_extract_outs_meta(do_block.get("plots", []), default_cache=False))
 
                 items_list: list[str] = []
                 if isinstance(foreach_items, list):
@@ -563,40 +578,50 @@ def get_dag_stage_outputs(
 
                 for item_val in items_list:
                     sub_stage = f"{st_name}@{item_val}"
-                    for raw_p in do_outs:
+                    for raw_p, is_cache in do_outs:
                         resolved = raw_p.replace("${item}", item_val).replace("$item", item_val)
                         norm_p = os.path.normpath(resolved).replace("\\", "/").rstrip("/")
                         if not norm_p or norm_p == ".":
                             continue
                         is_dir = raw_p.endswith("/") or raw_p.endswith("\\")
                         if norm_p not in exact_outputs:
-                            exact_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": is_dir}
-                        if is_dir and norm_p not in directory_outputs:
-                            directory_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": True}
+                            exact_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": is_dir, "cache": is_cache}
+                        else:
+                            exact_outputs[norm_p]["cache"] = is_cache
+                        if is_dir:
+                            if norm_p not in directory_outputs:
+                                directory_outputs[norm_p] = {"stage": sub_stage, "md5": None, "is_dir": True, "cache": is_cache}
+                            else:
+                                directory_outputs[norm_p]["cache"] = is_cache
 
-                for raw_p in do_outs:
+                for raw_p, is_cache in do_outs:
                     norm_p = os.path.normpath(raw_p).replace("\\", "/").rstrip("/")
                     if "${" in norm_p or "$" in norm_p:
                         pat_str = re.escape(norm_p)
                         pat_str = re.sub(r'\\\$\\\{[^}]+\\\}', '.*', pat_str)
                         pat_str = re.sub(r'\\\$[a-zA-Z0-9_]+', '.*', pat_str)
                         try:
-                            pattern_outputs.append((re.compile(f"^{pat_str}(?:/.*)?$"), str(st_name)))
+                            pattern_outputs.append((re.compile(f"^{pat_str}(?:/.*)?$"), str(st_name), is_cache))
                         except Exception:
                             pass
             else:
-                st_outs = _extract_outs(st_def.get("outs", []))
-                st_outs.extend(_extract_outs(st_def.get("metrics", [])))
-                st_outs.extend(_extract_outs(st_def.get("plots", [])))
-                for raw_p in st_outs:
+                st_outs = _extract_outs_meta(st_def.get("outs", []), default_cache=True)
+                st_outs.extend(_extract_outs_meta(st_def.get("metrics", []), default_cache=False))
+                st_outs.extend(_extract_outs_meta(st_def.get("plots", []), default_cache=False))
+                for raw_p, is_cache in st_outs:
                     norm_p = os.path.normpath(raw_p).replace("\\", "/").rstrip("/")
                     if not norm_p or norm_p == ".":
                         continue
                     is_dir = raw_p.endswith("/") or raw_p.endswith("\\")
                     if norm_p not in exact_outputs:
-                        exact_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": is_dir}
-                    if is_dir and norm_p not in directory_outputs:
-                        directory_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": True}
+                        exact_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": is_dir, "cache": is_cache}
+                    else:
+                        exact_outputs[norm_p]["cache"] = is_cache
+                    if is_dir:
+                        if norm_p not in directory_outputs:
+                            directory_outputs[norm_p] = {"stage": str(st_name), "md5": None, "is_dir": True, "cache": is_cache}
+                        else:
+                            directory_outputs[norm_p]["cache"] = is_cache
 
     return exact_outputs, directory_outputs, pattern_outputs
 
@@ -613,16 +638,26 @@ def is_dag_stage_output(
     """
     norm_dep = os.path.normpath(dep_path).replace("\\", "/").rstrip("/")
     if norm_dep in exact_outputs:
-        return True, dict(exact_outputs[norm_dep])
+        res = dict(exact_outputs[norm_dep])
+        if "cache" not in res:
+            res["cache"] = True
+        return True, res
     for dir_path, dir_info in directory_outputs.items():
         if norm_dep.startswith(f"{dir_path}/"):
             res = dict(dir_info)
             res["parent_dir"] = dir_path
             res["parent_dir_hash"] = dir_info.get("md5")
+            res["md5"] = None  # Subpath is not the directory itself
+            res["is_dir"] = False
+            if "cache" not in res:
+                res["cache"] = dir_info.get("cache", True)
             return True, res
-    for pat, st_name in pattern_outputs:
+    for pat_tuple in pattern_outputs:
+        pat = pat_tuple[0]
+        st_name = pat_tuple[1]
+        c = pat_tuple[2] if len(pat_tuple) > 2 else True
         if pat.match(norm_dep):
-            return True, {"stage": st_name, "md5": None, "is_dir": False}
+            return True, {"stage": st_name, "md5": None, "is_dir": False, "cache": c}
     return False, None
 
 
@@ -695,17 +730,20 @@ def extract_node_deps_from_dvc_lock(
         dep_path = str(dep.get("path", "")).replace("\\", "/")
 
         is_stage_out, out_info = is_dag_stage_output(dep_path, exact_outs, dir_outs, pat_outs)
-        if stage_outs_only and not is_stage_out:
+        is_cached = bool((out_info or {}).get("cache", True)) if is_stage_out else False
+        if stage_outs_only and (not is_stage_out or not is_cached):
             continue
 
         parent_dir_hash = (out_info or {}).get("parent_dir_hash")
-        if not parent_dir_hash:
+        if not parent_dir_hash and is_cached:
             for dir_path, dir_md5 in dir_outs.items():
                 if dep_path.startswith(f"{dir_path}/"):
-                    parent_dir_hash = dir_md5.get("md5") if isinstance(dir_md5, Mapping) else dir_md5
-                    parent_dirs_to_add[str(parent_dir_hash)] = dir_path
+                    dir_info = dir_md5 if isinstance(dir_md5, Mapping) else {}
+                    if dir_info.get("cache", True):
+                        parent_dir_hash = dir_info.get("md5")
+                        parent_dirs_to_add[str(parent_dir_hash)] = dir_path
                     break
-        elif parent_dir_hash:
+        elif parent_dir_hash and is_cached:
             p_dir = (out_info or {}).get("parent_dir") or ""
             parent_dirs_to_add[str(parent_dir_hash)] = p_dir
 
@@ -715,7 +753,7 @@ def extract_node_deps_from_dvc_lock(
             "size_bytes": max(0, size_bytes),
             "is_dir": is_dir,
             "parent_dir_hash": parent_dir_hash,
-            "is_stage_output": is_stage_out,
+            "is_stage_output": is_stage_out and is_cached,
         })
 
     # Ensure parent .dir manifests are also declared so DVC checkout can unpack subfiles
