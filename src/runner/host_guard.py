@@ -160,6 +160,46 @@ def format_memory_value(gb: float) -> str:
     return f"{mb}m"
 
 
+def check_cgroup_memory_limit(cgroup_parent: str) -> Tuple[bool, str, Optional[int]]:
+    """Verify that the cgroup exists and has an active memory limit.
+    
+    Checks cgroup v1 (/sys/fs/cgroup/memory/<path>/memory.limit_in_bytes)
+    and cgroup v2 (/sys/fs/cgroup/<path>/memory.max).
+    Returns (is_valid, reason, limit_bytes).
+    """
+    clean_parent = cgroup_parent.strip("/")
+    
+    # 1. Cgroup v1 (Ubuntu 20.04 / isipol09)
+    v1_file = f"/sys/fs/cgroup/memory/{clean_parent}/memory.limit_in_bytes"
+    if os.path.exists(v1_file):
+        try:
+            with open(v1_file, "r") as f:
+                val = int(f.read().strip())
+                # Kernel cgroup v1 unlimited is >= 9223372036854771712 (PAGE_COUNTER_MAX)
+                if val >= 9000000000000000000 or val <= 0:
+                    return False, f"cgroup v1 '{clean_parent}' existe mais n'a AUCUNE limite définie (illimité: {val})", val
+                return True, "ok", val
+        except Exception as e:
+            return False, f"erreur de lecture cgroup v1: {e}", None
+
+    # 2. Cgroup v2 (Unified hierarchy)
+    v2_file = f"/sys/fs/cgroup/{clean_parent}/memory.max"
+    if os.path.exists(v2_file):
+        try:
+            with open(v2_file, "r") as f:
+                content = f.read().strip()
+                if content == "max":
+                    return False, f"cgroup v2 '{clean_parent}' existe mais n'a AUCUNE limite définie (memory.max='max')", None
+                val = int(content)
+                if val <= 0:
+                    return False, f"cgroup v2 '{clean_parent}' limite invalide ({val})", val
+                return True, "ok", val
+        except Exception as e:
+            return False, f"erreur de lecture cgroup v2: {e}", None
+
+    return False, f"le cgroup parent '{clean_parent}' est introuvable sous /sys/fs/cgroup", None
+
+
 def docker_resource_args(
     host_profile: Dict[str, Any],
     node_resources: Optional[Dict[str, Any]] = None,
@@ -259,7 +299,43 @@ def docker_resource_args(
     if is_headnode:
         cgroup_parent = host_profile.get("cgroup_parent") or headnode_cgroup_parent
         if cgroup_parent:
+            check_cgroup = host_profile.get("verify_cgroup", True)
+            if check_cgroup and (os.path.isdir("/sys/fs/cgroup") or host_profile.get("enforce_cgroup_check")):
+                valid, reason, _ = check_cgroup_memory_limit(cgroup_parent)
+                if not valid:
+                    raise ValueError(
+                        f"Refus de production --cgroup-parent={cgroup_parent} sur le headnode : {reason}.\n"
+                        f"Cause : Le cgroup parent est absent ou sans limite mémoire active (protection fantôme).\n"
+                        f"Remède : Créez et configurez la limite globale du cgroup (total - 16 Go) avant de lancer des conteneurs.\n"
+                        f"Commande : sudo mkdir -p /sys/fs/cgroup/memory/{cgroup_parent.strip('/')} && "
+                        f"echo $(( ($(grep MemTotal /proc/meminfo | awk '{{print $2}}') - 16777216) * 1024 )) | "
+                        f"sudo tee /sys/fs/cgroup/memory/{cgroup_parent.strip('/')}/memory.limit_in_bytes"
+                    )
             args.append(f"--cgroup-parent={cgroup_parent}")
+
+    # 6. Shared memory (--shm-size)
+    # PyTorch DataLoader avec workers et NeMo exigent une mémoire partagée adéquate (sinon Bus error)
+    # Alloué à 25% de la RAM effective du conteneur (minimum 2 Go)
+    shm_size_gb = max(2.0, round(effective_mem * 0.25, 2))
+    shm_str = format_memory_value(shm_size_gb)
+    args.append(f"--shm-size={shm_str}")
+
+    # 7. GPU Allocation Flags (Amendement A16)
+    if "gpus" in node_resources:
+        req_gpus = int(node_resources["gpus"] or 0)
+        if req_gpus == 0:
+            import logging
+            logging.getLogger("cluster_ci.host_guard").info("aucun GPU demandé (meta.cluster.gpus=0)")
+        else:
+            gpu_ids = node_resources.get("gpu_ids")
+            if gpu_ids:
+                if isinstance(gpu_ids, list):
+                    ids_str = ",".join(str(g) for g in gpu_ids)
+                else:
+                    ids_str = str(gpu_ids).strip()
+                args.append(f'--gpus="device={ids_str}"')
+            else:
+                args.append("--gpus=all")
 
     return args
 

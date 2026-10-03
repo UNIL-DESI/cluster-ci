@@ -130,6 +130,21 @@ class DockerRunner:
         res = subprocess.run([self.docker_cmd, "volume", "create", volume_name], capture_output=True)
         return res.returncode
 
+    def is_oom_killed(self, container_name: str) -> bool:
+        """Inspecte si le conteneur a subi un OOMKilled via docker inspect."""
+        if not container_name:
+            return False
+        try:
+            res = subprocess.run(
+                [self.docker_cmd, "inspect", "-f", "{{.State.OOMKilled}}", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return res.stdout.strip().lower() == "true"
+        except Exception:
+            return False
+
     def run_container(
         self,
         image: str,
@@ -142,14 +157,28 @@ class DockerRunner:
         env: Optional[Dict[str, str]] = None,
         user_id: int = 1000,
         group_id: int = 1000,
+        resources: Optional[Dict[str, Any]] = None,
     ) -> int:
+        from src.runner.host_guard import docker_resource_args
+
+        host_profile = {
+            "role": os.environ.get("CLUSTER_CI_ROLE", "worker"),
+            "is_headnode": os.environ.get("IS_HEADNODE") == "1" or os.environ.get("CLUSTER_CI_ROLE") == "headnode",
+            "verify_cgroup": False,
+        }
+        node_res = dict(resources or {})
+        node_res.setdefault("ram_gb", ram_limit)
+        node_res.setdefault("vram_gb", vram_limit)
+
+        guard_args = docker_resource_args(host_profile, node_res)
+
         cmd = [
             self.docker_cmd, "run", "-d",
             "--init",
             "--name", container_name,
-            f"--memory={int(ram_limit)}g",
-            f"--memory-swap={int(ram_limit)}g",
-            "--gpus", "all",
+        ]
+        cmd.extend(guard_args)
+        cmd.extend([
             "-v", f"{repo_dir}:/workspace",
             "-w", "/workspace",
             "-v", f"{home_volume}:/home/user",
@@ -161,7 +190,7 @@ class DockerRunner:
             "--ipc=host",
             "--user", f"{user_id}:{group_id}",
             "--entrypoint", "tail",
-        ]
+        ])
         if env:
             for k, v in env.items():
                 cmd.extend(["-e", f"{k}={v}"])
@@ -527,6 +556,7 @@ class BranchExecutor:
             env=env,
             user_id=self.user_id,
             group_id=self.group_id,
+            resources=resources,
         )
         if ret != 0:
             raise RuntimeError(f"Échec docker run pour {container_name} (code {ret})")
@@ -754,13 +784,23 @@ class BranchExecutor:
                     missing_deps_for_req = None
                 else:
                     logger.error("Le nœud %s a échoué (code %d)", target_node, node_exit_code)
+                    oom_killed = self.docker.is_oom_killed(self.current_container)
+                    if oom_killed:
+                        node_ram = (resources or {}).get("ram_gb", self.ram_limit)
+                        err_msg = (
+                            f"nœud {target_node} tué par manque de mémoire (plafond ram_gb={node_ram} Go) ; "
+                            f"remède : augmenter meta.cluster.ram_gb du stage {target_node} dans dvc.yaml"
+                        )
+                        logger.error("❌ %s", err_msg)
+                        error_message_for_req = err_msg
+                    else:
+                        error_message_for_req = (
+                            f"Node {target_node} failed with exit code {node_exit_code}"
+                        )
                     node_for_req = target_node
                     status_for_req = "failed"
                     duration_for_req = node_duration
                     exit_code_for_req = node_exit_code
-                    error_message_for_req = (
-                        f"Node {target_node} failed with exit code {node_exit_code}"
-                    )
                     missing_deps_for_req = None
 
                 self.current_node = None

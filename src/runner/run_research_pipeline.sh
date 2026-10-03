@@ -415,10 +415,15 @@ log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 # Docker cgroups memory enforcement: the container is hard-limited to REQUIRED_RAM.
 # If user code exceeds this, Docker OOM-kills the container process — NOT the host.
 # --memory-swap equal to --memory disables swap (prevents silent degradation).
-# NOTE: The scheduler already rejects jobs where REQUIRED_RAM > (worker_total_ram - 8GB),
-# so by the time we get here, RAM_LIMIT is always safe for this worker.
-DOCKER_MEMORY_FLAG="--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g"
-log_info "Docker memory hard-limit: ${RAM_LIMIT}GB (cgroups enforced, no swap)"
+# Cluster-CI v3 (W11) - Utilisation dynamique de host_guard pour tous les conteneurs
+HOST_RAM_TOTAL=$(free -m 2>/dev/null | awk '/Mem:/{print $2/1024}' || echo "64.0")
+DOCKER_RESOURCE_FLAGS=$(python3 -m src.runner.host_guard \
+    --host-profile "{\"hostname\":\"$(hostname)\",\"role\":\"${CLUSTER_CI_ROLE:-worker}\",\"total_ram_gb\":$HOST_RAM_TOTAL}" \
+    --ram-gb "$RAM_LIMIT" \
+    --vram-gb "$VRAM_LIMIT" \
+    --cpus "${REQUIRED_CPUS:-4}" 2>/dev/null || echo "--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g --memory-swappiness=0 --oom-score-adj=500 --cpus=${REQUIRED_CPUS:-4} --pids-limit=4096 --shm-size=2g")
+DOCKER_MEMORY_FLAG="$DOCKER_RESOURCE_FLAGS"
+log_info "Docker resource flags (host_guard enforced): $DOCKER_RESOURCE_FLAGS"
 
 # Extract VRAM limit from .cluster-ci (REQUIRED_VRAM=70GB)
 # This is enforced by the GPU watchdog (nvidia-smi monitoring), not by Docker.
@@ -947,7 +952,7 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
         log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_VRAM allouée (${VRAM_LIMIT} GB) et a été arrêté préventivement par le GPU Watchdog pour protéger le worker. Veuillez réduire la consommation VRAM ou augmenter REQUIRED_VRAM dans .cluster-ci"
     elif [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
         EXEC_RET=137
-        log_error "❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée (${RAM_LIMIT} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci"
+        log_error "❌ Erreur: nœud ${STAGE_NAME:-pipeline} tué par manque de mémoire (plafond ram_gb=${RAM_LIMIT} Go) ; remède : augmenter meta.cluster.ram_gb dans dvc.yaml ou REQUIRED_RAM dans .cluster-ci"
     else
         log_error "Execution interrupted or failed (Exit code: $EXEC_RET). Forcing DVC sync before exiting..."
     fi

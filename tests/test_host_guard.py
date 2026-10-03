@@ -333,3 +333,40 @@ def test_defaults_constants():
     assert HEADNODE_PLACEMENT_PRIORITY == 0
 
 
+def test_cgroup_refusal_when_unlimited_or_missing():
+    from src.runner.host_guard import check_cgroup_memory_limit
+
+    # 1. Cgroup manquant
+    valid, reason, _ = check_cgroup_memory_limit("/nonexistent-cgroup-xyz")
+    assert valid is False
+    assert "introuvable" in reason
+
+    # 2. Refus dans docker_resource_args si enforce_cgroup_check=True
+    host_profile = {
+        "role": "headnode",
+        "enforce_cgroup_check": True,
+        "cgroup_parent": "/nonexistent-cgroup-xyz",
+    }
+    with pytest.raises(ValueError, match="Refus de production --cgroup-parent"):
+        docker_resource_args(host_profile, {"ram_gb": 4})
+
+
+def test_docker_resource_args_gpus_and_shm():
+    host = {"role": "worker", "total_ram_gb": 64}
+
+    # gpus = 0 -> pas de --gpus
+    args_0 = docker_resource_args(host, {"ram_gb": 8, "gpus": 0})
+    assert not any(a.startswith("--gpus") for a in args_0)
+    assert "--shm-size=2g" in args_0
+
+    # gpus = 1 avec device ids
+    args_1 = docker_resource_args(host, {"ram_gb": 16, "gpus": 1, "gpu_ids": [0]})
+    assert '--gpus="device=0"' in args_1
+    assert "--shm-size=4g" in args_1
+
+    # gpus = 2 sans device ids -> all
+    args_2 = docker_resource_args(host, {"ram_gb": 16, "gpus": 2})
+    assert "--gpus=all" in args_2
+
+
+
