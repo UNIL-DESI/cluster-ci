@@ -45,18 +45,23 @@ stages:
 
 All fields under `meta.cluster` are **optional**. If a field is omitted, Cluster-CI falls back to repository-level configuration or cluster defaults.
 
-### All 9 Resource Fields
+### The 6 Core Resource Fields
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `image` | `string` | `nvcr.io/nvidia/pytorch:26.05-py3` | Default Docker base image for the stage. |
-| `image_arm64` | `string` | `null` | Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to `image`. |
-| `image_amd64` | `string` | `null` | Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to `image`. |
 | `cpus` | `integer` | `2` | Number of CPU cores allocated for the stage (`>= 1`). |
 | `gpus` | `integer` | `0` | Number of physical GPUs allocated for the stage (`>= 0`). |
 | `ram_gb` | `float` | `10.0` | Minimum physical host RAM in GB required (`>= 0.0`). |
 | `vram_gb` | `float` | `0.0` | Minimum GPU VRAM in GB required (`>= 0.0`). When `0.0`, stage runs on CPU-only nodes. |
 | `storage_gb` | `float` | `0.0` | Minimum free disk space in GB required on worker (`>= 0.0`). Set `0.0` to disable disk check. |
+
+### Architecture & Placement Extensions
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `image_arm64` | `string` | `null` | Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to `image`. |
+| `image_amd64` | `string` | `null` | Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to `image`. |
 | `workers` | `list[string]` | `null` (All workers) | Whitelist of worker hostnames eligible to execute this stage (e.g. `['HEC45801']`). |
 
 !!! danger "Strict Validation & Consistency Rules (Fail-Fast)"

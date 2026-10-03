@@ -62,13 +62,16 @@ Cluster-CI streams logs from the executing container back to your terminal in re
 *   **Primary channel**: Low-latency streaming via `ppng.io`.
 *   **Fallback**: If `ppng.io` is unreachable, the client polls the GitHub Actions API (`gh run view --log`) or Headnode `/job_logs/{job_id}`.
 *   **Progress bars**: `tqdm` progress bars update in-place without generating log spam.
-*   **Local copies**: Logs are saved to `.cluster-ci-logs/` (last 5 runs kept automatically).
-*   **Multi-machine prefixing**: In distributed DAG runs, log lines are prefixed with their originating stage and host:
+*   **Multi-machine multiplexing (`[node@machine]`)**: Delivered in `feat/v3` (`format_multi_machine_log_line` in `src/cluster/cluster_run.py:1710` and `src/scheduler/submit_job.py:230`), logs emitted across concurrent nodes are dynamically tagged with `[<stage>@<worker>]`:
     ```text
-    [train_model@HEC45801] Epoch 1/10 - loss: 0.421
-    [evaluate@HEC45803] Running validation suite...
+    [prepare_data@HEC45801] Loading raw features...
+    [train_variant@HEC45803] Epoch 1/10 - loss: 0.421
+    [evaluate@HEC45801] Test accuracy: 0.942
     ```
-    *(Note : L'affichage consolidé multi-machines en direct avec multiplexage interactif `[node@machine]` dans la console CLI est à venir / en cours de consolidation finale chez W1).*
+*   **Resilient endpoint fallback**: Log polling requests query `GET /job_logs/{job_id}` in priority. If the route returns HTTP 404, the client automatically displays a warning and falls back to `GET /api/jobs/{job_id}/logs` (`src/cluster/cluster_run.py:1697`):
+    ```text
+    ⚠️ Avertissement : Route /job_logs/<job_id> introuvable (HTTP 404), bascule de repli vers /api/jobs/<job_id>/logs.
+    ```
 
 ---
 
