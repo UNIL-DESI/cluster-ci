@@ -16,7 +16,7 @@ from src.runner.host_guard import (
 )
 
 
-def test_is_headnode_detection():
+def test_is_headnode_detection(monkeypatch):
     # Via flag explicite
     assert is_headnode_host({"is_headnode": True}) is True
     assert is_headnode_host({"is_headnode": False}) is False
@@ -24,12 +24,25 @@ def test_is_headnode_detection():
     # Via role
     assert is_headnode_host({"role": "headnode"}) is True
     assert is_headnode_host({"role": "HEADNODE"}) is True
+    assert is_headnode_host({"role": "headnode_worker"}) is True
     assert is_headnode_host({"role": "worker"}) is False
 
-    # Via hostname isipol09
-    assert is_headnode_host({"hostname": "isipol09"}) is True
-    assert is_headnode_host({"hostname": "ISIPOL09"}) is True
+    # A14: Zero hardcoded hostnames/IPs - hostname alone does NOT identify a headnode
+    assert is_headnode_host({"hostname": "isipol09"}) is False
+    assert is_headnode_host({"hostname": "ISIPOL09"}) is False
     assert is_headnode_host({"hostname": "HEC45801"}) is False
+
+    # Via environment variable CLUSTER_CI_ROLE / IS_HEADNODE
+    monkeypatch.setenv("CLUSTER_CI_ROLE", "headnode")
+    assert is_headnode_host({}) is True
+    assert is_headnode_host({"hostname": "any-node"}) is True
+    # Explicit role="worker" overrides local env default
+    assert is_headnode_host({"role": "worker"}) is False
+    monkeypatch.delenv("CLUSTER_CI_ROLE", raising=False)
+
+    monkeypatch.setenv("IS_HEADNODE", "1")
+    assert is_headnode_host({}) is True
+    monkeypatch.delenv("IS_HEADNODE", raising=False)
 
 
 def test_is_unified_memory_detection():
@@ -112,25 +125,20 @@ def test_docker_resource_args_standard_discrete_worker():
         "cpus": 4,
     }
 
-    # By default on a worker, no memory ceiling is enforced (single executor under A6)
-    args_default = docker_resource_args(host, node)
-    assert not any(arg.startswith("--memory=") for arg in args_default)
-    assert not any(arg.startswith("--memory-swap=") for arg in args_default)
-    assert "--cpus=4" in args_default
-    assert "--pids-limit=4096" in args_default
-
-    # When explicitly enabled via enforce_node_memory_limit=True:
-    args_enforced = docker_resource_args(host, node, enforce_node_memory_limit=True)
-    assert "--memory=8g" in args_enforced
-    assert "--memory-swap=8g" in args_enforced
-    assert "--memory-swappiness=0" in args_enforced
-    assert "--oom-score-adj=500" in args_enforced
-    assert "--cpus=4" in args_enforced
-    assert "--pids-limit=4096" in args_enforced
+    # Amendement A12: unconditional memory limits on all machines
+    args = docker_resource_args(host, node)
+    assert "--memory=8g" in args
+    assert "--memory-swap=8g" in args
+    assert "--memory-swappiness=0" in args
+    assert "--oom-score-adj=500" in args
+    assert "--cpus=4" in args
+    assert "--pids-limit=4096" in args
+    # Not headnode, so no cgroup-parent
+    assert not any(arg.startswith("--cgroup-parent=") for arg in args)
 
 
 def test_docker_resource_args_unified_memory_gb10():
-    # Règle cruciale GB10 : ram_gb + vram_gb doivent être couverts par --memory si activé
+    # Règle cruciale GB10 : ram_gb + vram_gb doivent être couverts par --memory (Amendement A12)
     host = {
         "hostname": "HEC45801",
         "role": "worker",
@@ -144,19 +152,14 @@ def test_docker_resource_args_unified_memory_gb10():
         "cpus": 8,
     }
 
-    # By default on GB10, no memory ceiling is enforced to avoid killing ECIR jobs
-    args_default = docker_resource_args(host, node)
-    assert not any(arg.startswith("--memory=") for arg in args_default)
-    assert "--cpus=8" in args_default
-
-    # When enforce_node_memory_limit=True, 10 RAM + 40 VRAM = 50 Go
-    args_enforced = docker_resource_args(host, node, enforce_node_memory_limit=True)
-    assert "--memory=50g" in args_enforced
-    assert "--memory-swap=50g" in args_enforced
-    assert "--memory-swappiness=0" in args_enforced
-    assert "--oom-score-adj=500" in args_enforced
-    assert "--cpus=8" in args_enforced
-    assert "--pids-limit=4096" in args_enforced
+    args = docker_resource_args(host, node)
+    assert "--memory=50g" in args
+    assert "--memory-swap=50g" in args
+    assert "--memory-swappiness=0" in args
+    assert "--oom-score-adj=500" in args
+    assert "--cpus=8" in args
+    assert "--pids-limit=4096" in args
+    assert not any(arg.startswith("--cgroup-parent=") for arg in args)
 
 
 def test_docker_resource_args_headnode_strict_ceiling():
@@ -169,7 +172,7 @@ def test_docker_resource_args_headnode_strict_ceiling():
         "unified_memory": False,
     }
 
-    # Job modeste : admis
+    # Job modeste : admis, avec cgroup parent par défaut /cluster-jobs (A11)
     node_ok = {
         "ram_gb": 32.0,
         "cpus": 8,
@@ -179,6 +182,12 @@ def test_docker_resource_args_headnode_strict_ceiling():
     assert "--memory=32g" in args
     assert "--memory-swap=32g" in args
     assert "--cpus=8" in args
+    assert "--cgroup-parent=/cluster-jobs" in args
+
+    # Custom cgroup parent
+    host_custom = dict(host, cgroup_parent="/cluster-jobs.slice")
+    args_custom = docker_resource_args(host_custom, node_ok)
+    assert "--cgroup-parent=/cluster-jobs.slice" in args_custom
 
     # Plafond CPU : si le job demande 24 CPU, il est capé à 24 - 2 = 22
     node_high_cpu = {
@@ -207,8 +216,8 @@ def test_docker_resource_args_headnode_strict_ceiling():
 
 
 def test_docker_resource_args_string():
-    # Sur headnode : drapeaux mémoire stricts appliqués par défaut
-    headnode_host = {"hostname": "isipol09", "role": "headnode", "total_ram_gb": 125.0, "cpus": 24}
+    # Sur headnode : drapeaux mémoire stricts et cgroup parent
+    headnode_host = {"role": "headnode", "total_ram_gb": 125.0, "cpus": 24}
     node = {"ram_gb": 2.0, "cpus": 2}
     cli_str = docker_resource_args_string(headnode_host, node)
     assert "--memory=2g" in cli_str
@@ -217,12 +226,16 @@ def test_docker_resource_args_string():
     assert "--oom-score-adj=500" in cli_str
     assert "--cpus=2" in cli_str
     assert "--pids-limit=4096" in cli_str
+    assert "--cgroup-parent=/cluster-jobs" in cli_str
 
-    # Sur worker : pas de limite mémoire par défaut
-    worker_host = {"hostname": "worker-1", "role": "worker", "total_ram_gb": 32.0, "cpus": 8}
+    # Sur worker : drapeaux mémoire stricts sans cgroup-parent
+    worker_host = {"role": "worker", "total_ram_gb": 32.0, "cpus": 8}
     worker_cli_str = docker_resource_args_string(worker_host, node)
-    assert "--memory=" not in worker_cli_str
+    assert "--memory=2g" in worker_cli_str
+    assert "--memory-swap=2g" in worker_cli_str
+    assert "--memory-swappiness=0" in worker_cli_str
     assert "--cpus=2" in worker_cli_str
+    assert "--cgroup-parent=" not in worker_cli_str
 
 
 def test_get_headnode_safe_capacities():
@@ -266,10 +279,10 @@ def test_cli_invocation(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out.strip() == "0"
 
-    # 2. Test CLI docker flags on headnode (enforced by default)
+    # 2. Test CLI docker flags on headnode (unconditional limits + cgroup parent)
     monkeypatch.setattr(
         "sys.argv",
-        ["host_guard.py", "--role", "headnode", "--host-profile", '{"hostname":"isipol09","total_ram_gb":125}', "--ram-gb", "4", "--cpus", "2"]
+        ["host_guard.py", "--role", "headnode", "--host-profile", '{"total_ram_gb":125}', "--ram-gb", "4", "--cpus", "2"]
     )
     main()
     captured = capsys.readouterr()
@@ -277,45 +290,46 @@ def test_cli_invocation(monkeypatch, capsys):
     assert "--memory-swap=4g" in captured.out
     assert "--memory-swappiness=0" in captured.out
     assert "--cpus=2" in captured.out
+    assert "--cgroup-parent=/cluster-jobs" in captured.out
 
-    # 3. Test CLI docker flags on worker (disabled by default)
+    # 3. Test CLI docker flags on worker (unconditional limits, no cgroup parent)
     monkeypatch.setattr(
         "sys.argv",
-        ["host_guard.py", "--role", "worker", "--host-profile", '{"hostname":"worker-1","total_ram_gb":64}', "--ram-gb", "4", "--cpus", "2"]
-    )
-    main()
-    captured = capsys.readouterr()
-    assert "--memory=" not in captured.out
-    assert "--cpus=2" in captured.out
-
-    # 4. Test CLI docker flags on worker with explicit --enforce-memory-limit
-    monkeypatch.setattr(
-        "sys.argv",
-        ["host_guard.py", "--role", "worker", "--enforce-memory-limit", "--host-profile", '{"hostname":"worker-1","total_ram_gb":64}', "--ram-gb", "4", "--cpus", "2"]
+        ["host_guard.py", "--role", "worker", "--host-profile", '{"total_ram_gb":64}', "--ram-gb", "4", "--cpus", "2"]
     )
     main()
     captured = capsys.readouterr()
     assert "--memory=4g" in captured.out
+    assert "--memory-swap=4g" in captured.out
+    assert "--memory-swappiness=0" in captured.out
+    assert "--cpus=2" in captured.out
+    assert "--cgroup-parent=" not in captured.out
+
+    # 4. Test CLI custom cgroup parent
+    monkeypatch.setattr(
+        "sys.argv",
+        ["host_guard.py", "--role", "headnode", "--cgroup-parent", "/cluster-custom", "--host-profile", '{"total_ram_gb":125}', "--ram-gb", "4", "--cpus", "2"]
+    )
+    main()
+    captured = capsys.readouterr()
+    assert "--cgroup-parent=/cluster-custom" in captured.out
 
 
-def test_enforce_node_memory_limit_configuration():
-    from src.config.defaults import ENFORCE_NODE_MEMORY_LIMIT, should_enforce_node_memory_limit
+def test_defaults_constants():
+    from src.config.defaults import (
+        DEFAULT_HEADNODE_CGROUP_PARENT,
+        DEFAULT_HEADNODE_CPU_RESERVE,
+        DEFAULT_HEADNODE_DISK_RESERVE_GB,
+        DEFAULT_HEADNODE_RAM_RESERVE_GB,
+        DEFAULT_PLACEMENT_PRIORITY,
+        HEADNODE_PLACEMENT_PRIORITY,
+    )
 
-    # Default policy check
-    assert should_enforce_node_memory_limit("headnode") is True
-    assert should_enforce_node_memory_limit("HEADNODE") is True
-    assert should_enforce_node_memory_limit("worker") is False
-    assert should_enforce_node_memory_limit("unknown") is False
-
-    # Host profile override
-    host_worker_with_override = {
-        "hostname": "worker-custom",
-        "role": "worker",
-        "total_ram_gb": 64.0,
-        "enforce_node_memory_limit": True,
-    }
-    node = {"ram_gb": 4.0, "cpus": 2}
-    args = docker_resource_args(host_worker_with_override, node)
-    assert "--memory=4g" in args
+    assert DEFAULT_HEADNODE_CGROUP_PARENT == "/cluster-jobs"
+    assert DEFAULT_HEADNODE_RAM_RESERVE_GB == 16.0
+    assert DEFAULT_HEADNODE_CPU_RESERVE == 2
+    assert DEFAULT_HEADNODE_DISK_RESERVE_GB == 20.0
+    assert DEFAULT_PLACEMENT_PRIORITY == 50
+    assert HEADNODE_PLACEMENT_PRIORITY == 0
 
 

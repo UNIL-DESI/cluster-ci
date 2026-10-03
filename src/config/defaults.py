@@ -159,26 +159,17 @@ def validate_and_resolve_resources(
     return resolved
 
 
-# Policy: Enforce container memory limit per node
-# Default: Strictly enforced on headnode to protect master services from OOM.
-# On dedicated workers (GB10, single executor per host under Amendement A6), disabled by default
-# to avoid killing jobs (e.g. ECIR) that under-declare ram_gb while host RAM is abundant.
-ENFORCE_NODE_MEMORY_LIMIT: Dict[str, bool] = {
-    "headnode": True,
-    "worker": False,
-}
-
-
-def should_enforce_node_memory_limit(role: str) -> bool:
-    """Check if container memory limits should be enforced for a given role."""
-    role_normalized = str(role or "worker").strip().lower()
-    return ENFORCE_NODE_MEMORY_LIMIT.get(role_normalized, False)
-
-
-# Scheduling: Worker placement priority defaults
+# Scheduling: Worker placement priority defaults (Amendement A13/A14)
 # Convention: Higher value = preferred first.
-# Default: All non-headnode machines share the same standard priority (50).
+# Default: All non-headnode machines share standard priority (50).
 # Headnode is strictly the worker of last resort (0).
 DEFAULT_PLACEMENT_PRIORITY: int = 50
 HEADNODE_PLACEMENT_PRIORITY: int = 0
+
+# Headnode Resource Reservation & Packing Ceilings (Amendement A11/A12/A14)
+DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
+DEFAULT_HEADNODE_CPU_RESERVE: int = 2
+DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
+DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
+
 

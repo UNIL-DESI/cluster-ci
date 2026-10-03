@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
 DEFAULT_HEADNODE_CPU_RESERVE: int = 2
 DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
+DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
 
 DEFAULT_CONTAINER_OOM_SCORE_ADJ: int = 500  # Positive score: killed before host daemons
 DEFAULT_CONTAINER_PIDS_LIMIT: int = 4096   # Anti-fork bomb guard
@@ -37,20 +38,23 @@ DEFAULT_RAM_MARGIN_GB: float = 0.0          # Extra margin if requested
 
 PRIORITY_HEADNODE_LAST: int = 0
 PRIORITY_DEDICATED_DISCRETE: int = 50
-HEADNODE_HOSTNAMES = {"isipol09", "headnode"}
 
 try:
     from src.config.defaults import (
+        DEFAULT_HEADNODE_CGROUP_PARENT,
+        DEFAULT_HEADNODE_CPU_RESERVE,
+        DEFAULT_HEADNODE_DISK_RESERVE_GB,
+        DEFAULT_HEADNODE_RAM_RESERVE_GB,
         DEFAULT_PLACEMENT_PRIORITY,
         HEADNODE_PLACEMENT_PRIORITY,
-        should_enforce_node_memory_limit,
     )
 except ImportError:
     DEFAULT_PLACEMENT_PRIORITY = 50
     HEADNODE_PLACEMENT_PRIORITY = 0
-
-    def should_enforce_node_memory_limit(role: str) -> bool:
-        return str(role or "").strip().lower() in ("headnode", "headnode_worker")
+    DEFAULT_HEADNODE_RAM_RESERVE_GB = 16.0
+    DEFAULT_HEADNODE_CPU_RESERVE = 2
+    DEFAULT_HEADNODE_DISK_RESERVE_GB = 20.0
+    DEFAULT_HEADNODE_CGROUP_PARENT = "/cluster-jobs"
 
 # Backward compatibility alias
 PRIORITY_HEADNODE_LAST = HEADNODE_PLACEMENT_PRIORITY
@@ -60,27 +64,28 @@ PRIORITY_DEFAULT_WORKER = DEFAULT_PLACEMENT_PRIORITY
 def is_headnode_host(host_profile: Dict[str, Any]) -> bool:
     """Determine whether the given host profile corresponds to a headnode machine.
     
-    Checks explicit flags ('is_headnode', 'role'), hostname, and environment variables.
+    Checks explicit flags ('is_headnode', 'role') and environment variables.
+    Zero hardcoded hostnames or IPs (Amendement A14).
     """
     if host_profile.get("is_headnode") is True:
         return True
+    if host_profile.get("is_headnode") is False:
+        return False
     
     role = str(host_profile.get("role", "")).strip().lower()
     if role in ("headnode", "headnode_worker", "master"):
         return True
+    if role and role not in ("headnode", "headnode_worker", "master"):
+        return False
 
-    hostname = str(host_profile.get("hostname", "")).strip().lower()
-    if hostname in HEADNODE_HOSTNAMES:
+    # Check host env fallback if checking current local host (when role not specified)
+    if os.environ.get("CLUSTER_CI_ROLE", "").strip().lower() in ("headnode", "headnode_worker"):
         return True
-
-    # Check host env fallback if checking current local host
-    if os.environ.get("CLUSTER_CI_ROLE", "").lower() == "headnode":
+    if os.environ.get("IS_HEADNODE", "").strip() in ("1", "true", "yes"):
         return True
-    if os.environ.get("HEADNODE_HOST", "").lower() in (hostname, "localhost", "127.0.0.1"):
-        if hostname and hostname in HEADNODE_HOSTNAMES:
-            return True
 
     return False
+
 
 
 def is_unified_memory_host(host_profile: Dict[str, Any]) -> bool:
@@ -162,43 +167,22 @@ def docker_resource_args(
     headnode_ram_reserve_gb: float = DEFAULT_HEADNODE_RAM_RESERVE_GB,
     headnode_cpu_reserve: int = DEFAULT_HEADNODE_CPU_RESERVE,
     headnode_disk_reserve_gb: float = DEFAULT_HEADNODE_DISK_RESERVE_GB,
+    headnode_cgroup_parent: str = DEFAULT_HEADNODE_CGROUP_PARENT,
     oom_score_adj: int = DEFAULT_CONTAINER_OOM_SCORE_ADJ,
     pids_limit: int = DEFAULT_CONTAINER_PIDS_LIMIT,
     ram_margin_gb: float = DEFAULT_RAM_MARGIN_GB,
-    enforce_node_memory_limit: Optional[bool] = None,
+    **kwargs: Any,
 ) -> List[str]:
     """Calculate docker run resource constraints for a job container.
     
-    Args:
-        host_profile: Dict with keys:
-            - 'hostname': str
-            - 'role': str ('headnode' or 'worker')
-            - 'total_ram_gb' or 'ram_gb': float
-            - 'cpus': int
-            - 'disk_free_gb': float
-            - 'unified_memory': bool/int
-            - 'is_headnode': Optional[bool]
-            - 'enforce_node_memory_limit': Optional[bool]
-        node_resources: Dict with requested resources:
-            - 'ram_gb': float (default 2.0)
-            - 'vram_gb': float (default 0.0)
-            - 'cpus': int (default 4)
-            - 'storage_gb': float (default 0.0)
-        headnode_ram_reserve_gb: RAM in GB reserved for host on headnode (default 16.0).
-        headnode_cpu_reserve: Number of CPUs reserved for host on headnode (default 2).
-        headnode_disk_reserve_gb: Disk in GB reserved for host on headnode (default 20.0).
-        oom_score_adj: Docker oom-score-adj value (default +500).
-        pids_limit: Maximum allowed PIDs per container (default 4096).
-        ram_margin_gb: Additional safety RAM margin in GB (default 0.0).
-        enforce_node_memory_limit: If None, resolved from ENFORCE_NODE_MEMORY_LIMIT by role.
-            Default is True for headnode (strict defense), False for dedicated workers (GB10).
+    Amendement A12:
+    Per-container memory limits (--memory, --memory-swap, --memory-swappiness=0,
+    --oom-score-adj=500, --cpus, --pids-limit=4096) are unconditionally enforced
+    on ALL machines (non-configurable). Any stage under-declaring RAM crashes with OOMKilled.
 
-    Returns:
-        List of CLI arguments for docker run, e.g.:
-        ['--memory=2g', '--memory-swap=2g', '--memory-swappiness=0', '--oom-score-adj=500', '--cpus=4', '--pids-limit=4096']
-
-    Raises:
-        ValueError: If headnode cannot admit the job due to strict reserve violations.
+    Amendement A11:
+    On headnode, injects --cgroup-parent=/cluster-jobs to bound aggregate RAM of
+    packing containers to (total - 16 GB).
     """
     if node_resources is None:
         node_resources = {}
@@ -206,24 +190,23 @@ def docker_resource_args(
     is_headnode = is_headnode_host(host_profile)
     unified = is_unified_memory_host(host_profile)
 
-    # Resolve whether node memory limits should be enforced
-    if enforce_node_memory_limit is None:
-        if "enforce_node_memory_limit" in host_profile:
-            enforce_node_memory_limit = bool(host_profile["enforce_node_memory_limit"])
-        else:
-            role_key = "headnode" if is_headnode else str(host_profile.get("role", "worker"))
-            enforce_node_memory_limit = should_enforce_node_memory_limit(role_key)
-
     # 1. Total Host Resources
     host_ram = float(host_profile.get("total_ram_gb") or host_profile.get("ram_gb") or 125.0)
     host_cpus = int(host_profile.get("cpus") or 24)
     host_disk = float(host_profile.get("disk_free_gb") or 100.0)
 
     # 2. Extract Requested Resources
-    req_ram = float(node_resources.get("ram_gb", 2.0))
-    req_vram = float(node_resources.get("vram_gb", 0.0))
-    req_cpus = int(node_resources.get("cpus", 4))
-    req_disk = float(node_resources.get("storage_gb", 0.0))
+    req_ram_val = node_resources.get("ram_gb")
+    req_ram = float(req_ram_val if req_ram_val is not None else 2.0)
+
+    req_vram_val = node_resources.get("vram_gb")
+    req_vram = float(req_vram_val if req_vram_val is not None else 0.0)
+
+    req_cpus_val = node_resources.get("cpus")
+    req_cpus = int(req_cpus_val if req_cpus_val is not None else 4)
+
+    req_disk_val = node_resources.get("storage_gb")
+    req_disk = float(req_disk_val if req_disk_val is not None else 0.0)
 
     # 3. Memory Calculation (Unified Memory vs Discrete GPU)
     if unified:
@@ -262,23 +245,21 @@ def docker_resource_args(
 
         effective_cpus = min(req_cpus, max(1, host_cpus))
 
-    args: List[str] = []
-
-    # 5. Assemble Docker Flags
-    # If memory limit is enforced (default on headnode): strict cgroups + swap prevention
-    if enforce_node_memory_limit:
-        mem_str = format_memory_value(effective_mem)
-        args.extend([
-            f"--memory={mem_str}",
-            f"--memory-swap={mem_str}",
-            "--memory-swappiness=0",
-        ])
-
-    args.extend([
+    mem_str = format_memory_value(effective_mem)
+    args: List[str] = [
+        f"--memory={mem_str}",
+        f"--memory-swap={mem_str}",
+        "--memory-swappiness=0",
         f"--oom-score-adj={oom_score_adj}",
         f"--cpus={effective_cpus}",
         f"--pids-limit={pids_limit}",
-    ])
+    ]
+
+    # 5. Headnode container packing ceiling via parent cgroup (Amendement A11)
+    if is_headnode:
+        cgroup_parent = host_profile.get("cgroup_parent") or headnode_cgroup_parent
+        if cgroup_parent:
+            args.append(f"--cgroup-parent={cgroup_parent}")
 
     return args
 
@@ -367,17 +348,23 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--cgroup-parent",
+        type=str,
+        default=None,
+        help="Docker cgroup parent slice/path (e.g. /cluster-jobs)",
+    )
+    parser.add_argument(
         "--enforce-memory-limit",
         dest="enforce_memory_limit",
         action="store_true",
         default=None,
-        help="Explicitly enforce container memory limits",
+        help="Explicitly enforce container memory limits (deprecated: limits are now unconditional)",
     )
     parser.add_argument(
         "--no-enforce-memory-limit",
         dest="enforce_memory_limit",
         action="store_false",
-        help="Explicitly disable container memory limits",
+        help="Explicitly disable container memory limits (deprecated: limits are now unconditional)",
     )
 
     args = parser.parse_args()
@@ -419,11 +406,15 @@ def main() -> None:
     if args.cpus is not None:
         node_resources["cpus"] = args.cpus
 
+    kwargs: Dict[str, Any] = {}
+    if args.cgroup_parent:
+        kwargs["headnode_cgroup_parent"] = args.cgroup_parent
+
     try:
         flags_str = docker_resource_args_string(
             host_profile,
             node_resources,
-            enforce_node_memory_limit=args.enforce_memory_limit,
+            **kwargs,
         )
         print(flags_str)
     except Exception as e:
