@@ -1432,9 +1432,21 @@ def update_job_status():
             cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
             cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
             cleanup_local_archive(job_id)
+            if status in ['completed', 'failed']:
+                try:
+                    _sync_job_logs_from_workers(job_id)
+                except Exception:
+                    pass
             if status == 'failed' and err_msg:
                 try:
-                    _append_job_logs(job_id, f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+                    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+                    current_tail = ""
+                    if os.path.exists(log_path):
+                        with open(log_path, 'r', encoding='utf-8', errors='replace') as lf:
+                            lf.seek(max(0, os.path.getsize(log_path) - 2000))
+                            current_tail = lf.read()
+                    if err_msg not in current_tail:
+                        _append_job_logs(job_id, f"\n[CLUSTER-CI ERROR] {err_msg}\n")
                 except Exception:
                     pass
         else:
@@ -1810,6 +1822,96 @@ def _read_job_logs(job_id: str, offset: int = 0) -> tuple[str, int]:
             new_offset = f.tell()
             return content, new_offset
 
+def _get_job_worker_urls(job_id: str) -> list[str]:
+    """Retrieve service_urls for all workers involved in job_id (home worker first, then auxiliary workers)."""
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT j.worker_id, j.home_worker, j.active_workers
+            FROM jobs j WHERE j.job_id = ?
+        ''', (job_id,))
+        job = cursor.fetchone()
+        if not job:
+            return []
+
+        worker_ids = []
+        primary_w = job['home_worker'] or job['worker_id']
+        if primary_w:
+            worker_ids.append(primary_w)
+        if job['worker_id'] and job['worker_id'] not in worker_ids:
+            worker_ids.append(job['worker_id'])
+
+        if job['active_workers']:
+            try:
+                raw_active = json.loads(job['active_workers']) if isinstance(job['active_workers'], str) else job['active_workers']
+                if isinstance(raw_active, list):
+                    for w in raw_active:
+                        if w and str(w) not in worker_ids:
+                            worker_ids.append(str(w))
+            except Exception:
+                pass
+
+        cursor.execute('''
+            SELECT DISTINCT worker_id FROM job_nodes WHERE job_id = ? AND worker_id IS NOT NULL
+        ''', (job_id,))
+        for row in cursor.fetchall():
+            wid = row['worker_id']
+            if wid and wid not in worker_ids:
+                worker_ids.append(wid)
+
+        if not worker_ids:
+            return []
+
+        placeholders = ','.join('?' for _ in worker_ids)
+        cursor.execute(f'''
+            SELECT worker_id, service_url FROM workers WHERE worker_id IN ({placeholders}) AND service_url IS NOT NULL
+        ''', worker_ids)
+        url_map = {row['worker_id']: row['service_url'] for row in cursor.fetchall()}
+
+        ordered_urls = []
+        for wid in worker_ids:
+            if wid in url_map and url_map[wid] and url_map[wid] not in ordered_urls:
+                ordered_urls.append(url_map[wid])
+        return ordered_urls
+
+def _sync_job_logs_from_workers(job_id: str) -> bool:
+    """Fetch all available logs from the job's worker(s) and store them in HEADNODE_LOGS_DIR/{job_id}.log."""
+    worker_urls = _get_job_worker_urls(job_id)
+    if not worker_urls:
+        return False
+
+    combined_logs = []
+    synced = False
+    for w_url in worker_urls:
+        try:
+            resp = requests.get(f"{w_url}/job_logs/{job_id}?offset=0", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                w_logs = data.get("logs", "")
+                if w_logs:
+                    combined_logs.append(w_logs)
+                    synced = True
+        except Exception:
+            pass
+
+    if synced and combined_logs:
+        full_text = "\n".join(combined_logs)
+        log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+        with _job_logs_lock:
+            existing = ""
+            if os.path.exists(log_path):
+                with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                    existing = f.read()
+            if len(full_text) >= len(existing):
+                with open(log_path, 'w', encoding='utf-8', errors='replace') as f:
+                    f.write(full_text)
+                    if existing and "[CLUSTER-CI ERROR]" in existing and "[CLUSTER-CI ERROR]" not in full_text:
+                        err_part = existing[existing.find("[CLUSTER-CI ERROR]"):]
+                        f.write(f"\n{err_part}\n")
+                    f.flush()
+        return True
+    return False
+
 @app.route('/api/jobs/<job_id>/logs', methods=['POST'])
 @app.route('/job_logs/<job_id>', methods=['POST'])
 def ingest_job_logs(job_id):
@@ -1844,39 +1946,69 @@ def ingest_job_logs(job_id):
 def api_get_run_logs(job_id):
     """
     Flux UNIQUE, ordonné et sans perte des lignes de logs pour un job.
-    - Si des logs ont été collectés localement sur le headnode : lecture avec offset monotone.
-    - Sinon, pour un job classique, proxy transparent vers le worker unique assigné.
+    - Vérifie la présence de logs complets sur le headnode (ou synchronise depuis les workers si tronqué).
+    - Supporte le filtrage optionnel par noeud via le paramètre query 'node'.
+    - Fallback transparent vers le worker principal en direct.
     """
     try:
         offset = int(request.args.get('offset', 0))
     except (ValueError, TypeError):
         offset = 0
 
+    node_filter = request.args.get('node')
     log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+
+    # Check if local log file is missing or truncated to only error lines
+    is_truncated = False
     if os.path.exists(log_path):
+        size = os.path.getsize(log_path)
+        if size < 2000:
+            try:
+                with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                    head_txt = f.read()
+                if "[CLUSTER-CI ERROR]" in head_txt and "===STAGE:" not in head_txt and "[Step" not in head_txt:
+                    is_truncated = True
+            except Exception:
+                pass
+
+    if not os.path.exists(log_path) or is_truncated:
+        _sync_job_logs_from_workers(job_id)
+
+    if os.path.exists(log_path) and not is_truncated:
         content, new_offset = _read_job_logs(job_id, offset)
-        return jsonify({"logs": content, "offset": new_offset})
+        if node_filter and content:
+            flines = [l for l in content.splitlines(keepends=True) if f"[{node_filter}@" in l or f"[{node_filter}]" in l]
+            return jsonify(redact_secrets({"logs": "".join(flines), "offset": new_offset}))
+        return jsonify(redact_secrets({"logs": content, "offset": new_offset}))
 
-    with get_db_conn() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT w.service_url
-            FROM jobs j
-            JOIN workers w ON j.worker_id = w.worker_id
-            WHERE j.job_id = ?
-        ''', (job_id,))
-        job = cursor.fetchone()
-
-    if not job or not job['service_url']:
+    worker_urls = _get_job_worker_urls(job_id)
+    if not worker_urls:
+        if os.path.exists(log_path):
+            content, new_offset = _read_job_logs(job_id, offset)
+            if node_filter and content:
+                flines = [l for l in content.splitlines(keepends=True) if f"[{node_filter}@" in l or f"[{node_filter}]" in l]
+                return jsonify(redact_secrets({"logs": "".join(flines), "offset": new_offset}))
+            return jsonify(redact_secrets({"logs": content, "offset": new_offset}))
         return jsonify(redact_secrets({"logs": "", "offset": offset}))
-    worker_url = f"{job['service_url']}/job_logs/{job_id}?offset={offset}"
+
+    worker_url = f"{worker_urls[0]}/job_logs/{job_id}?offset={offset}"
     try:
         resp = requests.get(worker_url, timeout=5)
         if resp.status_code == 200:
-            return jsonify(redact_secrets(resp.json()))
+            res_json = resp.json()
+            if node_filter and res_json.get("logs"):
+                flines = [l for l in res_json["logs"].splitlines(keepends=True) if f"[{node_filter}@" in l or f"[{node_filter}]" in l]
+                res_json["logs"] = "".join(flines)
+            return jsonify(redact_secrets(res_json))
         else:
+            if os.path.exists(log_path):
+                content, new_offset = _read_job_logs(job_id, offset)
+                return jsonify(redact_secrets({"logs": content, "offset": new_offset}))
             return jsonify(redact_secrets({"logs": f"Error fetching logs from worker: {resp.text}", "offset": offset})), 500
     except Exception as e:
+        if os.path.exists(log_path):
+            content, new_offset = _read_job_logs(job_id, offset)
+            return jsonify(redact_secrets({"logs": content, "offset": new_offset}))
         return jsonify(redact_secrets({"logs": f"Connection error to worker: {str(e)}", "offset": offset})), 500
 
 @app.route('/api/runs/<job_id>/files', methods=['GET'])
@@ -2239,9 +2371,10 @@ def view_project(owner, repo, path=''):
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT w.service_url, j.viewer_port
+            SELECT j.job_id, j.viewer_port, COALESCE(w1.service_url, w2.service_url) AS service_url
             FROM jobs j
-            JOIN workers w ON j.worker_id = w.worker_id
+            LEFT JOIN workers w1 ON j.worker_id = w1.worker_id
+            LEFT JOIN workers w2 ON j.home_worker = w2.worker_id
             WHERE j.repo = ? AND j.status = 'running' AND COALESCE(j.is_local, 0) = 0
             ORDER BY j.started_at DESC LIMIT 1
         ''', (repo_full_name,))
@@ -2249,9 +2382,27 @@ def view_project(owner, repo, path=''):
 
     if job and job['service_url']:
         worker_base_url = job['service_url']
-        # Use dynamic port if available, otherwise fallback to default
-        viewer_port = job['viewer_port'] if ('viewer_port' in job.keys() and job['viewer_port'] is not None) else DVC_VIEWER_PORT
-        # Extract hostname/IP from service_url (e.g., http://worker1:6000 -> worker1)
+        viewer_port = job['viewer_port'] if ('viewer_port' in job.keys() and job['viewer_port'] is not None) else None
+
+        # If viewer_port is not set, trigger on-demand live viewer startup on worker
+        if not viewer_port:
+            try:
+                resp = requests.post(
+                    f"{worker_base_url}/api/worker/dvc-viewer/start?live=1",
+                    json={"repo": repo_full_name},
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    v_data = resp.json()
+                    viewer_port = v_data.get('port')
+                    if viewer_port:
+                        with get_db_conn() as conn:
+                            conn.execute('UPDATE jobs SET viewer_port = ? WHERE job_id = ?', (viewer_port, job['job_id']))
+                            conn.commit()
+            except Exception as e:
+                app.logger.warning(f"Could not trigger live dvc-viewer on {worker_base_url}: {e}")
+
+        viewer_port = viewer_port or DVC_VIEWER_PORT
         parsed = urlparse(worker_base_url)
         target_host = parsed.hostname
         target_url = f"http://{target_host}:{viewer_port}/{path}"

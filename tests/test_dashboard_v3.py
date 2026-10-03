@@ -155,7 +155,7 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertIn("<style>", resp.text)
         self.assertIn("ansiToHtml", resp.text)
         self.assertIn("getActiveRuns", resp.text)
-        self.assertIn("Alerte Disque (&gt;85%)", resp.text)
+        self.assertIn("Disk Alert (&gt;85%)", resp.text)
         self.assertNotIn("Packing A11", resp.text)
         self.assertNotIn("CPUs Admis (A11)", resp.text)
         self.assertIn("hjamet", resp.text)
