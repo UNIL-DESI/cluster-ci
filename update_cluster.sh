@@ -231,18 +231,18 @@ echo "==========================================================="
 echo "Pausing for 10s to allow services to start..."
 sleep 10
 
-echo "🚀 Submitting Job 1..."
+echo "🚀 Submitting Job 1 (v3 Parallel DAG with Packing)..."
 curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $CLUSTER_TOKEN" \
-    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
+    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"${TARGET_BRANCH:-main}\", \"ram_required_gb\": 4.0, \"max_runtime_hours\": 1, \"parallel_mode\": 1}" &
 JOB1=$!
 
-echo "🚀 Submitting Job 2..."
+echo "🚀 Submitting Job 2 (Classic Sequential Non-Regression)..."
 curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $CLUSTER_TOKEN" \
-    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
+    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"${TARGET_BRANCH:-main}\", \"ram_required_gb\": 4.0, \"max_runtime_hours\": 1, \"parallel_mode\": 0}" &
 JOB2=$!
 
 wait $JOB1
