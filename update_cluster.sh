@@ -240,6 +240,9 @@ else
 fi
 
 TARGET_REPO_VAL="${TARGET_REPO:-UNIL-DESI/cluster-ci}"
+if [[ "$TARGET_REPO_VAL" != */* ]]; then
+    TARGET_REPO_VAL="${TARGET_REPO_VAL}/cluster-ci"
+fi
 TARGET_BRANCH_VAL="${TARGET_BRANCH:-main}"
 
 # 1. Soumission Job 1 via le client officiel (calcule le plan v3 quand W8 est déployé)
