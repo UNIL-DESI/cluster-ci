@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -517,6 +518,141 @@ class TestV3W8Submission(unittest.TestCase):
         self.assertEqual(offset, 14)
         self.assertIn("Avertissement", mock_stderr.getvalue())
         self.assertIn("/api/jobs/test-job-fallback/logs", mock_stderr.getvalue())
+
+    def test_target_repo_remote_mismatch_fails_fast_a17(self):
+        """(1) Vérifie qu'une discordance entre le remote origin et le repo soumis échoue immédiatement (A17)."""
+        from src.scheduler.submit_job import submit_job
+
+        with tempfile.TemporaryDirectory() as wrong_repo_dir:
+            # Création d'un .cluster-ci avec PARALLEL_STAGES=true
+            with open(os.path.join(wrong_repo_dir, ".cluster-ci"), "w", encoding="utf-8") as f:
+                f.write("MAX_RUNTIME_HOURS=1\nPARALLEL_STAGES=true\n")
+            with open(os.path.join(wrong_repo_dir, "dvc.yaml"), "w", encoding="utf-8") as f:
+                f.write("stages: {}\n")
+
+            # Simuler un remote origin pointant vers cluster-ci
+            subprocess.run(["git", "init"], cwd=wrong_repo_dir, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/UNIL-DESI/cluster-ci.git"],
+                cwd=wrong_repo_dir, capture_output=True, check=True
+            )
+
+            # Tentative de soumission pour llm-as-recommender en pointant vers wrong_repo_dir
+            with patch("requests.get", return_value=MagicMock(status_code=200)):
+                with pytest.raises(SystemExit) as exc_info:
+                    submit_job(
+                        headnode_url="http://fake-headnode:5000",
+                        repo="UNIL-DESI/llm-as-recommender",
+                        branch="main",
+                        repo_dir=wrong_repo_dir,
+                    )
+                self.assertNotEqual(exc_info.value.code, 0)
+
+    def test_target_repo_plan_generated_from_explicit_target_repo_not_cwd(self):
+        """(3 & 4) CWD = autre dépôt DVC (cluster-ci), plan attendu = celui du dépôt cible (llm-as-recommender)."""
+        from src.scheduler.submit_job import submit_job
+
+        with tempfile.TemporaryDirectory() as cwd_dir, tempfile.TemporaryDirectory() as target_dir:
+            # 1. CWD : Simule cluster-ci avec ses propres stages de test
+            with open(os.path.join(cwd_dir, ".cluster-ci"), "w", encoding="utf-8") as f:
+                f.write("MAX_RUNTIME_HOURS=1\nPARALLEL_STAGES=true\n")
+            with open(os.path.join(cwd_dir, "dvc.yaml"), "w", encoding="utf-8") as f:
+                f.write("stages:\n  prep:\n    cmd: echo prep\n  join:\n    cmd: echo join\n")
+            subprocess.run(["git", "init"], cwd=cwd_dir, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/UNIL-DESI/cluster-ci.git"],
+                cwd=cwd_dir, capture_output=True, check=True
+            )
+
+            # 2. Cible : Simule llm-as-recommender
+            with open(os.path.join(target_dir, ".cluster-ci"), "w", encoding="utf-8") as f:
+                f.write("MAX_RUNTIME_HOURS=2\nPARALLEL_STAGES=true\n")
+            with open(os.path.join(target_dir, "dvc.yaml"), "w", encoding="utf-8") as f:
+                f.write("stages:\n  data_load:\n    cmd: echo data\n  train_eval:\n    cmd: echo train\n")
+            subprocess.run(["git", "init"], cwd=target_dir, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/UNIL-DESI/llm-as-recommender.git"],
+                cwd=target_dir, capture_output=True, check=True
+            )
+
+            posted_payload = {}
+
+            def fake_post(url, **kwargs):
+                nonlocal posted_payload
+                if url.endswith("/submit_job"):
+                    posted_payload = kwargs.get("json", {})
+                    mock_resp = MagicMock()
+                    mock_resp.status_code = 200
+                    mock_resp.json.return_value = {"job_id": "job-target-plan-test"}
+                    return mock_resp
+                return MagicMock(status_code=404)
+
+            # Mock planificateur qui retourne un plan selon le répertoire inspecté
+            def fake_run_planner(repo_path):
+                abspath = os.path.abspath(repo_path)
+                if abspath == os.path.abspath(target_dir):
+                    return {"nodes": [{"name": "data_load"}, {"name": "train_eval"}]}
+                elif abspath == os.path.abspath(cwd_dir):
+                    return {"nodes": [{"name": "prep"}, {"name": "join"}]}
+                return {"nodes": []}
+
+            # En changeant le CWD pour pointer vers cwd_dir
+            orig_cwd = os.getcwd()
+            try:
+                os.chdir(cwd_dir)
+                with patch("src.scheduler.submit_job.run_planner_for_submission", side_effect=fake_run_planner) as mock_plan:
+                    with patch("requests.get", return_value=MagicMock(status_code=200)):
+                        with patch("requests.post", side_effect=fake_post):
+                            job_id = submit_job(
+                                headnode_url="http://fake-headnode:5000",
+                                repo="UNIL-DESI/llm-as-recommender",
+                                branch="ecir-smoke",
+                                repo_dir=target_dir,
+                            )
+
+                self.assertEqual(job_id, "job-target-plan-test")
+                # Le planificateur doit avoir été appelé UNIQUEMENT sur target_dir
+                mock_plan.assert_called_once_with(os.path.abspath(target_dir))
+                # Le payload soumis doit contenir les nœuds de llm-as-recommender et NON ceux de cluster-ci
+                plan_nodes = [n["name"] for n in posted_payload.get("plan", {}).get("nodes", [])]
+                self.assertIn("data_load", plan_nodes)
+                self.assertIn("train_eval", plan_nodes)
+                self.assertNotIn("prep", plan_nodes)
+                self.assertNotIn("join", plan_nodes)
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_v3_job_failure_reports_no_nodes_started_and_signal_cause(self):
+        """(2) Vérifie qu'un échec v3 avec tous nœuds bloqués affiche la cause réelle et détaille SIGKILL/SIGTERM."""
+        from src.scheduler.submit_job import wait_for_job
+        import io
+
+        def fake_get(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "/job_status/" in url:
+                mock_resp.json.return_value = {
+                    "job_id": "job-fdfa4682",
+                    "status": "failed",
+                    "exit_code": -9,
+                    "error_message": "",
+                    "nodes": [
+                        {"name": f"step_{i}", "status": "blocked"} for i in range(10)
+                    ],
+                }
+            elif "/job_logs/" in url or "/logs" in url:
+                mock_resp.json.return_value = {"logs": "", "offset": 0}
+            return mock_resp
+
+        with patch("requests.get", side_effect=fake_get):
+            with patch("time.sleep", return_value=None):
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                    exit_code = wait_for_job("http://fake-headnode:5000", "job-fdfa4682")
+
+        out = mock_stdout.getvalue()
+        self.assertEqual(exit_code, -9)
+        self.assertIn("aucun nœud n'a démarré", out)
+        self.assertIn("SIGKILL", out)
 
 
 if __name__ == "__main__":

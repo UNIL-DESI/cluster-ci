@@ -129,6 +129,49 @@ def run_planner_for_submission(repo_dir="."):
         sys.exit(1)
 
 
+def check_repo_remote_matches(repo_dir, expected_repo):
+    """Vérifie que le remote origin du dépôt cible correspond au dépôt soumis.
+
+    Retourne (matches, actual_remote, error_detail).
+    Si aucun remote origin n'est configuré (ex. dépôt de test local sans origin), retourne (True, None, None).
+    """
+    import subprocess
+    import re
+
+    try:
+        res = subprocess.run(
+            ["git", "-C", repo_dir, "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            return True, None, None
+        actual_remote = res.stdout.strip()
+        if not actual_remote:
+            return True, None, None
+
+        def _normalize(url):
+            u = re.sub(r"^(?:https?://|git@|ssh://|git://)[^/:]+[/:]", "", url)
+            u = u.rstrip("/").removesuffix(".git")
+            return u.lower()
+
+        clean_remote = _normalize(actual_remote)
+        clean_exp = _normalize(expected_repo)
+
+        if clean_remote == clean_exp or clean_remote.endswith("/" + clean_exp) or clean_exp.endswith("/" + clean_remote):
+            return True, actual_remote, None
+
+        remote_base = clean_remote.split("/")[-1]
+        exp_base = clean_exp.split("/")[-1]
+        if remote_base == exp_base and ("/" not in clean_exp or "/" not in clean_remote):
+            return True, actual_remote, None
+
+        return False, actual_remote, f"remote origin '{clean_remote}' != repo attendu '{clean_exp}'"
+    except Exception:
+        return True, None, None
+
+
 def format_nodes_status_summary(nodes):
     """Génère un résumé textuel et structuré de l'état des nœuds du DAG.
 
@@ -371,7 +414,7 @@ def get_config_value(pattern, content, default=None, is_float=False):
         return float(val) if is_float else val
     return default
 
-def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None):
+def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None):
     """Submits a research job to the headnode scheduler."""
     if not headnode_url:
         print("Error: HEADNODE_URL is required to submit a job.")
@@ -397,16 +440,21 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
                 commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
             except Exception:
                 commit_hash = "local-head"
+
     # Strategy: Fetch .cluster-ci content first to parse all requirements
     content = None
-    if is_local and local_repo_path:
-        ci_file = os.path.join(local_repo_path, ".cluster-ci")
+    target_repo_dir = repo_dir or (local_repo_path if (is_local and local_repo_path) else None)
+    if not target_repo_dir and os.environ.get("GITHUB_WORKSPACE"):
+        target_repo_dir = os.environ.get("GITHUB_WORKSPACE")
+
+    if target_repo_dir:
+        ci_file = os.path.join(target_repo_dir, ".cluster-ci")
         if os.path.exists(ci_file):
             try:
                 with open(ci_file, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
             except Exception as e:
-                print(f"⚠️ Could not read local .cluster-ci from {ci_file}: {e}")
+                print(f"⚠️ Could not read .cluster-ci from {ci_file}: {e}")
 
     if content is None and not is_local:
         import tempfile, subprocess, shutil
@@ -430,8 +478,8 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if content is None and os.path.exists(".cluster-ci"):
-        with open(".cluster-ci", 'r') as f:
+    if content is None and target_repo_dir and os.path.exists(os.path.join(target_repo_dir, ".cluster-ci")):
+        with open(os.path.join(target_repo_dir, ".cluster-ci"), 'r') as f:
             content = f.read()
 
     if content is None:
@@ -504,16 +552,58 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     parallel_stages_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
     parallel_stages_enabled = bool(parallel_stages_match)
 
-    target_repo_dir = local_repo_path if (is_local and local_repo_path) else os.path.abspath(os.getcwd())
-    dvc_yaml_exists = os.path.isfile(os.path.join(target_repo_dir, "dvc.yaml"))
-
     plan = None
-    if parallel_stages_enabled and dvc_yaml_exists:
-        print(f"🧩 PARALLEL_STAGES enabled and dvc.yaml found: generating v3 plan via W1 planner...")
+    if parallel_stages_enabled:
+        # A17 / Fail-Fast : Interdiction stricte de construire le plan depuis le CWD par défaut
+        if not target_repo_dir:
+            print(
+                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
+                f"Aucun répertoire de dépôt cible n'a été spécifié pour '{repo}'.\n"
+                f"Cause : PARALLEL_STAGES=true exige de construire le plan depuis le dvc.yaml du dépôt cible, "
+                f"mais aucun chemin n'a été passé (--repo-dir ou --local-repo-path) et l'usage du CWD par défaut est formellement interdit.\n"
+                f"Remède : Spécifier le chemin du dépôt cible via --repo-dir ou --local-repo-path.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        target_repo_dir = os.path.abspath(target_repo_dir)
+        if not os.path.isdir(target_repo_dir):
+            print(
+                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
+                f"Le répertoire cible '{target_repo_dir}' est introuvable.\n"
+                f"Cause : Le dépôt pour '{repo}' n'a pas été extrait ou le chemin est invalide.\n"
+                f"Remède : Vérifier que le dépôt cible est extrait localement et passer son chemin via --repo-dir.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Validation du remote origin (git -C <dir> remote get-url origin contre repo)
+        matches, actual_remote, error_detail = check_repo_remote_matches(target_repo_dir, repo)
+        if not matches:
+            print(
+                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
+                f"Le répertoire '{target_repo_dir}' a pour remote origin '{actual_remote}', "
+                f"ce qui ne correspond pas au dépôt soumis '{repo}'.\n"
+                f"Cause : Incohérence entre le dossier local et le dépôt cible demandé ({error_detail}).\n"
+                f"Remède : Fournir le chemin du dépôt réellement extrait pour '{repo}' via --repo-dir, ou cloner le bon dépôt.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        dvc_yaml_path = os.path.join(target_repo_dir, "dvc.yaml")
+        if not os.path.isfile(dvc_yaml_path):
+            print(
+                f"❌ [A17] Erreur de validation du pipeline DVC pour la planification v3 :\n"
+                f"Fichier dvc.yaml introuvable dans '{target_repo_dir}'.\n"
+                f"Cause : PARALLEL_STAGES=true est activé mais le dépôt cible '{repo}' ne contient pas de dvc.yaml.\n"
+                f"Remède : Créer un fichier dvc.yaml définissant les étapes du pipeline ou désactiver PARALLEL_STAGES dans .cluster-ci.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        print(f"🧩 PARALLEL_STAGES enabled and dvc.yaml found: generating v3 plan via W1 planner for {repo}...")
         plan = run_planner_for_submission(target_repo_dir)
         print(f"✅ Planner generated plan successfully ({len(plan.get('nodes', []))} node(s)).")
-    elif parallel_stages_enabled and not dvc_yaml_exists:
-        print(f"⚠️ PARALLEL_STAGES=true requested but dvc.yaml not found in {target_repo_dir}. Submitting without plan.")
 
     submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
     if is_local:
@@ -928,14 +1018,50 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 if exit_code is None or exit_code == 0:
                     exit_code = 1  # Ensure non-zero exit on failure
 
-                # A17 : Remonter fidèlement le message d'erreur du headnode ou des nœuds
+                # A17 / v3 : Remonter fidèlement la cause réelle d'échec
                 job_error = job.get('error_message') or job.get('error')
-                if job_error:
-                    print(f"\n❌ Error message: {job_error}")
+                has_node_failure = False
+
                 if nodes_data and isinstance(nodes_data, list):
-                    for nd in nodes_data:
-                        if isinstance(nd, dict) and nd.get('status') == 'failed' and nd.get('error_message'):
-                            print(f"❌ Node '{nd.get('name')}' failed: {nd.get('error_message')}")
+                    failed_nodes = [
+                        nd for nd in nodes_data
+                        if isinstance(nd, dict) and nd.get('status') == 'failed'
+                    ]
+                    done_nodes = [
+                        nd for nd in nodes_data
+                        if isinstance(nd, dict) and nd.get('status') in ('done', 'completed')
+                    ]
+                    running_nodes = [
+                        nd for nd in nodes_data
+                        if isinstance(nd, dict) and nd.get('status') == 'running'
+                    ]
+                    blocked_nodes = [
+                        nd for nd in nodes_data
+                        if isinstance(nd, dict) and nd.get('status') == 'blocked'
+                    ]
+                    pending_nodes = [
+                        nd for nd in nodes_data
+                        if isinstance(nd, dict) and nd.get('status') == 'pending'
+                    ]
+
+                    if failed_nodes:
+                        has_node_failure = True
+                        for nd in failed_nodes:
+                            n_name = nd.get('name') or nd.get('node_name') or 'unknown'
+                            n_err = nd.get('error_message') or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
+                            print(f"❌ Nœud en échec : '{n_name}' -> {n_err}")
+
+                    # Détection spécifique : aucun nœud n'a démarré dans le DAG v3
+                    if not done_nodes and not running_nodes and not failed_nodes and (blocked_nodes or pending_nodes):
+                        has_node_failure = True
+                        cause_desc = job_error or (
+                            f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
+                            f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                        )
+                        print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}")
+
+                if job_error and not has_node_failure:
+                    print(f"\n❌ Error message: {job_error}")
 
                 # Infrastructure-level failure messages
                 if exit_code == -99:
@@ -957,8 +1083,15 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     print(f"\n❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée ({ram_required} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci")
                 elif exit_code == 255:
                     print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
+                elif exit_code < 0:
+                    sig = -exit_code
+                    sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                    if not has_node_failure and not job_error:
+                        print(f"\n❌ Job {job_id} interrompu : processus exécutant arrêté par {sig_desc} (exit code {exit_code}).")
+                    else:
+                        print(f"ℹ️  Processus exécutant arrêté par {sig_desc} (exit code {exit_code}).")
                 else:
-                    if not job_error:
+                    if not job_error and not has_node_failure:
                         print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
                 return exit_code
 
@@ -980,6 +1113,7 @@ if __name__ == '__main__':
     parser.add_argument("--gh-token", default=None, help="GitHub token for cloning private repos")
     parser.add_argument("--local", action="store_true", help="Submit local directory without git clone")
     parser.add_argument("--local-repo-path", default=None, help="Path to local repository")
+    parser.add_argument("--repo-dir", default=None, help="Path to target repository containing dvc.yaml")
     parser.add_argument("-e", "--env", action="append", default=[], help="Environment variables (KEY=VAL)")
 
     args = parser.parse_args()
@@ -1012,7 +1146,7 @@ if __name__ == '__main__':
     local_repo_path = args.local_repo_path or (os.path.abspath(os.getcwd()) if args.local else None)
     job_id = submit_job(
         args.headnode, args.repo, args.branch, args.gh_token, env_vars,
-        is_local=args.local, local_repo_path=local_repo_path
+        is_local=args.local, local_repo_path=local_repo_path, repo_dir=args.repo_dir
     )
     exit_code = wait_for_job(args.headnode, job_id, branch=args.branch)
     sys.exit(exit_code)

@@ -28,7 +28,7 @@ function log_error() {
     echo -e "[$(date +'%Y-%m-%d %H:%M:%S')] ❌ $1"
 }
 
-# Capture the caller's commit hash before changing directory
+# Capture the caller's commit hash and workspace directory before changing directory
 if [ -z "$CALLER_COMMIT_SHA" ]; then
     if [ -n "$GITHUB_SHA" ]; then
         CALLER_COMMIT_SHA="$GITHUB_SHA"
@@ -37,6 +37,9 @@ if [ -z "$CALLER_COMMIT_SHA" ]; then
     fi
 fi
 export CALLER_COMMIT_SHA
+
+CALLER_WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
+export CALLER_WORKSPACE_DIR
 
 if [ "$CLI_TARGET_BRANCH" = "cluster-run" ]; then
     log_info "Detecting origin branch for tag cluster-run..."
@@ -153,10 +156,10 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
 
     set +e
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" --repo-dir "$CALLER_WORKSPACE_DIR" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
         SUBMIT_RET=${PIPESTATUS[0]}
     else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
+        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --repo-dir "$CALLER_WORKSPACE_DIR" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
         SUBMIT_RET=${PIPESTATUS[0]}
     fi
     set -e
