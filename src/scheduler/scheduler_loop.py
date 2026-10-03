@@ -8,7 +8,34 @@ import sys
 import shutil
 import datetime as dt
 from datetime import datetime
-from persistence import get_db_conn, init_db
+try:
+    from persistence import (
+        get_db_conn, init_db, update_dag_ready_states, mark_node_status,
+        handle_missing_deps, record_runner_heartbeat, check_runner_heartbeat_timeouts,
+        get_job_node, get_all_job_nodes, get_aggregated_job_status
+    )
+    from defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS,
+        HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
+    )
+    from artifact_registry import affinity_bytes, sources_for, record_node_outputs
+    from db_retention import run_retention_periodic
+except ImportError:
+    from src.scheduler.persistence import (
+        get_db_conn, init_db, update_dag_ready_states, mark_node_status,
+        handle_missing_deps, record_runner_heartbeat, check_runner_heartbeat_timeouts,
+        get_job_node, get_all_job_nodes, get_aggregated_job_status
+    )
+    from src.scheduler.defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS,
+        HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
+    )
+    from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
+    from src.scheduler.db_retention import run_retention_periodic
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -17,9 +44,9 @@ logger = logging.getLogger(__name__)
 def cancel_job_cleanly(job_id, exit_code=-15):
     """
     Cancels a job cleanly from the scheduler loop:
-    - Contacts worker to kill containers (if assigned/running)
+    - Contacts all active workers to kill containers
     - Cancels GH Action workflow (best effort)
-    - Updates DB status to failed
+    - Updates DB status to failed and marks unfinished DAG nodes as blocked
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
@@ -29,28 +56,61 @@ def cancel_job_cleanly(job_id, exit_code=-15):
             LEFT JOIN workers w ON j.worker_id = w.worker_id
             WHERE j.job_id = ?
         ''', (job_id,))
-        job = cursor.fetchone()
+        job_row = cursor.fetchone()
 
-    if not job:
+    if not job_row:
         return False
 
+    job = dict(job_row)
     status = job['status']
     if status not in ['pending', 'assigned', 'running']:
         return False
 
-    # 1. Worker cancellation if active on worker
-    if status in ['assigned', 'running'] and job['service_url']:
+    # 1. Worker cancellation if active on worker(s)
+    worker_urls = set()
+    if job.get('parallel_mode'):
         try:
-            requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
+            active_ids = json.loads(job.get('active_workers') or '[]')
+        except Exception:
+            active_ids = []
+        if job.get('home_worker') and job['home_worker'] not in active_ids:
+            active_ids.append(job['home_worker'])
+        if active_ids:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                placeholders = ','.join(['?'] * len(active_ids))
+                cursor.execute(f'SELECT service_url FROM workers WHERE worker_id IN ({placeholders})', active_ids)
+                for row in cursor.fetchall():
+                    if row['service_url']:
+                        worker_urls.add(row['service_url'])
+    elif status in ['assigned', 'running'] and job.get('service_url'):
+        worker_urls.add(job['service_url'])
+
+    for s_url in worker_urls:
+        try:
+            requests.post(f"{s_url}/cancel/{job_id}", timeout=10)
         except Exception as e:
-            logger.error(f"Failed to send cancel to worker {job['service_url']} for job {job_id}: {e}")
+            logger.error(f"Failed to send cancel to worker {s_url} for job {job_id}: {e}")
+
+    # Si job en parallel_mode, basculer tous les nœuds non terminés à 'blocked'
+    if job.get('parallel_mode'):
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE job_nodes
+                SET status = 'blocked'
+                WHERE job_id = ? AND status NOT IN ('done', 'skipped')
+            ''', (job_id,))
+            cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+            conn.commit()
 
     # 2. GHA cancellation (best effort)
-    if job['gh_run_id']:
+    if job.get('gh_run_id'):
         try:
             repo = job['repo']
             run_id = job['gh_run_id']
-            gh_token = job['gh_token'] or os.environ.get("GITHUB_PAT")
+            gh_token = job.get('gh_token') or os.environ.get("GITHUB_PAT")
             if gh_token:
                 headers = {
                     "Authorization": f"token {gh_token}",
@@ -132,317 +192,1356 @@ def orchestrate_cluster_update(job):
         
     return update_success or all_workers_healthy
 
-def schedule_jobs():
-    """
-    Loop to assign PENDING jobs to available Workers using First-Fit (Bin-Packing).
-    Includes sovereign drainage barrier for maintenance jobs.
-    """
-    while True:
+try:
+    from runner.host_guard import (
+        placement_priority, is_headnode_host, is_unified_memory_host,
+        DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
+    )
+except ImportError:
+    from src.runner.host_guard import (
+        placement_priority, is_headnode_host, is_unified_memory_host,
+        DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
+    )
+
+def is_unified_memory(worker):
+    """Détecte si un worker dispose d'une architecture à mémoire unifiée via host_guard."""
+    if not worker or not isinstance(worker, dict):
+        return False
+    return is_unified_memory_host(worker)
+
+def parse_vram_per_gpu(worker):
+    """Extrait la liste de VRAM (en Go) par GPU physique du worker."""
+    if not worker or not isinstance(worker, dict):
+        return []
+    raw = worker.get('vram_per_gpu')
+    if raw:
         try:
-            expired_jobs = []
-            pending_jobs = []
-            workers = []
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                return [float(x) for x in parsed]
+            elif isinstance(parsed, dict):
+                sorted_keys = sorted(parsed.keys(), key=lambda k: int(k) if str(k).isdigit() else str(k))
+                return [float(parsed[k]) for k in sorted_keys]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    gpu_count = worker.get('gpu_count') or 0
+    total_vram = worker.get('total_vram_gb') or 0.0
+    if gpu_count > 0 and total_vram > 0:
+        return [float(total_vram) / float(gpu_count)] * gpu_count
+    return []
+
+def is_headnode_worker(worker):
+    """
+    Détecte si un worker représente la machine Headnode via host_guard (A14 : aucune IP/hostname en dur).
+    """
+    if not worker or not isinstance(worker, dict):
+        return False
+    return is_headnode_host(worker)
+
+def get_worker_placement_priority(worker):
+    """
+    Détermine le rang de priorité de placement d'un worker :
+    - Convention W11 / Cluster-CI v3 : plus grand = préféré.
+    - Calculé exclusivement par src.runner.host_guard.placement_priority(worker).
+    - Erreur au démarrage si host_guard est manquant (pas de valeur inventée).
+    """
+    if not worker or not isinstance(worker, dict):
+        return 0
+    return int(placement_priority(worker))
+
+def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
+    if exclude_node and exclude_node[0] and exclude_node[1]:
+        cursor.execute('''
+            SELECT resources, gpu_ids FROM job_nodes
+            WHERE worker_id = ? AND status = 'running' AND NOT (job_id = ? AND node_name = ?)
+        ''', (worker_id, exclude_node[0], exclude_node[1]))
+    else:
+        cursor.execute('''
+            SELECT resources, gpu_ids FROM job_nodes
+            WHERE worker_id = ? AND status = 'running'
+        ''', (worker_id,))
+    running_nodes = cursor.fetchall()
+
+    used_cpus = 0
+    used_ram_gb = 0.0
+    used_vram_gb = 0.0
+    used_storage_gb = 0.0
+    allocated_vram_by_gpu = {}
+    active_executors = len(running_nodes)
+
+    for row in running_nodes:
+        res_raw = row["resources"]
+        res = {}
+        if res_raw:
+            try:
+                res = json.loads(res_raw) if isinstance(res_raw, str) else dict(res_raw)
+            except (json.JSONDecodeError, TypeError):
+                res = {}
+        used_cpus += int(res.get("cpus") or DEFAULT_CPUS)
+        used_ram_gb += float(res.get("ram_gb") if res.get("ram_gb") is not None else DEFAULT_RAM_GB)
+        node_vram = float(res.get("vram_gb") if res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
+        used_vram_gb += node_vram
+        used_storage_gb += float(res.get("storage_gb") or 0.0)
+
+        gpu_ids_raw = row["gpu_ids"] if "gpu_ids" in row.keys() else None
+        if gpu_ids_raw and node_vram > 0:
+            try:
+                gids = json.loads(gpu_ids_raw) if isinstance(gpu_ids_raw, str) else list(gpu_ids_raw)
+                if gids:
+                    per_gpu = node_vram / len(gids)
+                    for gid in gids:
+                        allocated_vram_by_gpu[int(gid)] = allocated_vram_by_gpu.get(int(gid), 0.0) + per_gpu
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+    cursor.execute('''
+        SELECT job_id, ram_required_gb, vram_required_gb FROM jobs
+        WHERE worker_id = ? AND status IN ('assigned', 'running') AND (parallel_mode = 0 OR parallel_mode IS NULL)
+    ''', (worker_id,))
+    classic_jobs = cursor.fetchall()
+
+    for cj in classic_jobs:
+        active_executors += 1
+        used_cpus += DEFAULT_CPUS
+        used_ram_gb += float(cj["ram_required_gb"] or DEFAULT_RAM_GB)
+        c_vram = float(cj["vram_required_gb"] or 0.0)
+        used_vram_gb += c_vram
+        if c_vram > 0:
+            allocated_vram_by_gpu[0] = allocated_vram_by_gpu.get(0, 0.0) + c_vram
+
+    return {
+        "used_cpus": used_cpus,
+        "used_ram_gb": used_ram_gb,
+        "used_vram_gb": used_vram_gb,
+        "used_storage_gb": used_storage_gb,
+        "allocated_vram_by_gpu": allocated_vram_by_gpu,
+        "active_executors": active_executors
+    }
+
+def get_worker_allocated_resources(conn=None, worker_id=None, exclude_node=None):
+    """
+    Calcule en temps réel les ressources allouées / consommées sur un worker (Packing A11) :
+    1. Nœuds de jobs parallèles actuellement en cours ('running')
+    2. Jobs classiques assignés ou en cours ('assigned', 'running')
+    """
+    if conn is not None:
+        try:
+            cursor = conn.cursor()
+            return _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node)
+        except Exception:
+            pass
+    with get_db_conn() as c:
+        cursor = c.cursor()
+        return _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node)
+
+def allocate_gpus(worker, node_resources, allocated_vram_by_gpu=None):
+    """
+    Attribue la liste des indices de GPU physiques (CUDA_VISIBLE_DEVICES) (A16) :
+    - Mémoire unifiée : gpus <= 1 (retourne [] si gpus <= 1, None si gpus > 1)
+    - Machine discrète : sélectionne gpus GPU distincts ayant au moins vram_gb de libre chacun
+    """
+    if not isinstance(node_resources, dict):
+        raise TypeError(f"node_resources must be a dict, got {type(node_resources).__name__}")
+
+    req_gpus = int(node_resources.get("gpus") or 0)
+    req_vram = float(node_resources.get("vram_gb") or 0.0)
+
+    # Si vram_gb > 0 mais gpus non spécifié, au moins 1 GPU est sous-entendu
+    if req_vram > 0 and req_gpus == 0:
+        req_gpus = 1
+
+    if is_unified_memory(worker):
+        if req_gpus > 1:
+            return None  # A16 : mémoire unifiée gpus <= 1
+        return []
+
+    if req_gpus <= 0 and req_vram <= 0:
+        return []
+
+    gpus = parse_vram_per_gpu(worker)
+    if not gpus:
+        return None
+
+    if len(gpus) < req_gpus:
+        return None
+
+    if allocated_vram_by_gpu is None:
+        allocated_vram_by_gpu = {}
+
+    rem_vram = []
+    for i, total_v in enumerate(gpus):
+        used_v = float(allocated_vram_by_gpu.get(i, 0.0))
+        avail = max(0.0, total_v - used_v)
+        rem_vram.append((i, avail))
+
+    # Filtrer les GPU ayant au moins req_vram de VRAM libre (vram_gb par GPU)
+    candidate_gpus = [(i, avail) for i, avail in rem_vram if avail >= req_vram]
+    if len(candidate_gpus) < req_gpus:
+        return None
+
+    # Best-fit : trier par VRAM libre restante croissante qui suffit
+    candidate_gpus.sort(key=lambda x: x[1])
+    selected = [candidate_gpus[k][0] for k in range(req_gpus)]
+    return sorted(selected)
+
+def is_worker_admissible_for_node(worker, node_resources, allocated=None):
+    """
+    Règle d'admission universelle avec PACKING (A11) et vérification stricte NULL (W4) :
+    - cpus : used_cpus + req_cpus <= worker.cpus (rejet si worker.cpus est NULL)
+    - storage_gb : used_storage + req_storage <= worker.storage (rejet si worker storage est NULL et req > 0)
+    - mémoire unifiée : used_mem + (req_ram + req_vram) <= worker.total_ram - 8.0 Go (rejet si worker RAM est NULL)
+    - machine discrète : used_ram + req_ram <= worker.total_ram - 2.0 Go, et VRAM restante sur au moins un GPU >= req_vram (rejet si worker VRAM est NULL et req > 0)
+    - Architecture & workers whitelist
+    """
+    if not isinstance(node_resources, dict):
+        raise TypeError(f"node_resources must be a dict, got {type(node_resources).__name__}")
+
+    w_id = worker.get("worker_id", "?")
+
+    # 1. Whitelist de workers
+    allowed = node_resources.get("workers")
+    if allowed:
+        w_host = worker.get("hostname", "")
+        if w_id not in allowed and w_host not in allowed:
+            return False
+
+    # 2. Architecture
+    w_arch = worker.get("arch") or ("aarch64" if "arm" in (worker.get("hostname", "") + (worker.get("gpu_name") or "")).lower() else "x86_64")
+    if node_resources.get("image_arm64") and w_arch not in ("aarch64", "arm64"):
+        return False
+    if node_resources.get("image_amd64") and not node_resources.get("image_arm64") and w_arch in ("aarch64", "arm64"):
+        return False
+
+    if allocated is None:
+        allocated = {
+            "used_cpus": 0,
+            "used_ram_gb": 0.0,
+            "used_vram_gb": 0.0,
+            "used_storage_gb": 0.0,
+            "allocated_vram_by_gpu": {},
+            "active_executors": 0
+        }
+
+    # 3. CPUs
+    req_cpus = int(node_resources.get("cpus") if node_resources.get("cpus") is not None else DEFAULT_CPUS)
+    w_cpus = worker.get("cpus")
+    if w_cpus is None:
+        logger.info(f"Worker {w_id} rejected for node: cpus={req_cpus} requested but worker CPU count is NULL (unknown)")
+        return False
+    w_cpus = int(w_cpus)
+    if allocated["used_cpus"] + req_cpus > w_cpus:
+        logger.debug(f"Worker {w_id} rejected for node: cpus limit exceeded ({allocated['used_cpus']} + {req_cpus} > {w_cpus})")
+        return False
+
+    # 4. Stockage (NULL = inconnu -> rejet explicite)
+    req_storage = float(node_resources.get("storage_gb") if node_resources.get("storage_gb") is not None else DEFAULT_STORAGE_GB)
+    if req_storage > 0:
+        w_disk = worker.get("disk_free_gb")
+        if w_disk is None:
+            w_disk = worker.get("available_storage_gb")
+        if w_disk is None:
+            logger.info(f"Worker {w_id} rejected for node: storage_gb={req_storage} requested but worker disk capacity is NULL (unknown)")
+            return False
+        w_disk = float(w_disk)
+        if allocated["used_storage_gb"] + req_storage > w_disk:
+            logger.debug(f"Worker {w_id} rejected for node: storage limit exceeded ({allocated['used_storage_gb']} + {req_storage} > {w_disk})")
+            return False
+
+    # 5. Mémoire (NULL = inconnu -> rejet explicite)
+    req_ram = float(node_resources.get("ram_gb") if node_resources.get("ram_gb") is not None else DEFAULT_RAM_GB)
+    req_vram = float(node_resources.get("vram_gb") if node_resources.get("vram_gb") is not None else DEFAULT_VRAM_GB)
+    req_gpus = int(node_resources.get("gpus") if node_resources.get("gpus") is not None else 0)
+    if req_vram > 0 and req_gpus == 0:
+        req_gpus = 1
+    w_total_ram = worker.get("total_ram_gb")
+    if w_total_ram is None:
+        logger.info(f"Worker {w_id} rejected for node: ram_gb={req_ram} requested but worker RAM capacity is NULL (unknown)")
+        return False
+    w_total_ram = float(w_total_ram)
+
+    if is_unified_memory(worker):
+        if req_gpus > 1:
+            logger.debug(f"Worker {w_id} rejected for node: unified memory does not support gpus > 1 ({req_gpus})")
+            return False
+        used_mem = allocated["used_ram_gb"] + allocated["used_vram_gb"]
+        if used_mem + (req_ram + req_vram) > (w_total_ram - OS_HEADROOM_GB):
+            logger.debug(f"Worker {w_id} rejected for node: unified memory exceeded ({used_mem} + {req_ram + req_vram} > {w_total_ram - OS_HEADROOM_GB})")
+            return False
+    else:
+        if allocated["used_ram_gb"] + req_ram > (w_total_ram - 2.0):
+            logger.debug(f"Worker {w_id} rejected for node: discrete RAM exceeded ({allocated['used_ram_gb']} + {req_ram} > {w_total_ram - 2.0})")
+            return False
+        if req_gpus > 0 or req_vram > 0:
+            raw_vram = worker.get("vram_per_gpu")
+            tot_vram = worker.get("total_vram_gb")
+            if raw_vram is None and tot_vram is None:
+                logger.info(f"Worker {w_id} rejected for node: vram_gb={req_vram} requested but worker VRAM capacity is NULL (unknown)")
+                return False
+            gpus = parse_vram_per_gpu(worker)
+            if not gpus:
+                logger.info(f"Worker {w_id} rejected for node: vram_gb={req_vram}/gpus={req_gpus} requested but worker has no parsed GPUs")
+                return False
+            gpu_alloc = allocate_gpus(worker, node_resources, allocated.get("allocated_vram_by_gpu", {}))
+            if gpu_alloc is None:
+                logger.debug(f"Worker {w_id} rejected for node: insufficient available VRAM or GPU count on discrete GPUs")
+                return False
+
+    return True
+
+def get_placement_cost(conn=None, worker=None, required_image=None, dep_paths=None):
+    """
+    Calcule le coût de placement d'un nœud ou job sur un worker (A13) :
+    Coût = octets de dépendances absents + taille de l'image Docker si absente.
+    Plus le coût est faible, plus le worker est favorisé.
+    """
+    cost = 0
+
+    # 1. Image Docker locale déclarée dans worker.docker_images (W4)
+    raw_images = worker.get("docker_images") if worker else None
+    images_dict = {}
+    if raw_images:
+        try:
+            if isinstance(raw_images, str):
+                images_dict = json.loads(raw_images)
+            elif isinstance(raw_images, dict):
+                images_dict = raw_images
+        except (json.JSONDecodeError, TypeError, ValueError):
+            images_dict = {}
+
+    DEFAULT_IMAGE_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 Go par défaut si image absente
+    if required_image:
+        if required_image in images_dict:
+            cost += 0  # Image déjà présente localement !
+        else:
+            cost += int(images_dict.get(required_image) or DEFAULT_IMAGE_SIZE_BYTES)
+
+    # 2. Dépendances de données absentes
+    if dep_paths and worker:
+        try:
+            from src.scheduler.artifact_registry import affinity_bytes
+            if conn is not None:
+                present_bytes = affinity_bytes(conn, dep_paths, worker.get("worker_id"))
+            else:
+                with get_db_conn() as c:
+                    present_bytes = affinity_bytes(c, dep_paths, worker.get("worker_id"))
+            total_est_bytes = len(dep_paths) * 100 * 1024 * 1024
+            missing_bytes = max(0, total_est_bytes - present_bytes)
+            cost += missing_bytes
+        except Exception:
+            pass
+
+    return cost
+
+def worker_selection_sort_key(conn, worker, allocated, required_image=None, dep_paths=None):
+    """
+    Clé de tri pour choisir le worker idéal (A13 + W11) :
+    1. Rang host_guard le plus élevé d'abord (non-headnode = 50, headnode = 0 en dernier recours).
+    2. Coût de placement minimal (image locale présente + dépendances présentes).
+    3. Machine libre / non retenue par un job parallèle en priorité.
+    4. Moins d'exécuteurs actifs sur la machine.
+    5. Plus faible taux d'utilisation de mémoire.
+    """
+    prio = get_worker_placement_priority(worker)
+    cost = get_placement_cost(conn, worker, required_image=required_image, dep_paths=dep_paths)
+    w_ram = float(worker.get("total_ram_gb") or 1.0)
+    load_ratio = allocated["used_ram_gb"] / w_ram
+
+    wid = worker.get("worker_id")
+    is_busy_with_job = 0
+    if wid:
+        try:
+            with get_db_conn() as c:
+                cur = c.cursor()
+                cur.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('assigned', 'running') AND (home_worker = ? OR active_workers LIKE ?)",
+                            (wid, f'%"{wid}"%'))
+                is_busy_with_job = cur.fetchone()[0]
+        except Exception:
+            pass
+
+    return (
+        prio,
+        -cost,
+        -is_busy_with_job,
+        -allocated["active_executors"],
+        -load_ratio
+    )
+
+def get_data_affinity_score(job, worker):
+    """
+    Amendement A5 : Calcule le score d'affinité des données sur ce worker.
+    Utilise affinity_bytes d'artifact_registry complété par les out_paths de job_nodes.
+    """
+    total_score = 0
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT dep_paths FROM job_nodes
+            WHERE job_id = ? AND status = 'ready'
+        ''', (job["job_id"],))
+        ready_nodes = cursor.fetchall()
+        if not ready_nodes:
+            return 0
+
+        all_dep_hashes = []
+        for r in ready_nodes:
+            dp_raw = r["dep_paths"]
+            if dp_raw:
+                try:
+                    parsed = json.loads(dp_raw)
+                    if isinstance(parsed, list):
+                        all_dep_hashes.extend(parsed)
+                except Exception:
+                    pass
+
+        if all_dep_hashes:
+            try:
+                bytes_aff = affinity_bytes(conn, all_dep_hashes, worker.get("worker_id"))
+                total_score += bytes_aff
+            except Exception as e:
+                logger.debug(f"affinity_bytes check failed: {e}")
+
+        cursor.execute('''
+            SELECT out_paths FROM job_nodes
+            WHERE job_id = ? AND status = 'done' AND worker_id = ?
+        ''', (job["job_id"], worker.get("worker_id")))
+        done_nodes = cursor.fetchall()
+
+    done_paths = set()
+    for row in done_nodes:
+        raw = row["out_paths"]
+        if raw:
+            try:
+                for o in json.loads(raw):
+                    p = o.get("path") if isinstance(o, dict) else o
+                    if p: done_paths.add(p)
+            except Exception:
+                pass
+
+    for dp in all_dep_hashes:
+        if dp in done_paths:
+            total_score += 1
+
+    return total_score
+
+def get_oldest_ready_node_time(job):
+    """Renvoie l'horodatage ou l'identifiant pour départager les nœuds prêts les plus anciens."""
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT started_at, job_id FROM job_nodes
+            WHERE job_id = ? AND status = 'ready'
+            ORDER BY priority DESC, node_name ASC
+            LIMIT 1
+        ''', (job["job_id"],))
+        row = cursor.fetchone()
+        return job.get("created_at") or ""
+
+def validate_plan(plan_data):
+    """
+    Valide un plan JSON v3 à la soumission :
+    - clés de ressources autorisées uniquement
+    - nœuds et dépendances cohérents
+    - absence de cycle dans le DAG
+    Lève ValueError si invalide.
+    """
+    if not isinstance(plan_data, dict):
+        raise ValueError("Le plan doit être un objet JSON")
+
+    # Version v3 acceptée sous forme de chaîne ("3.0") ou nombre
+    if "version" in plan_data:
+        ver = str(plan_data["version"]).strip()
+        if not ver.startswith("3"):
+            raise ValueError(f"Version de plan non supportée: {plan_data['version']}")
+
+    nodes = plan_data.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) == 0:
+        raise ValueError("Le plan doit contenir une liste non vide 'nodes'")
+
+    defaults = plan_data.get("defaults", {})
+    if isinstance(defaults, dict):
+        unknown_defaults = set(defaults.keys()) - ALLOWED_RESOURCE_KEYS
+        if unknown_defaults:
+            raise ValueError(f"Clé de ressource inconnue dans defaults: {unknown_defaults}")
+
+    node_names = set()
+    for n in nodes:
+        name = n.get("name")
+        if not name:
+            raise ValueError("Chaque nœud doit avoir un 'name'")
+        if name in node_names:
+            raise ValueError(f"Nom de nœud dupliqué dans le plan: '{name}'")
+        node_names.add(name)
+
+        resources = n.get("resources", {})
+        if isinstance(resources, dict):
+            unknown_res = set(resources.keys()) - ALLOWED_RESOURCE_KEYS
+            if unknown_res:
+                raise ValueError(f"Clé de ressource inconnue pour le nœud '{name}': {unknown_res}")
+
+            # A16 : Cohérence vram_gb et gpus
+            if "vram_gb" in resources and float(resources.get("vram_gb") or 0.0) > 0:
+                if resources.get("gpus") == 0:
+                    raise ValueError(f"Le nœud '{name}' demande vram_gb={resources['vram_gb']} avec gpus=0 : vram_gb exige gpus ≥ 1 ; remède : déclarer meta.cluster.gpus ≥ 1 pour le stage '{name}' dans dvc.yaml")
+
+    # Vérification des dépendances déclarées
+    adj = {name: [] for name in node_names}
+    for n in nodes:
+        name = n["name"]
+        for dep in n.get("deps", []):
+            if dep not in node_names:
+                raise ValueError(f"Dépendance invalide '{dep}' déclarée par le nœud '{name}'")
+            adj[dep].append(name)
+
+    # Détection de cycle (DFS 3 couleurs : 0=blanc, 1=gris, 2=noir)
+    visited = {name: 0 for name in node_names}
+    def dfs(u):
+        visited[u] = 1
+        for v in adj[u]:
+            if visited[v] == 1:
+                return True
+            if visited[v] == 0:
+                if dfs(v): return True
+        visited[u] = 2
+        return False
+
+    for name in node_names:
+        if visited[name] == 0:
+            if dfs(name):
+                raise ValueError(f"Cycle détecté dans le DAG des nœuds à partir de '{name}'")
+
+    return True
+
+def _release_worker_from_job(job_id, worker_id):
+    """Retire un worker de la liste des active_workers d'un job et libère assigned_job_id."""
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT active_workers FROM jobs WHERE job_id = ?', (job_id,))
+        row = cursor.fetchone()
+        if row:
+            try:
+                active = json.loads(row["active_workers"] or "[]")
+                if worker_id in active:
+                    active.remove(worker_id)
+                    cursor.execute('UPDATE jobs SET active_workers = ? WHERE job_id = ?',
+                                   (json.dumps(active), job_id))
+            except Exception:
+                pass
+        cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ?', (worker_id,))
+        conn.commit()
+
+def handle_next_node(req):
+    """
+    Point névralgique de transition et d'équité (POST /api/jobs/<job_id>/next_node).
+    Actions retournées : 'run' | 'switch_image' | 'yield' | 'finish' | 'wait'
+    """
+    job_id = req.get("job_id")
+    worker_id = req.get("worker")
+    runner_id = req.get("runner_id")
+    node_name = req.get("node")
+    status = req.get("status")
+    duration_s = req.get("duration_s")
+    exit_code = req.get("exit_code")
+    error_message = req.get("error_message")
+    missing_paths = req.get("missing_paths") or []
+    current_image = req.get("current_image")
+
+    # 1. Enregistrement résultat nœud précédent
+    if node_name:
+        if status == "done":
+            mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0)
+            outputs_to_record = req.get("outputs") or req.get("out_paths")
+            if outputs_to_record:
+                try:
+                    with get_db_conn() as conn:
+                        record_node_outputs(conn, job_id, node_name, worker_id, outputs_to_record)
+                except Exception as e:
+                    logger.debug(f"Failed to record node outputs in artifact registry: {e}")
+        elif status == "failed":
+            if not error_message and exit_code == 137:
+                error_message = f"OOMKilled: Stage '{node_name}' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)"
+            elif exit_code == 137 and "OOMKilled" not in (error_message or ""):
+                error_message = f"OOMKilled: {error_message} (Exit code 137)"
+            mark_node_status(job_id, node_name, "failed", duration_s=duration_s,
+                             exit_code=exit_code or 1, error_message=error_message)
+            if error_message:
+                try:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    log_dir = os.path.join(repo_root, "job_logs")
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"{job_id}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"\n[CLUSTER-CI ERROR] Node '{node_name}' failed: {error_message}\n")
+                except Exception as e:
+                    logger.debug(f"Could not append node error to job log: {e}")
+        elif status == "missing_deps":
+            res = handle_missing_deps(job_id, node_name, missing_paths)
+            if not res.get("success"):
+                err = f"Missing deps could not be recovered: {missing_paths}"
+                mark_node_status(job_id, node_name, "failed", exit_code=1,
+                                 error_message=err)
+                try:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    log_dir = os.path.join(repo_root, "job_logs")
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"{job_id}.log")
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"\n[CLUSTER-CI ERROR] Node '{node_name}' failed: {err}\n")
+                except Exception:
+                    pass
+
+    # Récupérer l'état du job et du worker
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM jobs WHERE job_id = ?', (job_id,))
+        job_row = cursor.fetchone()
+        if not job_row:
+            return {"action": "finish", "error": "Job not found"}
+        job = dict(job_row)
+
+        cursor.execute('SELECT * FROM workers WHERE worker_id = ?', (worker_id,))
+        worker_row = cursor.fetchone()
+        if not worker_row:
+            return {"action": "finish", "error": "Worker not found"}
+        worker = dict(worker_row)
+
+        # Récupérer les workers inactifs disponibles actuellement (pour vérifier si une machine réellement inactive peut accueillir un concurrent)
+        cursor.execute('''
+            SELECT * FROM workers
+            WHERE status = 'online'
+            AND last_seen >= datetime('now', '-60 seconds')
+            AND worker_id != ?
+            AND worker_id NOT IN (
+                SELECT worker_id FROM jobs WHERE status IN ('running', 'assigned') AND worker_id IS NOT NULL
+            )
+            AND worker_id NOT IN (
+                SELECT home_worker FROM jobs WHERE status IN ('running', 'assigned') AND home_worker IS NOT NULL
+            )
+            AND (assigned_job_id IS NULL OR assigned_job_id = '')
+            AND worker_id NOT IN (
+                SELECT worker_id FROM job_nodes WHERE status = 'running' AND worker_id IS NOT NULL
+            )
+        ''', (worker_id,))
+        raw_idle = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute("SELECT active_workers FROM jobs WHERE status IN ('running', 'assigned')")
+        all_active_lists = [json.loads(r[0] or "[]") for r in cursor.fetchall()]
+        all_active_worker_ids = set()
+        for al in all_active_lists:
+            all_active_worker_ids.update(al)
+
+        idle_other_workers = [w for w in raw_idle if w["worker_id"] not in all_active_worker_ids]
+
+        cursor.execute('SELECT * FROM job_nodes WHERE job_id = ?', (job_id,))
+        job_nodes = [dict(r) for r in cursor.fetchall()]
+
+    active_workers = json.loads(job.get("active_workers") or "[]")
+    is_home = (worker_id == job.get("home_worker"))
+
+    # 2. Équité aux frontières de nœuds (uniquement sur machine supplémentaire, jamais sur machine prioritaire)
+    if not is_home:
+        # A2 : Vérifier les jobs classiques en attente (détiennent 0 machine et veulent 1 machine)
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM jobs
+                WHERE status = 'pending' AND (parallel_mode = 0 OR parallel_mode IS NULL)
+                ORDER BY created_at ASC
+            ''')
+            pending_classic_jobs = [dict(r) for r in cursor.fetchall()]
+
+        for c_job in pending_classic_jobs:
+            c_res = {"ram_gb": c_job.get("ram_required_gb", 0), "vram_gb": c_job.get("vram_required_gb", 0)}
+            if c_job.get("allowed_workers"):
+                try: c_res["workers"] = json.loads(c_job["allowed_workers"])
+                except Exception: pass
+            if is_worker_admissible_for_node(worker, c_res):
+                # Vérifier si une autre machine idle peut déjà l'accueillir
+                can_idle_host = any(is_worker_admissible_for_node(iw, c_res) for iw in idle_other_workers)
+                if not can_idle_host:
+                    _release_worker_from_job(job_id, worker_id)
+                    return {"action": "yield"}
+
+        # A1 : Anti ping-pong entre jobs parallèles
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM jobs
+                WHERE status IN ('pending', 'assigned', 'running') AND parallel_mode = 1 AND job_id != ?
+            ''', (job_id,))
+            competing_parallel_jobs = [dict(r) for r in cursor.fetchall()]
+
+        current_machine_count = len(active_workers)
+        for comp_job in competing_parallel_jobs:
+            comp_active = json.loads(comp_job.get("active_workers") or "[]")
+            comp_count = len(comp_active)
+            if comp_count + 1 < current_machine_count:
+                # Vérifier si comp_job a un nœud ready admissible sur ce worker
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT resources FROM job_nodes
+                        WHERE job_id = ? AND status = 'ready'
+                    ''', (comp_job["job_id"],))
+                    ready_comp_nodes = cursor.fetchall()
+
+                admissible_for_comp = False
+                for rcn in ready_comp_nodes:
+                    rcn_res = json.loads(rcn["resources"]) if rcn["resources"] else {}
+                    if is_worker_admissible_for_node(worker, rcn_res):
+                        admissible_for_comp = True
+                        break
+
+                if admissible_for_comp:
+                    can_idle_host = False
+                    for iw in idle_other_workers:
+                        for rcn in ready_comp_nodes:
+                            rcn_res = json.loads(rcn["resources"]) if rcn["resources"] else {}
+                            if is_worker_admissible_for_node(iw, rcn_res):
+                                can_idle_host = True
+                                break
+                        if can_idle_host:
+                            break
+
+                    if not can_idle_host:
+                        _release_worker_from_job(job_id, worker_id)
+                        return {"action": "yield"}
+
+    # 3. Sélection du prochain nœud intra-job avec comptabilité fine des ressources (Packing A11)
+    allocated = get_worker_allocated_resources(conn, worker_id, exclude_node=(job_id, node_name))
+    ready_nodes = [n for n in job_nodes if n["status"] == "ready"]
+    admissible_ready_nodes = []
+    for n in ready_nodes:
+        n_res = json.loads(n["resources"]) if n["resources"] else {}
+        if is_worker_admissible_for_node(worker, n_res, allocated=allocated):
+            admissible_ready_nodes.append((n, n_res))
+
+    if not admissible_ready_nodes:
+        # Aucun nœud prêt admissible
+        if is_home:
+            has_unresolved = any(n["status"] in ("pending", "ready", "running") for n in job_nodes)
+            if not has_unresolved:
+                return {"action": "finish"}
+            return {"action": "wait"}
+        else:
+            _release_worker_from_job(job_id, worker_id)
+            return {"action": "yield"}
+
+    def node_sort_key(item):
+        n, res = item
+        raw_deps = n.get("deps")
+        deps = json.loads(raw_deps) if raw_deps else []
+        is_direct_child = (node_name in deps) if node_name else False
+        n_image = n.get("image") or res.get("image")
+        same_image = (n_image == current_image) if current_image else False
+        priority = float(n.get("priority", 0.0))
+        return (
+            1 if (is_direct_child and same_image) else 0,
+            1 if same_image else 0,
+            1 if is_direct_child else 0,
+            priority
+        )
+
+    admissible_ready_nodes.sort(key=node_sort_key, reverse=True)
+    assigned_node = None
+    assigned_res = None
+    assigned_gpu_ids = None
+
+    for candidate_node, candidate_res in admissible_ready_nodes:
+        cand_gpu_ids = allocate_gpus(worker, candidate_res, allocated["allocated_vram_by_gpu"])
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            cursor.execute('''
+                UPDATE job_nodes
+                SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, started_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? AND node_name = ? AND status = 'ready'
+            ''', (worker_id, runner_id, json.dumps(cand_gpu_ids) if cand_gpu_ids is not None else '[]', job_id, candidate_node["node_name"]))
+            if cursor.rowcount == 1:
+                cursor.execute('''
+                    UPDATE jobs
+                    SET status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+                    WHERE job_id = ? AND status IN ('pending', 'assigned')
+                ''', (job_id,))
+                conn.commit()
+                assigned_node = candidate_node
+                assigned_res = candidate_res
+                assigned_gpu_ids = cand_gpu_ids
+                break
+            else:
+                conn.rollback()
+
+    if assigned_node is None:
+        if is_home:
+            return {"action": "wait"}
+        else:
+            _release_worker_from_job(job_id, worker_id)
+            return {"action": "yield"}
+
+    next_node = assigned_node
+    next_res = assigned_res
+    gpu_ids = assigned_gpu_ids
+
+    next_image = next_node.get("image") or next_res.get("image") or DEFAULT_DOCKER_IMAGE
+    action = "run" if (current_image and next_image == current_image) else "switch_image"
+
+    if runner_id:
+        record_runner_heartbeat(job_id, runner_id, worker_id, next_node["node_name"])
+
+    dep_paths_list = []
+    raw_deps = next_node.get("dep_paths")
+    if raw_deps:
+        try:
+            dep_paths_list = json.loads(raw_deps) if isinstance(raw_deps, str) else list(raw_deps)
+        except Exception:
+            dep_paths_list = []
+
+    dep_sources_map = {}
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT worker_id, service_url FROM workers WHERE status = 'online'")
+            online_workers_map = {r[0]: r[1] for r in cursor.fetchall()}
+            dep_sources_map = sources_for(conn, dep_paths_list, online_workers_map)
+    except Exception as e:
+        logger.debug(f"Failed to query artifact sources: {e}")
+
+    return {
+        "action": action,
+        "node": next_node["node_name"],
+        "image": next_image,
+        "resources": next_res,
+        "gpu_ids": gpu_ids,
+        "dep_paths": dep_paths_list,
+        "dep_sources": dep_sources_map,
+        "sources": dep_sources_map
+    }
+
+def check_job_impossible_nodes(job_id, conn, workers):
+    """
+    Amendement A16 / A17 :
+    Vérifie si un nœud du job ne peut être admis par AUCUNE machine du cluster, même vide.
+    Si oui, fait échouer le job immédiatement avec message actionnable (cause + remède).
+    """
+    cursor = conn.cursor()
+    cursor.execute('SELECT node_name, resources FROM job_nodes WHERE job_id = ? AND status IN ("pending", "ready")', (job_id,))
+    nodes = cursor.fetchall()
+    if not nodes:
+        return False
+
+    empty_alloc = {
+        "used_cpus": 0, "used_ram_gb": 0.0, "used_vram_gb": 0.0,
+        "used_storage_gb": 0.0, "allocated_vram_by_gpu": {}, "active_executors": 0
+    }
+
+    for row in nodes:
+        n_name = row["node_name"]
+        n_res = json.loads(row["resources"]) if row["resources"] else {}
+        can_any = any(is_worker_admissible_for_node(w, n_res, allocated=empty_alloc) for w in workers)
+        if not can_any:
+            req_ram = float(n_res.get("ram_gb") if n_res.get("ram_gb") is not None else DEFAULT_RAM_GB)
+            req_vram = float(n_res.get("vram_gb") if n_res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
+            req_gpus = int(n_res.get("gpus") if n_res.get("gpus") is not None else 0)
+            req_cpus = int(n_res.get("cpus") or DEFAULT_CPUS)
+            req_storage = float(n_res.get("storage_gb") or 0.0)
+
+            res_key = "ram_gb"
+            req_val = f"{req_ram} Go"
+            max_worker = "none"
+            max_val = "0"
+
+            # 1. Vérifier RAM
+            max_w_ram = max(workers, key=lambda w: float(w.get("total_ram_gb") or 0.0), default=None)
+            avail_ram = (float(max_w_ram.get("total_ram_gb") or 0.0) - OS_HEADROOM_GB) if max_w_ram else 0.0
+            if req_ram > avail_ram:
+                res_key = "ram_gb"
+                req_val = f"{req_ram} Go"
+                max_worker = max_w_ram.get("worker_id") if max_w_ram else "none"
+                max_val = f"{avail_ram:.1f} Go"
+            elif req_gpus > 0:
+                max_w_gpu = max(workers, key=lambda w: len(parse_vram_per_gpu(w)), default=None)
+                avail_gpus = len(parse_vram_per_gpu(max_w_gpu)) if max_w_gpu else 0
+                if req_gpus > avail_gpus:
+                    res_key = "gpus"
+                    req_val = req_gpus
+                    max_worker = max_w_gpu.get("worker_id") if max_w_gpu else "none"
+                    max_val = f"{avail_gpus} GPU"
+                elif req_vram > 0:
+                    all_vrams = [max(parse_vram_per_gpu(w) or [0.0]) for w in workers]
+                    max_vram = max(all_vrams) if all_vrams else 0.0
+                    if req_vram > max_vram:
+                        res_key = "vram_gb"
+                        req_val = f"{req_vram} Go"
+                        idx_max = all_vrams.index(max_vram) if all_vrams else 0
+                        max_worker = workers[idx_max].get("worker_id") if workers else "none"
+                        max_val = f"{max_vram:.1f} Go"
+            elif req_cpus > 0:
+                max_w_cpu = max(workers, key=lambda w: int(w.get("cpus") or 0), default=None)
+                avail_cpus = int(max_w_cpu.get("cpus") or 0) if max_w_cpu else 0
+                if req_cpus > avail_cpus:
+                    res_key = "cpus"
+                    req_val = req_cpus
+                    max_worker = max_w_cpu.get("worker_id") if max_w_cpu else "none"
+                    max_val = f"{avail_cpus} CPUs"
+            elif req_storage > 0:
+                max_w_stor = max(workers, key=lambda w: float(w.get("total_storage_gb") or 0.0), default=None)
+                avail_stor = float(max_w_stor.get("total_storage_gb") or 0.0) if max_w_stor else 0.0
+                if req_storage > avail_stor:
+                    res_key = "storage_gb"
+                    req_val = f"{req_storage} Go"
+                    max_worker = max_w_stor.get("worker_id") if max_w_stor else "none"
+                    max_val = f"{avail_stor:.1f} Go"
+
+            err_msg = (
+                f"nœud {n_name} demande {res_key}={req_val} ; plus grande capacité : machine {max_worker} ({max_val}) ; "
+                f"remède : réduire meta.cluster.{res_key} du stage {n_name} dans dvc.yaml"
+            )
+            logger.error(f"Impossible node for job {job_id}: {err_msg}")
+
+            cursor.execute('''
+                UPDATE job_nodes SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? AND node_name = ?
+            ''', (err_msg, job_id, n_name))
+            cursor.execute('''
+                UPDATE jobs SET status = 'failed', exit_code = 1, error_message = ?, finished_at = CURRENT_TIMESTAMP
+                WHERE job_id = ?
+            ''', (err_msg, job_id))
+            conn.commit()
+
+            try:
+                repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                log_dir = os.path.join(repo_root, "job_logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_file = os.path.join(log_dir, f"{job_id}.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+            except Exception:
+                pass
+
+            return True
+
+    return False
+
+def schedule_iteration():
+    """
+    Exécute une itération complète de planification avec PACKING (A11) et sélection A13 :
+    1. Nettoyage préliminaire
+    2. Gestion barrière de maintenance
+    3. Ordonnancement des jobs parallèles v3 (home worker + exécuteurs supplémentaires)
+    4. Ordonnancement des jobs classiques empilables avec nœuds v3
+    """
+    expired_jobs = []
+    pending_jobs = []
+    workers = []
+
+    # Reprise des runners sans heartbeat et propagation DAG
+    check_runner_heartbeat_timeouts()
+    update_dag_ready_states()
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+
+        # 0. Ghost Workers cleanup
+        cursor.execute('''
+            UPDATE workers SET status = 'offline'
+            WHERE status = 'online' AND last_seen < datetime('now', '-120 seconds')
+        ''')
+        conn.commit()
+
+        # 1. Cleanup orphaned running/assigned jobs
+        cursor.execute('''
+            UPDATE jobs
+            SET status = 'failed', exit_code = COALESCE(exit_code, -99)
+            WHERE status IN ('running', 'assigned') 
+            AND worker_id IN (
+                SELECT worker_id FROM workers 
+                WHERE status = 'offline' OR last_seen < datetime('now', '-300 seconds')
+            )
+        ''')
+        conn.commit()
+
+        # 1.5. Watchdog de durée
+        cursor.execute('''
+            SELECT job_id, repo, branch, status, started_at, created_at, max_runtime_hours
+            FROM jobs
+            WHERE status IN ('running', 'assigned')
+        ''')
+        active_jobs = [dict(row) for row in cursor.fetchall()]
+        for job in active_jobs:
+            job_id = job['job_id']
+            max_hours = job['max_runtime_hours'] or 24.0
+            start_time_str = job['started_at'] or job['created_at']
+            if not start_time_str:
+                continue
+            try:
+                start_t = datetime.strptime(start_time_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                now_utc = dt.datetime.now(dt.timezone.utc)
+                elapsed_seconds = (now_utc.replace(tzinfo=None) - start_t).total_seconds()
+                limit_seconds = (max_hours * 3600) + 300
+                if elapsed_seconds > limit_seconds:
+                    expired_jobs.append(job_id)
+            except Exception as ex:
+                logger.error(f"Watchdog parsing error for job {job_id}: {ex}")
+
+        # Maintenance en cours
+        cursor.execute('''
+            SELECT * FROM jobs
+            WHERE status = 'running' AND (job_type = 'maintenance' OR is_maintenance = 1)
+            LIMIT 1
+        ''')
+        running_maintenance = cursor.fetchone()
+
+        # Pending jobs classiques ou racine
+        cursor.execute('''
+            SELECT * FROM jobs
+            WHERE status = "pending"
+            ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
+        ''')
+        pending_jobs = [dict(row) for row in cursor.fetchall()]
+
+        # Workers en ligne (Packing A11 : les workers ne sont pas exclus s'ils exécutent déjà des jobs)
+        cursor.execute('''
+            SELECT * FROM workers
+            WHERE status = "online"
+            AND last_seen >= datetime('now', '-60 seconds')
+            ORDER BY total_ram_gb DESC
+        ''')
+        workers = [dict(row) for row in cursor.fetchall()]
+
+    for job_id in expired_jobs:
+        try:
+            cancel_job_cleanly(job_id, exit_code=-15)
+        except Exception as e:
+            logger.error(f"Watchdog failed to cancel job {job_id}: {e}")
+
+    if running_maintenance:
+        return
+
+    # Maintenance barrier
+    if pending_jobs and (pending_jobs[0].get('job_type') == 'maintenance' or pending_jobs[0].get('is_maintenance') == 1):
+        head_job = pending_jobs[0]
+        maint_job_id = head_job['job_id']
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM jobs
+                WHERE status IN ('running', 'assigned')
+                AND (job_type != 'maintenance' OR job_type IS NULL)
+                AND (is_maintenance = 0 OR is_maintenance IS NULL)
+            ''')
+            active_compute_jobs = cursor.fetchone()[0]
+        if active_compute_jobs > 0:
+            return
+
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE jobs SET status = "running", started_at = CURRENT_TIMESTAMP WHERE job_id = ?', (maint_job_id,))
+            conn.commit()
+        success = orchestrate_cluster_update(head_job)
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            final_status = 'completed' if success else 'failed'
+            exit_code = 0 if success else 1
+            cursor.execute('UPDATE jobs SET status = ?, exit_code = ?, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?', (final_status, exit_code, maint_job_id))
+            conn.commit()
+        return
+
+    if not workers:
+        return
+
+    # Pré-calculer la comptabilité des ressources par worker (Packing A11)
+    allocated_map = {}
+    with get_db_conn() as conn:
+        for w in workers:
+            allocated_map[w["worker_id"]] = get_worker_allocated_resources(conn, w["worker_id"])
+
+    # 3. Ordonnancement :
+    # 3.1 D'abord les jobs parallèles sans home_worker (ordre FIFO)
+    job_active_map = {}
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM jobs
+            WHERE parallel_mode = 1 AND status IN ('pending', 'assigned', 'running')
+            ORDER BY created_at ASC
+        ''')
+        parallel_jobs = [dict(r) for r in cursor.fetchall()]
+
+    for p_job in list(parallel_jobs):
+        jid = p_job["job_id"]
+        with get_db_conn() as conn:
+            if check_job_impossible_nodes(jid, conn, workers):
+                parallel_jobs.remove(p_job)
+                continue
+
+        hw = p_job.get("home_worker")
+        try:
+            act = json.loads(p_job.get("active_workers") or "[]")
+        except Exception:
+            act = []
+        if hw and hw not in act:
+            act.append(hw)
+        job_active_map[jid] = act
+
+        if not hw:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT resources, dep_paths, image FROM job_nodes WHERE job_id = ? AND status = "ready"', (jid,))
+                ready_rows = cursor.fetchall()
+
+            admissible_candidates = []
+            with get_db_conn() as conn:
+                for w in workers:
+                    w_alloc = allocated_map[w["worker_id"]]
+                    for rr in ready_rows:
+                        r_res = json.loads(rr["resources"]) if rr["resources"] else {}
+                        if is_worker_admissible_for_node(w, r_res, allocated=w_alloc):
+                            raw_dp = rr["dep_paths"]
+                            dp_list = json.loads(raw_dp) if raw_dp else []
+                            node_img = rr["image"] or r_res.get("image")
+                            admissible_candidates.append((w, r_res, dp_list, node_img))
+                            break
+
+            if admissible_candidates:
+                # Choix A13 : Machines non-headnode d'abord (rang host_guard), puis coût minimal, puis la moins chargée
+                with get_db_conn() as conn:
+                    best_w, best_res, best_dp, best_img = max(
+                        admissible_candidates,
+                        key=lambda item: worker_selection_sort_key(
+                            conn, item[0], allocated_map[item[0]["worker_id"]],
+                            required_image=item[3], dep_paths=item[2]
+                        )
+                    )
+                hw = best_w["worker_id"]
+                if hw not in job_active_map[jid]:
+                    job_active_map[jid].append(hw)
+
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE jobs
+                        SET home_worker = ?, active_workers = ?, worker_id = COALESCE(worker_id, ?),
+                            status = CASE WHEN status = 'pending' THEN 'assigned' ELSE status END
+                        WHERE job_id = ?
+                    ''', (hw, json.dumps(job_active_map[jid]), hw, jid))
+                    cursor.execute('UPDATE workers SET assigned_job_id = ? WHERE worker_id = ?', (jid, hw))
+                    conn.commit()
+
+                p_job["home_worker"] = hw
+                # Mettre à jour les ressources allouées pour le packing
+                allocated_map[hw]["used_cpus"] += int(best_res.get("cpus") or DEFAULT_CPUS)
+                allocated_map[hw]["used_ram_gb"] += float(best_res.get("ram_gb") if best_res.get("ram_gb") is not None else DEFAULT_RAM_GB)
+                allocated_map[hw]["used_vram_gb"] += float(best_res.get("vram_gb") if best_res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
+                allocated_map[hw]["active_executors"] += 1
+
+    # 3.2 Garantie 1ère machine pour les jobs classiques en attente (Amendement A2 + Packing A11)
+    # Les jobs classiques entrent dans la même comptabilité comme un nœud unique et sont empilables
+    busy_home_or_classic = set()
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE status IN ('assigned', 'running') AND home_worker IS NOT NULL")
+        for r in cursor.fetchall():
+            if r[0]: busy_home_or_classic.add(r[0])
+        cursor.execute("SELECT worker_id FROM jobs WHERE status IN ('assigned', 'running') AND (parallel_mode = 0 OR parallel_mode IS NULL) AND worker_id IS NOT NULL")
+        for r in cursor.fetchall():
+            if r[0]: busy_home_or_classic.add(r[0])
+
+    classic_pending = [j for j in pending_jobs if not j.get('parallel_mode')]
+    for c_job in list(classic_pending):
+        c_id = c_job['job_id']
+        ram_required = c_job['ram_required_gb']
+        vram_required = c_job.get('vram_required_gb') or 0
+        repo = c_job['repo']
+        job_branch = c_job.get('branch', '')
+        required_hashes = json.loads(c_job.get('required_hashes') or '[]')
+        allowed_workers_raw = c_job.get('allowed_workers')
+        allowed_workers = json.loads(allowed_workers_raw) if allowed_workers_raw else None
+
+        # Exclusivité de branche entre jobs distincts
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM jobs
+                WHERE repo = ? AND branch = ? AND status IN ('running', 'assigned')
+                AND job_id != ?
+            ''', (repo, job_branch, c_id))
+            if cursor.fetchone()[0] > 0:
+                continue
+
+        c_res = {
+            "ram_gb": ram_required,
+            "vram_gb": vram_required,
+            "cpus": DEFAULT_CPUS,
+            "storage_gb": 0.0,
+            "workers": allowed_workers
+        }
+
+        candidates = []
+        for w in workers:
+            w_alloc = allocated_map[w["worker_id"]]
+            if is_worker_admissible_for_node(w, c_res, allocated=w_alloc):
+                candidates.append(w)
+
+        if not candidates:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT MAX(total_ram_gb) FROM workers WHERE status = "online"')
+                max_total = cursor.fetchone()[0] or 0.0
+                cursor.execute('SELECT MAX(total_vram_gb) FROM workers WHERE status = "online"')
+                max_vram = cursor.fetchone()[0] or 0.0
+
+            if ram_required > (max_total - OS_HEADROOM_GB) or (vram_required > 0 and vram_required > max_vram):
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (c_id,))
+                    conn.commit()
+            continue
+
+        # Data Locality (P2P Discovery) pour les jobs classiques
+        worker_scores = []
+        headnode_hostname = socket.gethostname()
+        for worker in candidates:
+            score = 0
+            if required_hashes and worker.get('service_url'):
+                try:
+                    resp = requests.post(f"{worker['service_url']}/check_cache",
+                                         json={"repo": repo, "hashes": required_hashes},
+                                         timeout=2)
+                    if resp.status_code == 200:
+                        score = len(resp.json())
+                except Exception as e:
+                    logger.warning(f"Failed to check cache on worker {worker['worker_id']}: {e}")
+
+            svc_url = worker.get('service_url') or ''
+            worker_hostname = worker.get('hostname', '')
+            if (worker_hostname == headnode_hostname or 'localhost' in svc_url or '127.0.0.1' in svc_url):
+                score -= 1
+            worker_scores.append((worker, score))
+
+        worker_scores.sort(
+            key=lambda x: (
+                get_worker_placement_priority(x[0]),
+                1 if x[0]['worker_id'] not in busy_home_or_classic else 0,
+                x[1],
+                -allocated_map[x[0]["worker_id"]]["active_executors"],
+                float(x[0].get('total_ram_gb') or 0.0)
+            ),
+            reverse=True
+        )
+        assigned_worker, winner_score = worker_scores[0]
+
+        p2p_url = None
+        if winner_score < len(required_hashes) and len(worker_scores) > 1:
+            peers = [ws for ws in worker_scores if ws[0]['worker_id'] != assigned_worker['worker_id']]
+            if peers and peers[0][1] > 0 and peers[0][0].get('service_url'):
+                p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact".replace("1300.223.169.200", "130.223.169.200")
+
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE jobs
+                SET status = 'assigned', worker_id = ?, p2p_url = ?
+                WHERE job_id = ? AND status = 'pending'
+            ''', (assigned_worker['worker_id'], p2p_url, c_id))
+            if cursor.rowcount > 0:
+                conn.commit()
+                classic_pending.remove(c_job)
+                allocated_map[assigned_worker["worker_id"]]["used_cpus"] += DEFAULT_CPUS
+                allocated_map[assigned_worker["worker_id"]]["used_ram_gb"] += float(ram_required or DEFAULT_RAM_GB)
+                allocated_map[assigned_worker["worker_id"]]["used_vram_gb"] += float(vram_required or 0.0)
+                allocated_map[assigned_worker["worker_id"]]["active_executors"] += 1
+                busy_home_or_classic.add(assigned_worker["worker_id"])
+
+    # 3.3 Répartition équitable des machines supplémentaires aux jobs parallèles (Packing A11 + W11)
+    # Les machines supplémentaires sont allouées en priorité aux jobs ayant le moins de machines.
+    # Le headnode n'est attribué comme machine supplémentaire que si aucune autre machine ne convient.
+    # Les workers déjà assignés comme home_worker ou pour un job classique ne sont pas redistribués comme machines supplémentaires.
+    busy_home_or_classic = set()
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE status IN ('assigned', 'running') AND home_worker IS NOT NULL")
+        for r in cursor.fetchall():
+            if r[0]: busy_home_or_classic.add(r[0])
+        cursor.execute("SELECT worker_id FROM jobs WHERE status IN ('assigned', 'running') AND (parallel_mode = 0 OR parallel_mode IS NULL) AND worker_id IS NOT NULL")
+        for r in cursor.fetchall():
+            if r[0]: busy_home_or_classic.add(r[0])
+
+    already_assigned_extra = set()
+    for act_list in job_active_map.values():
+        for wid in act_list:
+            already_assigned_extra.add(wid)
+
+    available_extra_workers = [
+        w for w in workers
+        if w["worker_id"] not in busy_home_or_classic and w["worker_id"] not in already_assigned_extra
+    ]
+    available_extra_workers.sort(key=lambda w: get_worker_placement_priority(w), reverse=True)
+
+    for w in list(available_extra_workers):
+        eligible_jobs = []
+        for p_job in parallel_jobs:
+            jid = p_job["job_id"]
+            current_active = job_active_map.get(jid, [])
+            if len(current_active) >= MAX_WORKERS_PER_JOB:
+                continue
 
             with get_db_conn() as conn:
                 cursor = conn.cursor()
-
-                # 0. Ghost Workers cleanup: mark stale workers as offline
-                # Workers send heartbeats every 10s. If we haven't heard from one
-                # in 120s (12 missed heartbeats), it's dead/frozen.
-                cursor.execute('''
-                    UPDATE workers SET status = 'offline'
-                    WHERE status = 'online' AND last_seen < datetime('now', '-120 seconds')
-                ''')
-                if cursor.rowcount > 0:
-                    logger.warning(f"Marked {cursor.rowcount} ghost worker(s) as offline")
-                conn.commit()
-
-                # 1. Cleanup orphaned running/assigned jobs (workers that died/timed out)
-                cursor.execute('''
-                    UPDATE jobs
-                    SET status = 'failed', exit_code = COALESCE(exit_code, -99)
-                    WHERE status IN ('running', 'assigned') 
-                    AND worker_id IN (
-                        SELECT worker_id FROM workers 
-                        WHERE status = 'offline' OR last_seen < datetime('now', '-300 seconds')
-                    )
-                ''')
-                conn.commit()
-
-                # 1.5. Sovereign Watchdog: Find running or assigned jobs exceeding max runtime
-                cursor.execute('''
-                    SELECT job_id, repo, branch, status, started_at, created_at, max_runtime_hours
-                    FROM jobs
-                    WHERE status IN ('running', 'assigned')
-                ''')
-                active_jobs = [dict(row) for row in cursor.fetchall()]
-                
-                for job in active_jobs:
-                    job_id = job['job_id']
-                    max_hours = job['max_runtime_hours'] or 24.0
-                    start_time_str = job['started_at'] or job['created_at']
-                    if not start_time_str:
-                        continue
-                    try:
-                        # SQLite timestamps are in UTC
-                        start_t = datetime.strptime(start_time_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
-                        now_utc = dt.datetime.utcnow()
-                        elapsed_seconds = (now_utc - start_t).total_seconds()
-                        limit_seconds = (max_hours * 3600) + 300  # plus 5 minutes grace margin
-                        
-                        if elapsed_seconds > limit_seconds:
-                            logger.warning(f"Watchdog: Job {job_id} ({job['repo']}@{job['branch']}) has exceeded its max runtime of {max_hours} hours. (Elapsed: {elapsed_seconds/3600:.2f} hours)")
-                            expired_jobs.append(job_id)
-                    except Exception as ex:
-                        logger.error(f"Watchdog parsing error for job {job_id}: {ex}")
-
-                # Check if a maintenance job is currently RUNNING
-                cursor.execute('''
-                    SELECT * FROM jobs
-                    WHERE status = 'running' AND (job_type = 'maintenance' OR is_maintenance = 1)
-                    LIMIT 1
-                ''')
-                running_maintenance = cursor.fetchone()
-
-                # 2. Fetch pending jobs ordered by priority (maintenance first, then FIFO)
-                cursor.execute('''
-                    SELECT * FROM jobs
-                    WHERE status = "pending"
-                    ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
-                ''')
-                pending_jobs = [dict(row) for row in cursor.fetchall()]
-
-                # 3. Fetch online workers that are NOT already busy
-                # Worker agents are single-threaded: they block in execute_job()
-                # and cannot poll for new jobs until the current one finishes.
-                # We must exclude workers that have a running or assigned job.
-                cursor.execute('''
-                    SELECT * FROM workers
-                    WHERE status = "online"
-                    AND last_seen >= datetime('now', '-60 seconds')
-                    AND worker_id NOT IN (
-                        SELECT worker_id FROM jobs
-                        WHERE status IN ('running', 'assigned')
-                        AND worker_id IS NOT NULL
-                    )
-                    ORDER BY total_ram_gb DESC
-                ''')
-                workers = [dict(row) for row in cursor.fetchall()]
-
-            # Cancel expired jobs cleanly outside the main connection transaction to prevent SQLite locks
-            for job_id in expired_jobs:
-                try:
-                    logger.warning(f"Watchdog: Forcefully cancelling expired job {job_id}")
-                    cancel_job_cleanly(job_id, exit_code=-15)
-                except Exception as e:
-                    logger.error(f"Watchdog failed to cancel job {job_id}: {e}")
-
-            if running_maintenance:
-                logger.info(f"🚧 [MAINTENANCE] Maintenance job {running_maintenance['job_id']} is currently running. Normal scheduling paused.")
-                time.sleep(5)
-                continue
-
-            if not pending_jobs:
-                time.sleep(5)
-                continue
-
-            # Check if head of queue is a MAINTENANCE job (Drainage Barrier)
-            head_job = pending_jobs[0]
-            is_maintenance_job = (head_job.get('job_type') == 'maintenance' or head_job.get('is_maintenance') == 1)
-
-            if is_maintenance_job:
-                maint_job_id = head_job['job_id']
-                # Check active compute jobs on cluster
-                with get_db_conn() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        SELECT COUNT(*) FROM jobs
-                        WHERE status IN ('running', 'assigned')
-                        AND (job_type != 'maintenance' OR job_type IS NULL)
-                        AND (is_maintenance = 0 OR is_maintenance IS NULL)
-                    ''')
-                    active_compute_jobs = cursor.fetchone()[0]
-
-                if active_compute_jobs > 0:
-                    logger.info(
-                        f"🚧 [DRAINAGE BARRIER] Maintenance job {maint_job_id} holding queue: "
-                        f"waiting for {active_compute_jobs} active compute job(s) to finish draining on nodes..."
-                    )
-                    # Freeze assignment of any new jobs
-                    time.sleep(5)
+                cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ? AND status IN ("ready", "running")', (jid,))
+                parallelizable_count = cursor.fetchone()[0]
+                if len(current_active) >= parallelizable_count:
                     continue
 
-                # Drainage complete! All machines are idle (0 active compute jobs).
-                logger.info(f"🚧 [DRAINAGE BARRIER] All nodes drained (0 active jobs). Switching maintenance job {maint_job_id} to RUNNING...")
-                with get_db_conn() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE jobs
-                        SET status = 'running', started_at = CURRENT_TIMESTAMP
-                        WHERE job_id = ? AND status = 'pending'
-                    ''', (maint_job_id,))
-                    conn.commit()
+                cursor.execute('SELECT resources, dep_paths FROM job_nodes WHERE job_id = ? AND status = "ready"', (jid,))
+                ready_rows = cursor.fetchall()
 
-                # Trigger worker/cluster update orchestration
-                success = orchestrate_cluster_update(head_job)
-                
-                with get_db_conn() as conn:
-                    cursor = conn.cursor()
-                    final_status = 'completed' if success else 'failed'
-                    exit_code = 0 if success else 1
-                    cursor.execute('''
-                        UPDATE jobs
-                        SET status = ?, exit_code = ?, finished_at = CURRENT_TIMESTAMP
-                        WHERE job_id = ?
-                    ''', (final_status, exit_code, maint_job_id))
-                    conn.commit()
-                
-                logger.info(f"🏁 [MAINTENANCE] Maintenance job {maint_job_id} finished ({final_status}, exit code: {exit_code}). Resuming regular scheduler loop.")
-                time.sleep(2)
-                continue
+            w_alloc = allocated_map[w["worker_id"]]
+            can_run_any = any(
+                is_worker_admissible_for_node(w, json.loads(rr["resources"]) if rr["resources"] else {}, allocated=w_alloc)
+                for rr in ready_rows
+            )
+            if can_run_any:
+                eligible_jobs.append((p_job, current_active))
 
-            if not workers:
-                logger.warning("No online workers available.")
-                time.sleep(5)
-                continue
+        if eligible_jobs:
+            # Règle d'équité A1 : Le job ayant le MOINS de machines actives reçoit la machine en priorité
+            best_job, cur_act = min(
+                eligible_jobs,
+                key=lambda item: (
+                    len(item[1]),
+                    get_oldest_ready_node_time(item[0]),
+                    -get_data_affinity_score(item[0], w)
+                )
+            )
+            jid = best_job["job_id"]
+            wid = w["worker_id"]
+            if wid not in cur_act:
+                cur_act.append(wid)
+            job_active_map[jid] = cur_act
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE jobs SET active_workers = ? WHERE job_id = ?',
+                               (json.dumps(cur_act), jid))
+                cursor.execute('UPDATE workers SET assigned_job_id = ? WHERE worker_id = ?', (jid, wid))
+                conn.commit()
+            available_extra_workers.remove(w)
 
-            for job in pending_jobs:
-                    job_id = job['job_id']
-                    ram_required = job['ram_required_gb']
-                    vram_required = job.get('vram_required_gb') or 0
-                    repo = job['repo']
-                    job_branch = job.get('branch', '')
-                    required_hashes = json.loads(job.get('required_hashes') or '[]')
-
-                    # Parse allowed_workers constraint
-                    allowed_workers_raw = job.get('allowed_workers')
-                    allowed_workers = json.loads(allowed_workers_raw) if allowed_workers_raw else None
-
-                    # Branch-level exclusivity: never assign two jobs on the same repo+branch.
-                    # If another job is already running/assigned, this one waits in the queue.
-                    with get_db_conn() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            SELECT COUNT(*) FROM jobs
-                            WHERE repo = ? AND branch = ? AND status IN ('running', 'assigned')
-                            AND job_id != ?
-                        ''', (repo, job_branch, job_id))
-                        if cursor.fetchone()[0] > 0:
-                            logger.info(f"Branch exclusivity: skipping job {job_id} ({repo}@{job_branch}) — another job is already running/assigned on this branch")
-                            continue
-
-                    # Hard Constraint: Filter workers by RAM
-                    # Since workers are single-threaded and exclusively run one job at a time,
-                    # they can use their full physical RAM minus OS overhead (8GB).
-                    # 8GB headroom protects the OS/Docker/worker-agent from OOM on unified
-                    # memory systems (GB10/Grace) where CUDA allocations consume system RAM.
-                    # We don't use 'available_ram_gb' because it is artificially lowered by ZFS ARC and reclaimable caches.
-                    OS_HEADROOM_GB = 8.0
-                    candidates = [w for w in workers if (w['total_ram_gb'] - OS_HEADROOM_GB) >= ram_required]
-
-                    # Hard Constraint: Filter by VRAM (if required)
-                    if vram_required > 0:
-                        candidates = [w for w in candidates if (w.get('total_vram_gb') or 0) >= vram_required]
-
-                    # Hard Constraint: Filter by ALLOWED_WORKERS (hostname whitelist)
-                    if allowed_workers:
-                        candidates = [w for w in candidates if w.get('hostname', '') in allowed_workers]
-
-                    if not candidates:
-                        # Check if it's fundamentally impossible by querying all online workers
-                        with get_db_conn() as conn:
-                            cursor = conn.cursor()
-                            cursor.execute('SELECT MAX(total_ram_gb) FROM workers WHERE status = "online"')
-                            max_total = cursor.fetchone()[0] or 0.0
-                            cursor.execute('SELECT MAX(total_vram_gb) FROM workers WHERE status = "online"')
-                            max_vram = cursor.fetchone()[0] or 0.0
-
-                        if ram_required > (max_total - OS_HEADROOM_GB):
-                            logger.error(f"Job {job_id} requires {ram_required} GB RAM but max cluster capacity is {max_total - OS_HEADROOM_GB:.1f} GB (total {max_total:.0f} GB - {OS_HEADROOM_GB:.0f} GB OS reserve). Failing job.")
-                            with get_db_conn() as conn:
-                                cursor = conn.cursor()
-                                cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
-                                conn.commit()
-                            continue
-
-                        if vram_required > 0 and vram_required > max_vram:
-                            logger.error(f"Job {job_id} requires {vram_required} GB VRAM but max cluster VRAM is {max_vram:.1f} GB. Failing job.")
-                            with get_db_conn() as conn:
-                                cursor = conn.cursor()
-                                cursor.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
-                                conn.commit()
-                            continue
-
-                        logger.info(f"Could not find worker for job {job_id} requiring {ram_required} GB RAM / {vram_required} GB VRAM")
-                        continue
-
-                    # Soft Constraint: Data Locality (P2P Discovery)
-                    worker_scores = []
-                    headnode_hostname = socket.gethostname()
-                    for worker in candidates:
-                        score = 0
-                        if required_hashes and worker['service_url']:
-                            try:
-                                resp = requests.post(f"{worker['service_url']}/check_cache",
-                                                     json={"repo": repo, "hashes": required_hashes},
-                                                     timeout=2)
-                                if resp.status_code == 200:
-                                    found_hashes = resp.json()
-                                    score = len(found_hashes)
-                            except Exception as e:
-                                logger.warning(f"Failed to check cache on worker {worker['worker_id']}: {e}")
-
-                        # Headnode malus: deprioritize the headnode so remote workers
-                        # are preferred at equal data locality scores
-                        svc_url = worker.get('service_url') or ''
-                        worker_hostname = worker.get('hostname', '')
-                        is_headnode = (
-                            worker_hostname == headnode_hostname
-                            or 'localhost' in svc_url
-                            or '127.0.0.1' in svc_url
-                        )
-                        if is_headnode:
-                            score -= 1
-
-                        worker_scores.append((worker, score))
-
-                    # Sort by score descending (Data Locality, headnode deprioritized)
-                    worker_scores.sort(key=lambda x: x[1], reverse=True)
-                    assigned_worker, winner_score = worker_scores[0]
-
-                    # Injection du Data Plane (P2P URL)
-                    p2p_url = None
-                    if winner_score < len(required_hashes) and len(worker_scores) > 1:
-                        peers = [ws for ws in worker_scores if ws[0]['worker_id'] != assigned_worker['worker_id']]
-                        if peers:
-                            best_peer, peer_score = peers[0]
-                            if peer_score > 0:
-                                s_url = best_peer['service_url']
-                                if s_url:
-                                    s_url = s_url.replace("1300.223.169.200", "130.223.169.200")
-                                p2p_url = f"{s_url}/fetch_artifact"
-
-                    logger.info(f"Assigning job {job_id} to worker {assigned_worker['worker_id']} (Score: {winner_score}, P2P: {p2p_url})")
-
-                    # Update Job status
-                    with get_db_conn() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            UPDATE jobs
-                            SET status = 'assigned', worker_id = ?, p2p_url = ?
-                            WHERE job_id = ? AND status = 'pending'
-                        ''', (assigned_worker['worker_id'], p2p_url, job_id))
-
-                        if cursor.rowcount > 0:
-                            conn.commit()
-                            # Mark worker as busy in-memory for subsequent jobs in this loop
-                            workers = [w for w in workers if w['worker_id'] != assigned_worker['worker_id']]
-
+def schedule_jobs():
+    """Boucle continue d'ordonnancement cadencée toutes les 5 secondes."""
+    last_retention_ts = 0.0
+    while True:
+        try:
+            schedule_iteration()
         except Exception as e:
             logger.error(f"Error in scheduler loop: {e}")
-
+        try:
+            last_retention_ts, report = run_retention_periodic(last_retention_ts)
+            if report and report.jobs_purged > 0:
+                logger.info(f"Database retention: purged {report.jobs_purged} pathological jobs")
+        except Exception as e:
+            logger.error(f"Error in retention periodic: {e}")
         time.sleep(5)
 
 if __name__ == '__main__':
     init_db()
     schedule_jobs()
+

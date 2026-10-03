@@ -21,8 +21,72 @@ import urllib.request
 import urllib.error
 import tarfile
 import hashlib
-import shutil
 import zipfile
+import shutil
+
+# Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
+try:
+    from src.config.defaults import (
+        DEFAULT_RESOURCES,
+        DEFAULT_CPUS,
+        DEFAULT_GPUS,
+        DEFAULT_STORAGE_GB,
+    )
+    DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+except ImportError:
+    try:
+        from config.defaults import (
+            DEFAULT_RESOURCES,
+            DEFAULT_CPUS,
+            DEFAULT_GPUS,
+            DEFAULT_STORAGE_GB,
+        )
+        DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+    except ImportError:
+        try:
+            from scheduler.defaults import DEFAULT_RAM_GB
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
+        except ImportError:
+            DEFAULT_RAM_GB = 10.0
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
+
+try:
+    from src.scheduler.submit_job import (
+        run_planner_for_submission,
+        format_nodes_status_summary,
+        print_final_dag_summary,
+    )
+except ImportError:
+    try:
+        from submit_job import (
+            run_planner_for_submission,
+            format_nodes_status_summary,
+            print_final_dag_summary,
+        )
+    except ImportError:
+        def run_planner_for_submission(repo_dir="."):
+            import subprocess
+            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
+            cmd = (
+                ["uv", "run", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
+                if shutil.which("uv")
+                else [sys.executable, "-m", planner_mod, "--repo", repo_dir, "--json"]
+            )
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if proc.returncode != 0:
+                print(f"❌ Error: Échec du planificateur ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
+                sys.exit(proc.returncode or 1)
+            return json.loads(proc.stdout)
+
+        def format_nodes_status_summary(nodes):
+            return None, []
+
+        def print_final_dag_summary(nodes, job_id):
+            pass
 
 
 # Global variables for cleanup
@@ -710,6 +774,7 @@ def stream_logs(run_id, commit_sha, branch=None):
         last_sync_time = time.time()
         last_synced_sha = commit_sha
         last_gha_poll_time = 0
+        last_nodes_summary = None
 
         while True:
             # Periodic intermediate synchronization (every 10s) once live stream is active
@@ -777,6 +842,17 @@ def stream_logs(run_id, commit_sha, branch=None):
                                 status_val = job_data.get("status")
                                 job_active = status_val in ("running", "assigned", "pending")
                                 job_finished_normally = status_val in ("completed", "failed")
+
+                                # Suivi en direct de l'état des nœuds DAG (v3 multi-nœuds)
+                                nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
+                                if nodes_data:
+                                    summary_line, details = format_nodes_status_summary(nodes_data)
+                                    if summary_line and summary_line != last_nodes_summary:
+                                        print_line(summary_line, force=True)
+                                        for d in details:
+                                            print_line(f"   {d}", force=True)
+                                        last_nodes_summary = summary_line
+
                                 if job_finished_normally:
                                     drain_deadline = time.time() + 5
                                     while time.time() < drain_deadline:
@@ -791,6 +867,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                                         try: proc.terminate()
                                         except: pass
 
+                                    print_final_dag_summary(nodes_data, job_id)
                                     exit_code = job_data.get("exit_code")
                                     if status_val == "completed" or exit_code == 0:
                                         print("\n✅ Cluster-CI run completed successfully!")
@@ -1441,7 +1518,7 @@ def parse_cluster_ci_config(project_dir="."):
             print(f"⚠️  Could not read .cluster-ci file: {e}", file=sys.stderr)
 
     # Parse RAM
-    ram_req = 2.0
+    ram_req = DEFAULT_RAM_GB
     match_env = re.search(r'REQUIRED_RAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
     if match_env:
         ram_req = float(match_env.group(1))
@@ -1485,13 +1562,46 @@ def parse_cluster_ci_config(project_dir="."):
     if aw_match:
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
+    # Parse REQUIRED_CPUS (A16)
+    cpus_req = DEFAULT_CPUS
+    cpus_match = re.search(r'REQUIRED_CPUS\s*=\s*(\d+)', content)
+    if cpus_match:
+        cpus_req = int(cpus_match.group(1))
+
+    # Parse REQUIRED_GPUS (A16)
+    gpus_req = DEFAULT_GPUS
+    gpus_match = re.search(r'REQUIRED_GPUS\s*=\s*(\d+)', content)
+    if gpus_match:
+        gpus_req = int(gpus_match.group(1))
+    elif vram_req > 0:
+        gpus_req = 1
+
+    # Parse REQUIRED_STORAGE / REQUIRED_DISK (A16)
+    storage_req = DEFAULT_STORAGE_GB
+    storage_match = re.search(r'(?:REQUIRED_STORAGE|REQUIRED_DISK)\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    if storage_match:
+        storage_req = float(storage_match.group(1))
+
+    # Parse PARALLEL_STAGES
+    parallel_stages = False
+    ps_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
+    if ps_match:
+        parallel_stages = True
+
     return {
         "ram_required_gb": ram_req,
         "vram_required_gb": vram_req,
+        "cpus_required": cpus_req,
+        "gpus_required": gpus_req,
+        "storage_required_gb": storage_req,
+        "cpus": cpus_req,
+        "gpus": gpus_req,
+        "storage_gb": storage_req,
         "max_runtime_hours": max_runtime,
         "exposed_port": exposed_port,
         "custom_web_app": custom_web_app,
         "allowed_workers": allowed_workers,
+        "parallel_stages": parallel_stages,
     }
 
 
@@ -1562,27 +1672,126 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
     return False
 
 
+_job_logs_fallback_warned = False
+
+
+def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None):
+    """Fetch logs from headnode with priority on /job_logs/{job_id} and fallback on /api/jobs/{job_id}/logs."""
+    global _job_logs_fallback_warned
+    routes = [
+        f"{headnode_url}/job_logs/{job_id}?offset={offset}",
+        f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}",
+    ]
+    for idx, url in enumerate(routes):
+        try:
+            req = urllib.request.Request(url)
+            if cluster_token:
+                req.add_header("Authorization", f"Bearer {cluster_token}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                status_code = getattr(resp, "status", getattr(resp, "code", None))
+                if status_code == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data.get("logs", ""), data.get("offset", offset)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                if idx == 0 and not _job_logs_fallback_warned:
+                    print(
+                        f"⚠️ Avertissement : Route /job_logs/{job_id} introuvable (HTTP 404), "
+                        f"bascule de repli vers /api/jobs/{job_id}/logs.",
+                        file=sys.stderr,
+                    )
+                    _job_logs_fallback_warned = True
+                continue
+            break
+        except Exception:
+            break
+    return "", offset
+
+
+def format_multi_machine_log_line(line, nodes_data=None):
+    """Garantit que chaque ligne est préfixée [nœud@machine] lorsque plusieurs nœuds tournent en parallèle."""
+    import re
+    if not line or not line.strip():
+        return line
+
+    stripped = line.strip()
+    if not nodes_data or not isinstance(nodes_data, list):
+        return line
+
+    active_nodes = [
+        n for n in nodes_data
+        if isinstance(n, dict) and n.get("status") in ("running", "assigned")
+    ]
+    candidates = active_nodes if active_nodes else [n for n in nodes_data if isinstance(n, dict)]
+
+    # 1. La ligne commence par un préfixe entre crochets [tag]
+    m_bracket = re.match(r"^\[([^\]]+)\]\s*(.*)$", stripped)
+    if m_bracket:
+        tag = m_bracket.group(1).strip()
+        rest = m_bracket.group(2)
+        for nd in candidates:
+            n_name = nd.get("name") or nd.get("node_name")
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            if not n_name:
+                continue
+            if tag == f"{n_name}@{machine}":
+                return line  # Déjà préfixé avec nœud et machine
+            if tag == n_name:
+                return f"[{n_name}@{machine}] {rest}"
+        # Si le tag se termine déjà par une machine connue
+        machines_all = {
+            nd.get("machine") or nd.get("worker_id")
+            for nd in candidates
+            if (nd.get("machine") or nd.get("worker_id"))
+        }
+        for m in machines_all:
+            if tag.endswith(f"@{m}"):
+                return line
+        return line
+
+    # 2. La ligne commence par "node_name: ..."
+    for nd in candidates:
+        n_name = nd.get("name") or nd.get("node_name")
+        if n_name and stripped.startswith(f"{n_name}:"):
+            rest = stripped[len(n_name) + 1:].lstrip()
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            return f"[{n_name}@{machine}] {rest}"
+
+    # 3. Plusieurs nœuds tournent en parallèle sur des machines distinctes
+    machines = {
+        nd.get("machine") or nd.get("worker_id")
+        for nd in active_nodes
+        if (nd.get("machine") or nd.get("worker_id"))
+    }
+    if len(active_nodes) > 1 and len(machines) > 1:
+        for nd in active_nodes:
+            n_name = nd.get("name") or nd.get("node_name")
+            if n_name and n_name in stripped:
+                machine = nd.get("machine") or nd.get("worker_id") or "worker"
+                return f"[{n_name}@{machine}] {stripped}"
+        first_node = active_nodes[0].get("name") or "parallel"
+        first_mach = active_nodes[0].get("machine") or active_nodes[0].get("worker_id") or "cluster"
+        return f"[{first_node}@{first_mach}] {stripped}"
+
+    return line
+
+
 def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     """Poll job status and stream live logs directly from headnode API for a local run."""
     init_log_redirection()
     offset = 0
     last_status_msg = ""
+    last_nodes_summary = None
+    current_nodes_data = None
 
     while True:
-        # 1. Fetch latest logs from Headnode API
+        # 1. Fetch latest logs from Headnode API (priorité /job_logs, repli /api/jobs/{id}/logs)
         try:
-            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
-            req = urllib.request.Request(logs_url)
-            if cluster_token:
-                req.add_header("Authorization", f"Bearer {cluster_token}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    log_resp = json.loads(resp.read().decode("utf-8"))
-                    new_logs = log_resp.get("logs", "")
-                    offset = log_resp.get("offset", offset)
-                    if new_logs and isinstance(new_logs, str):
-                        for line in new_logs.splitlines():
-                            print_line(line)
+            new_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
+            if new_logs and isinstance(new_logs, str):
+                for line in new_logs.splitlines():
+                    formatted_line = format_multi_machine_log_line(line, current_nodes_data)
+                    print_line(formatted_line)
         except Exception:
             # Silently continue on temporary network glitches while polling logs
             pass
@@ -1599,6 +1808,17 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     status = job_data.get("status")
                     exit_code = job_data.get("exit_code")
 
+                    # Suivi en direct des nœuds (v3 multi-nœuds)
+                    nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
+                    if nodes_data:
+                        current_nodes_data = nodes_data
+                        summary_line, details = format_nodes_status_summary(nodes_data)
+                        if summary_line and summary_line != last_nodes_summary:
+                            print_line(summary_line)
+                            for d in details:
+                                print_line(f"   {d}")
+                            last_nodes_summary = summary_line
+
                     if status in ("pending", "assigned"):
                         msg = f"⏳ Job status: {status}..."
                         if msg != last_status_msg:
@@ -1608,22 +1828,17 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     elif status in ("completed", "failed"):
                         # Drain any remaining logs one final time
                         try:
-                            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
-                            req = urllib.request.Request(logs_url)
-                            if cluster_token:
-                                req.add_header("Authorization", f"Bearer {cluster_token}")
-                            with urllib.request.urlopen(req, timeout=5) as r2:
-                                if r2.status == 200:
-                                    log_resp = json.loads(r2.read().decode("utf-8"))
-                                    final_logs = log_resp.get("logs", "")
-                                    if final_logs and isinstance(final_logs, str):
-                                        for line in final_logs.splitlines():
-                                            print_line(line)
+                            final_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
+                            if final_logs and isinstance(final_logs, str):
+                                for line in final_logs.splitlines():
+                                    formatted_line = format_multi_machine_log_line(line, current_nodes_data)
+                                    print_line(formatted_line)
                         except Exception:
                             pass
 
                         # Fetch metrics & results from headnode
                         fetch_local_results(job_id, headnode_url, cluster_token)
+                        print_final_dag_summary(nodes_data, job_id)
                         close_log_redirection()
                         print_log_summary()
 
@@ -1633,7 +1848,17 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                             return int(ret_code)
                         else:
                             ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
-                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})")
+                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})", file=sys.stderr)
+                            # A17 : Afficher tel quel le message d'erreur du headnode
+                            job_error = job_data.get("error_message") or job_data.get("error")
+                            if job_error:
+                                print(f"❌ Error message: {job_error}", file=sys.stderr)
+                            if nodes_data and isinstance(nodes_data, list):
+                                for nd in nodes_data:
+                                    if isinstance(nd, dict) and nd.get("status") == "failed":
+                                        node_err = nd.get("error_message")
+                                        if node_err:
+                                            print(f"❌ Node '{nd.get('name', 'unknown')}' failed: {node_err}", file=sys.stderr)
                             return int(ret_code)
         except Exception:
             # Status check temporary error
@@ -1692,6 +1917,14 @@ def local_run():
         if os.path.exists(archive_path):
             os.remove(archive_path)
 
+    plan = None
+    if config.get("parallel_stages") and os.path.isfile("dvc.yaml"):
+        print("🧩 PARALLEL_STAGES activé et dvc.yaml détecté : génération du plan via le planificateur W1...")
+        plan = run_planner_for_submission(".")
+        print(f"✅ Plan généré avec succès ({len(plan.get('nodes', []))} nœud(s)).")
+    elif config.get("parallel_stages") and not os.path.isfile("dvc.yaml"):
+        print("⚠️ PARALLEL_STAGES=true spécifié mais dvc.yaml introuvable. Soumission sans plan.")
+
     payload = {
         "repo": repo,
         "branch": BRANCH,
@@ -1706,6 +1939,14 @@ def local_run():
         "is_local": True,
         "source_transfer_id": source_transfer_id,
     }
+    if config.get("cpus") is not None:
+        payload["cpus"] = config["cpus"]
+    if config.get("gpus") is not None:
+        payload["gpus"] = config["gpus"]
+    if config.get("storage_gb") is not None:
+        payload["storage_gb"] = config["storage_gb"]
+    if plan is not None:
+        payload["plan"] = plan
 
     submit_url = f"{headnode_url}/submit_job"
     data_bytes = json.dumps(payload).encode("utf-8")
@@ -1730,7 +1971,14 @@ def local_run():
             error_body = e.read().decode("utf-8")
         except Exception:
             pass
-        print(f"❌ Error submitting local job (HTTP {e.code}): {e.reason} - {error_body}", file=sys.stderr)
+        err_msg = error_body
+        try:
+            err_json = json.loads(error_body)
+            if isinstance(err_json, dict) and "error" in err_json:
+                err_msg = err_json["error"]
+        except Exception:
+            pass
+        print(f"❌ Error submitting local job (HTTP {e.code}): {err_msg}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         _delete_local_transfer(headnode_url, source_transfer_id, cluster_token)
@@ -1750,6 +1998,8 @@ def local_run():
     except KeyboardInterrupt:
         USER_INTERRUPTED = True
         print("\n🛑 Execution interrupted by user.")
+        _headnode_stop_job(job_id, headnode_url, cluster_token)
+        cleanup()
         sys.exit(130)
 
 def main():

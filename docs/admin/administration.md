@@ -123,3 +123,92 @@ Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC a
 Below is the schema outlining how jobs enter the execution queue, how placement constraints are evaluated by the scheduler, and how workers are allocated to execution slots.
 
 ![Scheduling Queue](../assets/images/scheduling_queue.png)
+
+---
+
+## 8. Adding Worker Nodes & Hardware Telemetry (v3)
+
+Cluster-CI v3 implements **fully automated capability discovery**. Adding a new worker node requires zero manual configuration in the scheduler and zero code changes in the headnode.
+
+### Provisioning a New Machine
+
+To integrate a new physical worker into the cluster:
+
+1. Run the worker one-liner installation script:
+   ```bash
+   curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=$(date +%s)" | bash -s -- worker
+   ```
+2. Provide the `HEADNODE_URL` and `CLUSTER_TOKEN` when prompted.
+3. Distribute the inter-worker SSH public key (`~/.ssh/id_rsa.pub`) to enable peer-to-peer artifact transfers.
+
+Once the `cluster-worker-agent` service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.
+
+### Automatic Capability Discovery
+
+During the registration handshake (`POST /register_worker`), the worker agent scans its local hardware and reports:
+
+* **CPU Cores (`cpus`)**: Physical and logical CPU core counts via `psutil`.
+* **RAM (`total_ram_gb`, `available_ram_gb`)**: Total and available physical RAM in GB.
+* **GPU & VRAM (`vram_per_gpu`, `gpu_count`, `gpu_name`)**: Per-GPU VRAM capacity obtained via `nvidia-smi`.
+* **Unified Memory Detection (`unified_memory`)**: Automatically detects Grace Blackwell architectures (GB10) where CPU and GPU share a unified NVLink-C2C memory pool.
+* **Architecture (`arch`)**: CPU architecture (`x86_64` vs `aarch64` / `arm64`).
+* **Disk Space (`disk_free_gb`)**: Available filesystem capacity for workspace and Docker layers.
+
+### Scheduler Admission Logic
+
+The headnode scheduler uses these reported telemetry fields to make admission decisions:
+
+```python
+# Unified memory architecture (Grace Blackwell GB10)
+if worker["unified_memory"]:
+    is_admissible = (stage["ram_gb"] + stage["vram_gb"]) <= (worker["total_ram_gb"] - 8.0)
+
+# Discrete architecture (e.g. RTX 3090, AMD/Intel CPUs)
+else:
+    is_admissible = (
+        stage["ram_gb"] <= (worker["available_ram_gb"] - 8.0) and
+        stage["vram_gb"] <= sum_available_vram(worker)
+    )
+```
+
+For stages scheduled on discrete multi-GPU machines, the scheduler dynamically assigns specific GPU indices and injects `CUDA_VISIBLE_DEVICES` into the container environment.
+
+---
+
+## 9. SQLite Database Retention & Pathological Growth Guard (A15)
+
+Cluster-CI v3 manages its central job state in SQLite (`cluster.db`). Because provenance tracking and audit trails are essential for research reproducibility, data is preserved by default:
+
+### Retention Policy Rules (Amendement A15)
+
+* **Indefinite History Preservation**: Under normal operation (~15 MB for 3,000+ jobs), the database is **never purged**. Complete job history and stage metrics are retained indefinitely.
+* **Pathological Threshold (> 1 GB)**: Automated retention triggers **strictly and exclusively** if the SQLite database file grows pathologically beyond **1 GB** (`DB_RETENTION_PATHOLOGICAL_THRESHOLD_BYTES = 1024 * 1024 * 1024`).
+* **365-Day Window for Terminal Jobs**: If the 1 GB threshold is exceeded, only terminal jobs (`completed`, `failed`, `cancelled`, `stopped`) older than **365 days** (`DB_RETENTION_PATHOLOGICAL_DAYS = 365`) are eligible for deletion.
+* **Active Jobs Immunity**: Active jobs (`pending`, `running`, `assigned`, `queued`) are strictly immune and never purged under any circumstances.
+* **Non-Blocking Incremental Vacuum**: To prevent scheduler lockups, the system uses short transaction batches (100 jobs per batch) and `PRAGMA incremental_vacuum(1000)`. Blocking `VACUUM FULL` operations are strictly avoided.
+* **Full Job Log Preservation**: Job log files on disk (`job_logs/{job_id}.log`) are **never deleted or truncated**, ensuring historical diagnostic output remains accessible.
+
+---
+
+## 10. Tiered Disk Garbage Collection (W9 / A15)
+
+Under intensive deep learning workloads, cluster worker disks accumulate large Docker layers, DVC datasets, and wheels. The local garbage collector (`src/runner/gc_orchestrator.py`) regulates disk usage safely without interrupting running jobs:
+
+### Trigger Thresholds
+
+* **Standard GC Threshold**: Triggered only when free disk space falls below **100 GB** (`FREE_SPACE_THRESHOLD_GB = 100`).
+* **Panic Threshold**: Escalates if free disk space drops below **50 GB** (`PANIC_THRESHOLD_GB = 50`).
+* **Protection Window**: Any project with an active container or executed within the last **6 hours** (`GC_PROTECT_HOURS = 6.0`) is strictly immune from eviction.
+
+### Tiered Eviction Hierarchy
+
+The garbage collector operates in 5 progressive tiers, stopping immediately once the target free space threshold is restored:
+
+| Tier | Target Cleaned | Eviction Rules & Safety Guards |
+| :--- | :--- | :--- |
+| **Tier 1** | **Regenerable Caches & Temp Files** | Runs `docker system prune`, prunes DVC commit history (`dvc gc --rev HEAD --rev HEAD~1`), and cleans whitelisted caches (`__pycache__`, `.pytest_cache`, `.cache/uv`, `.cache/pip`, `.cache/huggingface`, `.cache/torch`). Git-tracked files and `.venv` are never touched. |
+| **Tier 2** | **Inactive Docker Home Volumes** | Prunes `/home/user` named volumes (`cluster-ci-home-*`) of inactive repositories. |
+| **Tier 3** | **Inactive Shared DVC Cache (LRU)** | Purges local DVC cache files for the oldest inactive repositories by LRU (Least Recently Used). |
+| **Tier 4** | **Unused Docker Images (LRU)** | Removes unreferenced Docker images sorted by LRU. Images referenced by any existing container (running or stopped) are strictly protected. |
+| **Tier 5** | **Inactive Workspaces (LRU)** | Completely deletes inactive repository checkouts under `repositories/` in oldest LRU order as a last resort. |
+

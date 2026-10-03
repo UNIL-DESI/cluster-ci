@@ -35,6 +35,17 @@ if [ -f ".env" ]; then
     source .env
 fi
 
+# Persist CLUSTER_CI_ROLE in .env
+if [ -f ".env" ]; then
+    if grep -q "^CLUSTER_CI_ROLE=" .env; then
+        sed -i "s/^CLUSTER_CI_ROLE=.*/CLUSTER_CI_ROLE=$ROLE/" .env 2>/dev/null || true
+    else
+        echo "CLUSTER_CI_ROLE=$ROLE" >> .env
+    fi
+else
+    echo "CLUSTER_CI_ROLE=$ROLE" > .env
+fi
+
 # 0. Docker Check / Installation
 if ! command -v docker &> /dev/null; then
     echo "📦 Installing Docker..."
@@ -232,6 +243,19 @@ EOF
     sudo systemctl restart cluster-scheduler cluster-scheduler-loop cluster-runner-manager
     echo "🚀 Scheduler and Runner Manager services started."
 
+    # Configure Logrotate and Journald Retention on Headnode
+    echo "🧹 Configuring log rotation and journald retention on headnode..."
+    if [ -f "$BASE_DIR/scripts/logrotate-cluster-ci.conf" ]; then
+        sudo cp "$BASE_DIR/scripts/logrotate-cluster-ci.conf" /etc/logrotate.d/cluster-ci
+        sudo chmod 644 /etc/logrotate.d/cluster-ci
+    fi
+    if [ -f "$BASE_DIR/scripts/journald-cluster-ci.conf" ]; then
+        sudo mkdir -p /etc/systemd/journald.conf.d
+        sudo cp "$BASE_DIR/scripts/journald-cluster-ci.conf" /etc/systemd/journald.conf.d/cluster-ci.conf
+        sudo chmod 644 /etc/systemd/journald.conf.d/cluster-ci.conf
+        sudo systemctl restart systemd-journald 2>/dev/null || true
+    fi
+
     # Also install the Worker Agent on the headnode so it can execute jobs too
     echo "⚙️ Also installing Worker Agent on headnode (dual role)..."
     cat <<EOF | sudo tee /etc/systemd/system/cluster-worker.service
@@ -255,6 +279,43 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 EOF
+    # Cluster-CI v3 (W11): Install hardening drop-ins for all headnode services
+    echo "🛡️ Installing headnode hardening drop-ins (OOM protection & CPU priority)..."
+    for svc in cluster-scheduler cluster-scheduler-loop cluster-runner-manager cluster-worker; do
+        sudo mkdir -p "/etc/systemd/system/${svc}.service.d"
+        cat <<EOF_GUARD | sudo tee "/etc/systemd/system/${svc}.service.d/10-headnode-guard.conf" > /dev/null
+[Service]
+# Cluster-CI v3 (W11) - Headnode Service Hardening Drop-in
+OOMScoreAdjust=-900
+CPUWeight=1000
+CPUShares=2048
+MemoryMin=512M
+MemoryLow=2G
+EOF_GUARD
+    done
+    echo "✅ Headnode hardening drop-ins installed."
+
+    # Cluster-CI v3 (W11): Install persistent cgroup limiter service for headnode (/cluster-jobs)
+    echo "🛡️ Installing /cluster-jobs persistent cgroup limiter service..."
+    cat <<'EOF_CGROUP' | sudo tee /etc/systemd/system/cluster-jobs-cgroup.service > /dev/null
+[Unit]
+Description=Cluster-CI Headnode Cgroup Memory Limiter (/cluster-jobs)
+Before=docker.service
+DefaultDependencies=no
+After=local-fs.target systemd-sysctl.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "MEM_TOTAL_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}'); RESERVE_KB=$((16 * 1024 * 1024)); if [ \"$MEM_TOTAL_KB\" -gt \"$RESERVE_KB\" ]; then LIMIT_BYTES=$(( (MEM_TOTAL_KB - RESERVE_KB) * 1024 )); else LIMIT_BYTES=$((1024 * 1024 * 1024)); fi; if [ -d /sys/fs/cgroup/memory ]; then mkdir -p /sys/fs/cgroup/memory/cluster-jobs && echo \"$LIMIT_BYTES\" > /sys/fs/cgroup/memory/cluster-jobs/memory.limit_in_bytes && (echo 0 > /sys/fs/cgroup/memory/cluster-jobs/memory.swappiness 2>/dev/null || true); fi; if [ -f /sys/fs/cgroup/cgroup.controllers ]; then (grep -q memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control) 2>/dev/null || true; mkdir -p /sys/fs/cgroup/cluster-jobs && echo \"$LIMIT_BYTES\" > /sys/fs/cgroup/cluster-jobs/memory.max 2>/dev/null || true; fi"
+
+[Install]
+WantedBy=multi-user.target
+EOF_CGROUP
+    sudo systemctl daemon-reload
+    sudo systemctl enable cluster-jobs-cgroup.service 2>/dev/null || true
+    echo "✅ /cluster-jobs cgroup limiter service installed and enabled."
+
     sudo systemctl daemon-reload
     sudo systemctl enable cluster-worker
     sudo systemctl restart cluster-worker

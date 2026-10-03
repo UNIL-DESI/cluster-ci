@@ -7,9 +7,33 @@ def new_getaddrinfo(*args, **kwargs):
 socket.getaddrinfo = new_getaddrinfo
 # Set a global timeout for all socket operations to prevent infinite hangs
 socket.setdefaulttimeout(20.0)
-
 from flask import abort, Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template, send_file
-from persistence import init_db, get_db_conn
+try:
+    from persistence import (
+        init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
+        mark_node_status, handle_missing_deps, record_runner_heartbeat,
+        check_runner_heartbeat_timeouts, get_job_node, get_all_job_nodes,
+        get_aggregated_job_status
+    )
+    from defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+    )
+    from scheduler_loop import validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node
+except ImportError:
+    from src.scheduler.persistence import (
+        init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
+        mark_node_status, handle_missing_deps, record_runner_heartbeat,
+        check_runner_heartbeat_timeouts, get_job_node, get_all_job_nodes,
+        get_aggregated_job_status
+    )
+    from src.scheduler.defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+    )
+    from src.scheduler.scheduler_loop import validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node
 try:
     from redaction import redact_secrets
 except ImportError:
@@ -510,8 +534,10 @@ def submit_maintenance_job():
     }), 201
 
 @app.route('/register_worker', methods=['POST'])
+@app.route('/heartbeat', methods=['POST'])
+@app.route('/api/worker/heartbeat', methods=['POST'])
 def register_worker():
-    data = request.json
+    data = request.json or {}
     worker_id = data.get('worker_id')
     hostname = data.get('hostname')
     service_url = data.get('service_url')
@@ -525,26 +551,69 @@ def register_worker():
     gpu_name = data.get('gpu_name')
     available_vram_gb = data.get('available_vram_gb', 0)
 
+    # W4 Capacités & Docker images (A13)
+    cpus = data.get('cpus') or 4
+    ram_gb = data.get('ram_gb')
+    if ram_gb is None and total_ram_gb is not None:
+        ram_gb = total_ram_gb
+    vram_per_gpu = data.get('vram_per_gpu')
+    if isinstance(vram_per_gpu, (list, dict)):
+        vram_per_gpu = json.dumps(vram_per_gpu)
+    unified_memory = 1 if data.get('unified_memory') else 0
+    arch = data.get('arch') or 'x86_64'
+    disk_free_gb = data.get('disk_free_gb')
+    if disk_free_gb is None:
+        disk_free_gb = available_storage_gb if available_storage_gb is not None else (total_storage_gb or 0.0)
+    role = data.get('role') or 'worker'
+    docker_images = data.get('docker_images')
+    if isinstance(docker_images, (dict, list)):
+        docker_images = json.dumps(docker_images)
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
         # available_ram_gb is now a derived state, but we keep the column for backward compatibility
         # (it will be ignored by the dynamic calculation).
         cursor.execute('''
-            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb, last_seen, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'online')
+            INSERT INTO workers (
+                worker_id, hostname, service_url,
+                total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb,
+                total_vram_gb, gpu_count, gpu_name, available_vram_gb,
+                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images,
+                last_seen, status
+            )
+            VALUES (
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '{}'),
+                CURRENT_TIMESTAMP, 'online'
+            )
             ON CONFLICT(worker_id) DO UPDATE SET
-                hostname = ?,
-                service_url = ?,
-                total_ram_gb = ?,
-                total_storage_gb = ?,
-                available_storage_gb = ?,
-                total_vram_gb = ?,
-                gpu_count = ?,
-                gpu_name = ?,
-                available_vram_gb = ?,
+                hostname = excluded.hostname,
+                service_url = excluded.service_url,
+                total_ram_gb = excluded.total_ram_gb,
+                total_storage_gb = excluded.total_storage_gb,
+                available_storage_gb = excluded.available_storage_gb,
+                total_vram_gb = excluded.total_vram_gb,
+                gpu_count = excluded.gpu_count,
+                gpu_name = excluded.gpu_name,
+                available_vram_gb = excluded.available_vram_gb,
+                cpus = COALESCE(excluded.cpus, workers.cpus),
+                ram_gb = COALESCE(excluded.ram_gb, workers.ram_gb),
+                vram_per_gpu = COALESCE(excluded.vram_per_gpu, workers.vram_per_gpu),
+                unified_memory = COALESCE(excluded.unified_memory, workers.unified_memory),
+                arch = COALESCE(excluded.arch, workers.arch),
+                disk_free_gb = COALESCE(excluded.disk_free_gb, workers.disk_free_gb),
+                role = COALESCE(excluded.role, workers.role),
+                docker_images = COALESCE(excluded.docker_images, workers.docker_images, '{}'),
                 last_seen = CURRENT_TIMESTAMP,
                 status = 'online'
-        ''', (worker_id, hostname, service_url, total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb, hostname, service_url, total_ram_gb, total_storage_gb, available_storage_gb, total_vram_gb, gpu_count, gpu_name, available_vram_gb))
+        ''', (
+            worker_id, hostname, service_url,
+            total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb,
+            total_vram_gb, gpu_count, gpu_name, available_vram_gb,
+            cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, docker_images
+        ))
         
         # If a worker re-registers (is_startup=True), it means it restarted and lost any running jobs.
         # We only fail 'running' jobs. Jobs that were merely 'assigned' are safely reverted to 'pending'
@@ -599,20 +668,52 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
         app.logger.info(f"🛑 cancel_job_cleanly({job_id}): skipped — status '{status}' is not cancellable")
         return False
 
-    # 1. Worker cancellation if active on worker
-    if status in ['assigned', 'running'] and job['service_url']:
+    # 1. Worker cancellation if active on worker(s)
+    worker_urls = set()
+    if job.get('parallel_mode'):
         try:
-            app.logger.info(f"🛑 cancel_job_cleanly({job_id}): sending /cancel to worker {job['service_url']}")
-            requests.post(f"{job['service_url']}/cancel/{job_id}", timeout=10)
+            active_ids = json.loads(job.get('active_workers') or '[]')
+        except Exception:
+            active_ids = []
+        if job.get('home_worker') and job['home_worker'] not in active_ids:
+            active_ids.append(job['home_worker'])
+        if active_ids:
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                placeholders = ','.join(['?'] * len(active_ids))
+                cursor.execute(f'SELECT service_url FROM workers WHERE worker_id IN ({placeholders})', active_ids)
+                for row in cursor.fetchall():
+                    if row['service_url']:
+                        worker_urls.add(row['service_url'])
+    elif status in ['assigned', 'running'] and job.get('service_url'):
+        worker_urls.add(job['service_url'])
+
+    for s_url in worker_urls:
+        try:
+            app.logger.info(f"🛑 cancel_job_cleanly({job_id}): sending /cancel to worker {s_url}")
+            requests.post(f"{s_url}/cancel/{job_id}", timeout=10)
         except Exception as e:
-            app.logger.error(f"Failed to send cancel to worker {job['service_url']} for job {job_id}: {e}")
+            app.logger.error(f"Failed to send cancel to worker {s_url} for job {job_id}: {e}")
+
+    # Si job en parallel_mode, basculer tous les nœuds non terminés à 'blocked'
+    if job.get('parallel_mode'):
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE job_nodes
+                SET status = 'blocked'
+                WHERE job_id = ? AND status NOT IN ('done', 'skipped')
+            ''', (job_id,))
+            cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+            conn.commit()
 
     # 2. GHA cancellation (best effort)
-    if job['gh_run_id']:
+    if job.get('gh_run_id'):
         try:
             repo = job['repo']
             run_id = job['gh_run_id']
-            gh_token = job['gh_token'] or os.environ.get("GITHUB_PAT")
+            gh_token = job.get('gh_token') or os.environ.get("GITHUB_PAT")
             if gh_token:
                 headers = {
                     "Authorization": f"token {gh_token}",
@@ -681,6 +782,18 @@ def submit_job():
             env_vars = json.loads(env_vars)
         except Exception:
             env_vars = None
+
+    plan = data.get('plan')
+    parallel_mode_flag = data.get('parallel_mode')
+    parallel_stages_flag = str(data.get('PARALLEL_STAGES', '')).lower() in ['true', '1']
+    parallel_mode = 1 if (plan or parallel_mode_flag or parallel_stages_flag) else 0
+
+    if plan:
+        try:
+            validate_plan(plan)
+        except ValueError as val_err:
+            app.logger.error(f"❌ Rejet de soumission: plan invalide pour {repo}@{branch}: {val_err}")
+            return jsonify({"error": f"Invalid execution plan: {val_err}"}), 400
 
     job_id = str(uuid.uuid4())
     local_archive_path = None
@@ -814,15 +927,40 @@ def submit_job():
         env_vars["CLUSTER_CANCELLED_RUNS"] = ",".join(jobs_to_cancel)
 
     # 2. Insert new job
+    plan_json_str = json.dumps(plan) if plan else None
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO jobs (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes, gh_token, env_vars, username, allowed_workers, status, is_local, local_archive_path, job_type, is_maintenance)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-        ''', (job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb, max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id, json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None, username, json.dumps(allowed_workers) if allowed_workers else None, 1 if is_local else 0, local_archive_path, job_type, is_maintenance))
+            INSERT INTO jobs (
+                job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb,
+                max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes,
+                gh_token, env_vars, username, allowed_workers, status, is_local,
+                local_archive_path, job_type, is_maintenance, parallel_mode, plan_json, active_workers
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb,
+            max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id,
+            json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None,
+            username, json.dumps(allowed_workers) if allowed_workers else None,
+            1 if is_local else 0, local_archive_path, job_type, is_maintenance,
+            parallel_mode, plan_json_str, "[]"
+        ))
         conn.commit()
 
-    return jsonify({"job_id": job_id, "status": "pending", "required_hashes_count": len(required_hashes), "is_local": 1 if is_local else 0, "job_type": job_type, "is_maintenance": is_maintenance})
+    if plan:
+        init_job_nodes_from_plan(job_id, plan)
+
+    return jsonify({
+        "job_id": job_id,
+        "status": "pending",
+        "required_hashes_count": len(required_hashes),
+        "is_local": 1 if is_local else 0,
+        "job_type": job_type,
+        "is_maintenance": is_maintenance,
+        "parallel_mode": parallel_mode,
+        "nodes_count": len(plan.get("nodes", [])) if plan else 0
+    })
 
 @app.route('/workers', methods=['GET'])
 def list_workers():
@@ -837,10 +975,22 @@ def list_workers():
                     FROM jobs
                     WHERE worker_id = workers.worker_id AND status IN ('running', 'assigned')
                 )) as available_ram_gb,
-                total_storage_gb, available_storage_gb, total_vram_gb, available_vram_gb, gpu_count, gpu_name, last_seen, status
+                total_storage_gb, available_storage_gb, total_vram_gb, available_vram_gb, gpu_count, gpu_name, last_seen, status,
+                cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, docker_images, role
             FROM workers
         ''')
         workers = [dict(row) for row in cursor.fetchall()]
+        for w in workers:
+            if w.get('docker_images') and isinstance(w['docker_images'], str):
+                try:
+                    w['docker_images'] = json.loads(w['docker_images'])
+                except Exception:
+                    pass
+            if w.get('vram_per_gpu') and isinstance(w['vram_per_gpu'], str):
+                try:
+                    w['vram_per_gpu'] = json.loads(w['vram_per_gpu'])
+                except Exception:
+                    pass
     return jsonify(workers)
 
 @app.route('/scheduler_status', methods=['GET'])
@@ -898,10 +1048,55 @@ def job_status(job_id):
             WHERE j.job_id = ?
         ''', (job_id,))
         job = cursor.fetchone()
-        if job:
-            return jsonify(redact_secrets(dict(job)))
-        else:
+        if not job:
             return jsonify({"error": "Job not found"}), 404
+
+        job_dict = dict(job)
+        if job_dict.get("parallel_mode") == 1:
+            agg_status = get_aggregated_job_status(job_id)
+            if agg_status:
+                job_dict["status"] = agg_status
+            cursor.execute('''
+                SELECT node_name, status, worker_id, runner_id, image, priority,
+                       duration_s, exit_code, error_message, stale, stale_reason
+                FROM job_nodes WHERE job_id = ?
+                ORDER BY priority DESC, node_name ASC
+            ''', (job_id,))
+            raw_nodes = cursor.fetchall()
+            nodes_list = []
+            for r in raw_nodes:
+                nd = dict(r)
+                nd["name"] = nd["node_name"]
+                nd["machine"] = nd["worker_id"]
+                nd["duration"] = nd["duration_s"]
+                nodes_list.append(nd)
+            job_dict["nodes"] = nodes_list
+            job_dict["nodes_summary"] = [
+                {
+                    "name": n["name"],
+                    "status": n["status"],
+                    "machine": n["machine"],
+                    "duration": n["duration"]
+                }
+                for n in nodes_list
+            ]
+            try:
+                headnode_base = request.host_url.rstrip('/') if request else ""
+                if headnode_base:
+                    job_dict["worker_service_url"] = headnode_base
+            except Exception:
+                pass
+            if not job_dict.get("error_message"):
+                for n in nodes_list:
+                    if n.get("error_message"):
+                        job_dict["error_message"] = n["error_message"]
+                        break
+        else:
+            if job_dict.get("status") == "failed" and job_dict.get("exit_code") == 137:
+                if not job_dict.get("error_message"):
+                    job_dict["error_message"] = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
+
+        return jsonify(redact_secrets(job_dict))
 
 @app.route('/api/jobs/<job_id>/download_code', methods=['GET'])
 def download_code(job_id):
@@ -1026,19 +1221,102 @@ def get_job_results(job_id):
 
 @app.route('/worker_poll/<worker_id>', methods=['GET'])
 def worker_poll(worker_id):
-    # This endpoint is for workers to check if they have a job assigned
+    """
+    Interrogation périodique par un worker pour obtenir une tâche assignée.
+
+    ========================================================================
+    CONTRAT OFFICIEL CLUSTER-CI v3 (à destination de W2 / W4 / W8) :
+    ========================================================================
+    Lorsqu'un worker interroge GET /worker_poll/<worker_id> :
+    
+    1. Si un job est assigné en mode parallèle (parallel_mode == 1) :
+       Le headnode renvoie un objet JSON avec les champs suivants :
+       {
+           "status": "assigned",
+           "job_id": "<job_id_uuid>",
+           "parallel_mode": 1,
+           "role": "executor",
+           "repo": "<owner/repo>",
+           "branch": "<branch_name>",
+           "commit_hash": "<commit_hash>",
+           "gh_token": "<gh_token>",
+           "env_vars": "<json_string_env_vars>",
+           "home_worker": "<home_worker_id>",
+           "is_home_worker": true | false,
+           "default_image": "nvcr.io/nvidia/pytorch:26.05-py3"
+       }
+       Le worker_agent (W4) lance run_research_pipeline.sh (W2) avec
+       CLUSTER_CI_PARALLEL_MODE=1. L'exécuteur démarre ensuite sa boucle en
+       appelant POST /api/jobs/<job_id>/next_node avec {"node": null, "status": null}.
+
+    2. Si un job est assigné en mode classique (parallel_mode == 0) :
+       Renvoie la ligne jobs complète au format dictionnaire JSON (100% rétrocompatible).
+
+    3. Si aucun job n'est assigné :
+       { "status": "no_job" }
+    ========================================================================
+    """
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT * FROM jobs
-            WHERE worker_id = ? AND status = 'assigned'
-            ORDER BY created_at ASC LIMIT 1
-        ''', (worker_id,))
+            SELECT j.* FROM jobs j
+            WHERE (
+                j.worker_id = ?
+                OR j.job_id = (SELECT assigned_job_id FROM workers WHERE worker_id = ?)
+                OR j.active_workers LIKE ?
+            )
+            AND j.status IN ('assigned', 'running')
+            ORDER BY j.created_at ASC LIMIT 1
+        ''', (worker_id, worker_id, f'%"{worker_id}"%'))
         job = cursor.fetchone()
+
         if job:
-            return jsonify(dict(job))
+            job_dict = dict(job)
+            if job_dict.get("parallel_mode") == 1:
+                return jsonify({
+                    "status": "assigned",
+                    "job_id": job_dict["job_id"],
+                    "parallel_mode": 1,
+                    "role": "executor",
+                    "repo": job_dict["repo"],
+                    "branch": job_dict["branch"],
+                    "commit_hash": job_dict["commit_hash"],
+                    "gh_token": job_dict.get("gh_token"),
+                    "env_vars": job_dict.get("env_vars"),
+                    "home_worker": job_dict.get("home_worker"),
+                    "is_home_worker": (worker_id == job_dict.get("home_worker")),
+                    "default_image": DEFAULT_DOCKER_IMAGE
+                })
+            else:
+                return jsonify(job_dict)
         else:
             return jsonify({"status": "no_job"})
+
+@app.route('/api/jobs/<job_id>/next_node', methods=['POST'])
+def api_next_node(job_id):
+    """
+    Endpoint pivot d'ordonnancement par nœuds pour les exécuteurs de branche (W2/W4).
+    Reçoit le résultat du nœud précédent et renvoie la prochaine action :
+    'run' | 'switch_image' | 'yield' | 'finish' | 'wait'
+    """
+    data = request.get_json() or {}
+    data["job_id"] = job_id
+    response = handle_next_node(data)
+    return jsonify(response)
+
+@app.route('/api/jobs/<job_id>/runner_heartbeat', methods=['POST'])
+def api_runner_heartbeat(job_id):
+    """
+    Enregistre le heartbeat régulier d'un runner pour un job (toutes les 15s).
+    """
+    data = request.get_json() or {}
+    runner_id = data.get("runner_id")
+    worker = data.get("worker")
+    current_node = data.get("current_node")
+    if not runner_id or not worker:
+        return jsonify({"error": "runner_id and worker are required"}), 400
+    record_runner_heartbeat(job_id, runner_id, worker, current_node)
+    return jsonify({"status": "ok"})
 
 @app.route('/update_job_status', methods=['POST'])
 def update_job_status():
@@ -1090,8 +1368,27 @@ def update_job_status():
                 WHERE job_id = ?
             ''', (status, commit_hash, viewer_port, job_id))
         elif status in ['completed', 'failed']:
-            cursor.execute('UPDATE jobs SET status = ?, finished_at = CURRENT_TIMESTAMP, exit_code = COALESCE(?, exit_code), commit_hash = COALESCE(?, commit_hash) WHERE job_id = ?', (status, exit_code, commit_hash, job_id))
+            err_msg = data.get('error_message')
+            if status == 'failed':
+                if not err_msg and exit_code == 137:
+                    err_msg = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
+                elif exit_code == 137 and "OOMKilled" not in (err_msg or ""):
+                    err_msg = f"OOMKilled: {err_msg} (Exit code 137)"
+            cursor.execute('''
+                UPDATE jobs SET
+                    status = ?,
+                    finished_at = CURRENT_TIMESTAMP,
+                    exit_code = COALESCE(?, exit_code),
+                    commit_hash = COALESCE(?, commit_hash),
+                    error_message = COALESCE(?, error_message)
+                WHERE job_id = ?
+            ''', (status, exit_code, commit_hash, err_msg, job_id))
             cleanup_local_archive(job_id)
+            if status == 'failed' and err_msg:
+                try:
+                    _append_job_logs(job_id, f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+                except Exception:
+                    pass
         else:
             cursor.execute('UPDATE jobs SET status = ? WHERE job_id = ?', (status, job_id))
         conn.commit()
@@ -1435,9 +1732,83 @@ def api_list_runs(repo):
 
     return jsonify(redact_secrets(runs))
     
+HEADNODE_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "job_logs"
+)
+os.makedirs(HEADNODE_LOGS_DIR, exist_ok=True)
+_job_logs_lock = threading.Lock()
+
+def _append_job_logs(job_id: str, new_content: str) -> int:
+    """Append log lines thread-safely to headnode's job log file, returning the new end offset."""
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if not new_content:
+        return os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    with _job_logs_lock:
+        with open(log_path, 'a', encoding='utf-8', errors='replace', newline='') as f:
+            f.write(new_content)
+            f.flush()
+            return f.tell()
+
+def _read_job_logs(job_id: str, offset: int = 0) -> tuple[str, int]:
+    """Read logs starting at offset from headnode's local job log file."""
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if not os.path.exists(log_path):
+        return "", offset
+    with _job_logs_lock:
+        with open(log_path, 'r', encoding='utf-8', errors='replace', newline='') as f:
+            f.seek(offset)
+            content = f.read()
+            new_offset = f.tell()
+            return content, new_offset
+
+@app.route('/api/jobs/<job_id>/logs', methods=['POST'])
+@app.route('/job_logs/<job_id>', methods=['POST'])
+def ingest_job_logs(job_id):
+    """
+    Ingestion d'une ou plusieurs lignes de log depuis les exécuteurs du job.
+    Supporte JSON: {"logs": str}, {"lines": list[str]}, {"content": str}, {"text": str}
+    ou corps texte brut.
+    """
+    new_content = ""
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        if "logs" in data:
+            new_content = data["logs"] or ""
+        elif "lines" in data:
+            lines = data["lines"]
+            if isinstance(lines, list):
+                new_content = "\n".join(str(l) for l in lines) + ("\n" if lines else "")
+            else:
+                new_content = str(lines)
+        elif "content" in data:
+            new_content = data["content"] or ""
+        elif "text" in data:
+            new_content = data["text"] or ""
+    else:
+        new_content = request.get_data(as_text=True)
+
+    new_offset = _append_job_logs(job_id, new_content)
+    return jsonify({"status": "ok", "offset": new_offset})
+
 @app.route('/api/jobs/<job_id>/logs', methods=['GET'])
+@app.route('/job_logs/<job_id>', methods=['GET'])
 def api_get_run_logs(job_id):
-    offset = request.args.get('offset', 0)
+    """
+    Flux UNIQUE, ordonné et sans perte des lignes de logs pour un job.
+    - Si des logs ont été collectés localement sur le headnode : lecture avec offset monotone.
+    - Sinon, pour un job classique, proxy transparent vers le worker unique assigné.
+    """
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (ValueError, TypeError):
+        offset = 0
+
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if os.path.exists(log_path):
+        content, new_offset = _read_job_logs(job_id, offset)
+        return jsonify({"logs": content, "offset": new_offset})
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -1447,10 +1818,9 @@ def api_get_run_logs(job_id):
             WHERE j.job_id = ?
         ''', (job_id,))
         job = cursor.fetchone()
-        
+
     if not job or not job['service_url']:
-        return jsonify(redact_secrets({"logs": "Log source not found (worker might be offline or job not assigned)", "offset": offset}))
-        
+        return jsonify(redact_secrets({"logs": "", "offset": offset}))
     worker_url = f"{job['service_url']}/job_logs/{job_id}?offset={offset}"
     try:
         resp = requests.get(worker_url, timeout=5)

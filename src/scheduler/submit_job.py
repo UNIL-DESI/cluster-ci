@@ -5,6 +5,295 @@ import time
 import argparse
 import signal
 
+# Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
+try:
+    from src.config.defaults import (
+        DEFAULT_RESOURCES,
+        DEFAULT_CPUS,
+        DEFAULT_GPUS,
+        DEFAULT_STORAGE_GB,
+    )
+    DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+except ImportError:
+    try:
+        from config.defaults import (
+            DEFAULT_RESOURCES,
+            DEFAULT_CPUS,
+            DEFAULT_GPUS,
+            DEFAULT_STORAGE_GB,
+        )
+        DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+    except ImportError:
+        try:
+            from scheduler.defaults import DEFAULT_RAM_GB
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
+        except ImportError:
+            DEFAULT_RAM_GB = 10.0
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
+
+
+def get_planner_module_name():
+    """Détecte ou retourne le nom du module planificateur fourni par W1."""
+    env_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE")
+    if env_mod:
+        return env_mod
+    candidates = [
+        ("src.planner.stage_plan", "src/planner/stage_plan.py"),
+        ("src.scheduler.planner", "src/scheduler/planner.py"),
+        ("scheduler.planner", "scheduler/planner.py"),
+    ]
+    for mod_name, file_rel in candidates:
+        if os.path.exists(file_rel) or os.path.exists(
+            os.path.join(os.path.dirname(__file__), "..", "..", file_rel)
+        ):
+            return mod_name
+    return "src.planner.stage_plan"
+
+
+def run_planner_for_submission(repo_dir="."):
+    """Exécute le planificateur W1 via CLI (python -m <module> --repo <repo_dir> --json).
+
+    Utilise DVC 3.67.1 via uv/uvx quand disponible, ou l'interpréteur Python actif.
+    En cas d'erreur (clé inconnue sous meta.cluster, etc.), échoue immédiatement
+    avec le message exact et ne se replie JAMAIS silencieusement.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    planner_mod = get_planner_module_name()
+    target_repo = os.path.abspath(repo_dir)
+
+    # Commande CLI : privilégier uv run avec dvc==3.67.1 si uv est installé
+    uv_path = shutil.which("uv")
+    if uv_path:
+        cmd = [
+            uv_path,
+            "run",
+            "--with",
+            "dvc==3.67.1",
+            "python",
+            "-m",
+            planner_mod,
+            "--repo",
+            target_repo,
+            "--json",
+        ]
+    else:
+        cmd = [sys.executable, "-m", planner_mod, "--repo", target_repo, "--json"]
+
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH", "")
+    paths = [
+        target_repo,
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+    ]
+    env["PYTHONPATH"] = os.pathsep.join(paths + ([pythonpath] if pythonpath else []))
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=target_repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as e:
+        print(f"❌ Error: Impossible d'exécuter le planificateur ({' '.join(cmd)}): {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if proc.returncode != 0:
+        err_msg = (proc.stderr or proc.stdout or "").strip()
+        print(
+            f"❌ Error: Échec du planificateur (code {proc.returncode}):\n{err_msg}",
+            file=sys.stderr,
+        )
+        sys.exit(proc.returncode if proc.returncode != 0 else 1)
+
+    output = proc.stdout.strip()
+    try:
+        plan_data = json.loads(output)
+        return plan_data
+    except json.JSONDecodeError as e:
+        print(
+            f"❌ Error: Sortie JSON invalide du planificateur: {e}\nSortie brute:\n{output}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def format_nodes_status_summary(nodes):
+    """Génère un résumé textuel et structuré de l'état des nœuds du DAG.
+
+    Accepte une liste de dictionnaires, un dictionnaire de nœuds, ou un dictionnaire englobant.
+    """
+    if not nodes:
+        return None, []
+
+    node_list = []
+    if isinstance(nodes, dict):
+        if "nodes" in nodes and isinstance(nodes["nodes"], list):
+            node_list = nodes["nodes"]
+        else:
+            for k, v in nodes.items():
+                if isinstance(v, dict):
+                    node_list.append({"name": k, **v})
+                else:
+                    node_list.append({"name": k, "status": str(v)})
+    elif isinstance(nodes, list):
+        node_list = nodes
+
+    if not node_list:
+        return None, []
+
+    counts = {
+        "done": 0,
+        "running": 0,
+        "ready": 0,
+        "failed": 0,
+        "blocked": 0,
+        "pending": 0,
+        "skipped": 0,
+    }
+
+    running_nodes = []
+    failed_nodes = []
+    blocked_nodes = []
+
+    for n in node_list:
+        name = n.get("name") or n.get("node_name") or "unknown"
+        st = (n.get("status") or "pending").lower()
+        worker = n.get("worker_id") or n.get("worker")
+
+        if st in ("done", "completed"):
+            counts["done"] += 1
+        elif st == "running":
+            counts["running"] += 1
+            running_nodes.append(f"{name}@{worker}" if worker else name)
+        elif st == "ready":
+            counts["ready"] += 1
+        elif st == "failed":
+            counts["failed"] += 1
+            failed_nodes.append(name)
+        elif st == "blocked":
+            counts["blocked"] += 1
+            blocked_nodes.append(name)
+        elif st == "skipped":
+            counts["skipped"] += 1
+        else:
+            counts["pending"] += 1
+
+    summary_line = (
+        f"📊 [Nœuds] done={counts['done']}, running={counts['running']}, "
+        f"ready={counts['ready']}, failed={counts['failed']}, blocked={counts['blocked']}"
+    )
+    if counts["skipped"]:
+        summary_line += f", skipped={counts['skipped']}"
+    if counts["pending"]:
+        summary_line += f", pending={counts['pending']}"
+
+    details = []
+    if running_nodes:
+        details.append(f"▶️  En cours: {', '.join(running_nodes)}")
+    if failed_nodes:
+        details.append(f"❌ Échoués: {', '.join(failed_nodes)}")
+    if blocked_nodes:
+        details.append(f"⛔ Bloqués: {', '.join(blocked_nodes)}")
+
+    return summary_line, details
+
+
+def print_final_dag_summary(nodes, job_id):
+    """Affiche le récapitulatif complet de tous les nœuds à la fin du job."""
+    if not nodes:
+        return
+    summary_line, details = format_nodes_status_summary(nodes)
+    if not summary_line:
+        return
+    print("\n" + "=" * 60)
+    print(f"📊 RÉSUMÉ D'EXÉCUTION DES NŒUDS (Job: {job_id})")
+    print(f"   {summary_line}")
+    if details:
+        for d in details:
+            print(f"   {d}")
+    print("=" * 60)
+
+
+def format_multi_machine_log_line(line, nodes_data=None):
+    """Garantit que chaque ligne est préfixée [nœud@machine] lorsque plusieurs nœuds tournent en parallèle."""
+    import re
+    if not line or not line.strip():
+        return line
+
+    stripped = line.strip()
+    if not nodes_data or not isinstance(nodes_data, list):
+        return line
+
+    active_nodes = [
+        n for n in nodes_data
+        if isinstance(n, dict) and n.get("status") in ("running", "assigned")
+    ]
+    candidates = active_nodes if active_nodes else [n for n in nodes_data if isinstance(n, dict)]
+
+    # 1. La ligne commence par un préfixe entre crochets [tag]
+    m_bracket = re.match(r"^\[([^\]]+)\]\s*(.*)$", stripped)
+    if m_bracket:
+        tag = m_bracket.group(1).strip()
+        rest = m_bracket.group(2)
+        for nd in candidates:
+            n_name = nd.get("name") or nd.get("node_name")
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            if not n_name:
+                continue
+            if tag == f"{n_name}@{machine}":
+                return line  # Déjà préfixé avec nœud et machine
+            if tag == n_name:
+                return f"[{n_name}@{machine}] {rest}"
+        # Si le tag se termine déjà par une machine connue
+        machines_all = {
+            nd.get("machine") or nd.get("worker_id")
+            for nd in candidates
+            if (nd.get("machine") or nd.get("worker_id"))
+        }
+        for m in machines_all:
+            if tag.endswith(f"@{m}"):
+                return line
+        return line
+
+    # 2. La ligne commence par "node_name: ..."
+    for nd in candidates:
+        n_name = nd.get("name") or nd.get("node_name")
+        if n_name and stripped.startswith(f"{n_name}:"):
+            rest = stripped[len(n_name) + 1:].lstrip()
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            return f"[{n_name}@{machine}] {rest}"
+
+    # 3. Plusieurs nœuds tournent en parallèle sur des machines distinctes
+    machines = {
+        nd.get("machine") or nd.get("worker_id")
+        for nd in active_nodes
+        if (nd.get("machine") or nd.get("worker_id"))
+    }
+    if len(active_nodes) > 1 and len(machines) > 1:
+        for nd in active_nodes:
+            n_name = nd.get("name") or nd.get("node_name")
+            if n_name and n_name in stripped:
+                machine = nd.get("machine") or nd.get("worker_id") or "worker"
+                return f"[{n_name}@{machine}] {stripped}"
+        first_node = active_nodes[0].get("name") or "parallel"
+        first_mach = active_nodes[0].get("machine") or active_nodes[0].get("worker_id") or "cluster"
+        return f"[{first_node}@{first_mach}] {stripped}"
+
+    return line
+
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -27,6 +316,8 @@ def get_ram_requirement(repo=None, branch=None, is_local=False, local_repo_path=
                     content = f.read()
             except Exception:
                 pass
+        else:
+            return DEFAULT_RAM_GB
 
     # Strategy 1: Fetch .cluster-ci from the remote repo
     if content is None and repo and branch and not is_local:
@@ -58,7 +349,7 @@ def get_ram_requirement(repo=None, branch=None, is_local=False, local_repo_path=
             with open(".cluster-ci", 'r') as f:
                 content = f.read()
         else:
-            return 2.0  # Default 2GB
+            return DEFAULT_RAM_GB
 
     import re
     # Try REQUIRED_RAM=16GB or REQUIRED_RAM=16.5
@@ -70,7 +361,7 @@ def get_ram_requirement(repo=None, branch=None, is_local=False, local_repo_path=
     match = re.search(r'--ram\s+(\d+(?:\.\d+)?)', content)
     if match:
         return float(match.group(1))
-    return 2.0  # Default
+    return DEFAULT_RAM_GB
 
 def get_config_value(pattern, content, default=None, is_float=False):
     import re
@@ -148,7 +439,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
 
     # Parse RAM
     import re
-    ram_req = 2.0
+    ram_req = DEFAULT_RAM_GB
     match_env = re.search(r'REQUIRED_RAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
     if match_env:
         ram_req = float(match_env.group(1))
@@ -192,11 +483,45 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     if aw_match:
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
+    # Parse REQUIRED_CPUS (A16)
+    cpus_match = re.search(r'REQUIRED_CPUS\s*=\s*(\d+)', content)
+    cpus_req = int(cpus_match.group(1)) if cpus_match else None
+
+    # Parse REQUIRED_GPUS (A16)
+    gpus_match = re.search(r'REQUIRED_GPUS\s*=\s*(\d+)', content)
+    if gpus_match:
+        gpus_req = int(gpus_match.group(1))
+    elif vram_req > 0:
+        gpus_req = 1
+    else:
+        gpus_req = None
+
+    # Parse REQUIRED_STORAGE or REQUIRED_DISK (A16)
+    storage_match = re.search(r'(?:REQUIRED_STORAGE|REQUIRED_DISK)\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    storage_req = float(storage_match.group(1)) if storage_match else None
+
+    # Parse PARALLEL_STAGES & execution planificateur W1 (v3)
+    parallel_stages_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
+    parallel_stages_enabled = bool(parallel_stages_match)
+
+    target_repo_dir = local_repo_path if (is_local and local_repo_path) else os.path.abspath(os.getcwd())
+    dvc_yaml_exists = os.path.isfile(os.path.join(target_repo_dir, "dvc.yaml"))
+
+    plan = None
+    if parallel_stages_enabled and dvc_yaml_exists:
+        print(f"🧩 PARALLEL_STAGES enabled and dvc.yaml found: generating v3 plan via W1 planner...")
+        plan = run_planner_for_submission(target_repo_dir)
+        print(f"✅ Planner generated plan successfully ({len(plan.get('nodes', []))} node(s)).")
+    elif parallel_stages_enabled and not dvc_yaml_exists:
+        print(f"⚠️ PARALLEL_STAGES=true requested but dvc.yaml not found in {target_repo_dir}. Submitting without plan.")
+
     submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
     if is_local:
         submit_info += f" [Local Mode: {local_repo_path}]"
     if allowed_workers:
         submit_info += f" [Allowed Workers: {', '.join(allowed_workers)}]"
+    if plan is not None:
+        submit_info += f" [v3 Parallel Plan: {len(plan.get('nodes', []))} node(s)]"
     print(submit_info)
 
     token = os.environ.get("CLUSTER_TOKEN")
@@ -206,7 +531,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
 
     try:
         print(f"Connecting to headnode at {headnode_url}...")
-        resp = requests.post(f"{headnode_url}/submit_job", json={
+        payload = {
             "repo": repo,
             "branch": branch,
             "commit_hash": commit_hash,
@@ -222,7 +547,30 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "username": os.environ.get("GITHUB_ACTOR", "unknown"),
             "is_local": is_local,
             "local_repo_path": local_repo_path,
-        }, headers=headers, timeout=10)
+        }
+        if cpus_req is not None:
+            payload["cpus"] = cpus_req
+            payload["required_cpus"] = cpus_req
+        if gpus_req is not None:
+            payload["gpus"] = gpus_req
+            payload["required_gpus"] = gpus_req
+        if storage_req is not None:
+            payload["storage_gb"] = storage_req
+            payload["required_storage"] = storage_req
+        if plan is not None:
+            payload["plan"] = plan
+
+        resp = requests.post(f"{headnode_url}/submit_job", json=payload, headers=headers, timeout=10)
+        if resp.status_code >= 400:
+            err_msg = resp.text
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, dict) and "error" in err_json:
+                    err_msg = err_json["error"]
+            except Exception:
+                pass
+            print(f"❌ Error submitting job (HTTP {resp.status_code}): {err_msg}", file=sys.stderr)
+            sys.exit(1)
         resp.raise_for_status()
         job_data = resp.json()
         job_id = job_data['job_id']
@@ -261,10 +609,60 @@ def wait_for_job(headnode_url, job_id, branch=None):
         token = os.environ.get("CLUSTER_TOKEN")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-        # === NON-DRAFT BRANCHES: Detach GHA without killing the worker job ===
-        # The worker job continues running independently. We clear gh_run_id
-        # so clean_ghosts won't kill it when it sees the GHA run as cancelled.
-        if not is_draft_branch:
+        # === DRAFT BRANCHES OU INTERRUPT UTILISATEUR (SIGINT / Ctrl+C) : Annulation du job entier ===
+        if is_draft_branch or sig == signal.SIGINT:
+            worker_url = None
+            cancel_error = None
+
+            # 1. Annulation globale sur le Headnode via POST /api/jobs/{job_id}/stop (A17 / Multi-machines)
+            try:
+                stop_resp = requests.post(f"{headnode_url}/api/jobs/{job_id}/stop", headers=headers, timeout=10)
+                if stop_resp.status_code not in (200, 404):
+                    cancel_error = f"Headnode returned HTTP {stop_resp.status_code}: {stop_resp.text}"
+            except Exception as e:
+                cancel_error = e
+
+            # 2. Récupérer l'URL du worker si disponible pour notification de repli direct
+            try:
+                resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
+                if resp.status_code == 200:
+                    job = resp.json()
+                    worker_url = job.get('worker_service_url')
+            except Exception as e:
+                if not cancel_error:
+                    cancel_error = e
+
+            if worker_url:
+                try:
+                    requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
+                except Exception as e:
+                    if not cancel_error:
+                        cancel_error = e
+
+            try:
+                requests.post(f"{headnode_url}/update_job_status", json={
+                    "job_id": job_id,
+                    "status": "failed",
+                    "exit_code": -signal.SIGTERM
+                }, headers=headers, timeout=10)
+            except Exception as e:
+                if not cancel_error:
+                    cancel_error = e
+
+            # Messages de journalisation enveloppés
+            try:
+                print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating full cancellation to headnode...")
+                if cancel_error:
+                    print(f"⚠️ Error during cancellation: {cancel_error}")
+                else:
+                    print("✅ Cancellation signal sent.")
+            except (BrokenPipeError, Exception):
+                pass
+
+            sys.exit(128 + sig)
+
+        # === NON-DRAFT BRANCHES (SIGTERM GHA) : Detach GHA without killing worker job ===
+        else:
             try:
                 requests.post(f"{headnode_url}/update_job_status", json={
                     "job_id": job_id,
@@ -278,63 +676,17 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 pass
             sys.exit(128 + sig)
 
-        # === DRAFT BRANCHES: Full cancellation propagation (fast-iteration mode) ===
-        worker_url = None
-        cancel_error = None
-        
-        # 1. Network calls first in isolated try-except blocks, before ANY print()
-        try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
-            resp.raise_for_status()
-            job = resp.json()
-            worker_url = job.get('worker_service_url')
-        except Exception as e:
-            cancel_error = e
-
-        if worker_url:
-            try:
-                requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
-            except Exception as e:
-                if not cancel_error:
-                    cancel_error = e
-
-        try:
-            requests.post(f"{headnode_url}/update_job_status", json={
-                "job_id": job_id,
-                "status": "failed",
-                "exit_code": -signal.SIGTERM
-            }, headers=headers, timeout=10)
-        except Exception as e:
-            if not cancel_error:
-                cancel_error = e
-
-        # 2. Print statements wrapped in try...except BrokenPipeError
-        try:
-            print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating cancellation...")
-            if cancel_error:
-                print(f"⚠️ Error during cancellation: {cancel_error}")
-            else:
-                if worker_url:
-                    print(f"📡 Sending cancellation to worker: {worker_url}")
-                    print("✅ Cancellation signal sent.")
-                else:
-                    print("⚠️ Job was not yet assigned to a worker or worker info missing.")
-        except BrokenPipeError:
-            pass
-        except Exception:
-            pass
-
-        sys.exit(128 + sig)
-
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
     log_offset = 0
     status_printed = False
     oom_detected = False
+    fallback_warned = False
     last_queue_check = 0
     last_status = None
     last_queue_diagnostic = None
+    last_nodes_summary = None
 
     while True:
         try:
@@ -343,7 +695,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
             job = resp.json()
             status = job['status']
             worker_url = job.get('worker_service_url')
-            ram_required = job.get('ram_required_gb', 2.0)
+            ram_required = job.get('ram_required_gb', DEFAULT_RAM_GB)
 
             if status == 'pending':
                 now = time.time()
@@ -500,32 +852,90 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         # Fallback silently to prevent blocking the execution loop
                         pass
 
-            if worker_url:
+            # Suivi de l'état des nœuds DAG (v3 multi-nœuds)
+            nodes_data = job.get('nodes') or job.get('job_nodes')
+            if nodes_data:
+                summary_line, details = format_nodes_status_summary(nodes_data)
+                if summary_line and summary_line != last_nodes_summary:
+                    sys.stdout.write(f"\n{summary_line}\n")
+                    for d in details:
+                        sys.stdout.write(f"   {d}\n")
+                    sys.stdout.flush()
+                    last_nodes_summary = summary_line
+
+            # Récupération des logs : Headnode agrégé en priorité (v3 [nœud@machine]), fallback worker_url
+            logs_resp = None
+            if headnode_url:
+                try:
+                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
+                    if h_resp.status_code == 200:
+                        logs_resp = h_resp
+                    elif h_resp.status_code == 404:
+                        if not fallback_warned:
+                            sys.stderr.write(
+                                f"\n⚠️ [submit_job] Route canonique /job_logs/{job_id} introuvable (HTTP 404). "
+                                f"Bascule de repli vers /api/jobs/{job_id}/logs.\n"
+                            )
+                            fallback_warned = True
+                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
+                        if h_resp2.status_code == 200:
+                            logs_resp = h_resp2
+                except requests.exceptions.RequestException:
+                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs headnode: {unexpected_err}\n")
+
+            if logs_resp is None and worker_url:
                 try:
                     logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
-                    if logs_resp.status_code == 200:
-                        logs_data = logs_resp.json()
-                        new_logs = logs_data.get('logs', '')
-                        if new_logs:
-                            import re
-                            if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
-                                oom_detected = True
-                            if not status_printed:
-                                print(f"\n\n[Streaming logs from {worker_url}]")
-                                status_printed = True
-                            sys.stdout.write(new_logs)
-                            sys.stdout.flush()
-                            log_offset = logs_data.get('offset', log_offset)
-                except Exception as e:
-                    pass
+                except requests.exceptions.RequestException:
+                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs worker: {unexpected_err}\n")
+
+            if logs_resp and logs_resp.status_code == 200:
+                try:
+                    logs_data = logs_resp.json()
+                    new_logs = logs_data.get('logs', '')
+                    if new_logs:
+                        import re
+                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                            oom_detected = True
+                        if not status_printed:
+                            print(f"\n\n[Streaming logs for job {job_id}]")
+                            status_printed = True
+                        formatted_chunks = []
+                        for l in new_logs.splitlines(keepends=True):
+                            has_nl = l.endswith("\n")
+                            content_no_nl = l[:-1] if has_nl else l
+                            formatted = format_multi_machine_log_line(content_no_nl, nodes_data)
+                            formatted_chunks.append(formatted + ("\n" if has_nl else ""))
+                        sys.stdout.write("".join(formatted_chunks))
+                        sys.stdout.flush()
+                        log_offset = logs_data.get('offset', log_offset)
+                except (ValueError, KeyError) as json_err:
+                    sys.stderr.write(f"\n⚠️ Format de logs invalide reçu du headnode/worker: {json_err}\n")
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue traitement logs: {unexpected_err}\n")
 
             if status == 'completed':
+                print_final_dag_summary(nodes_data, job_id)
                 print(f"\n✅ Job {job_id} completed successfully!")
                 return 0
             elif status == 'failed':
+                print_final_dag_summary(nodes_data, job_id)
                 exit_code = job.get('exit_code')
                 if exit_code is None or exit_code == 0:
                     exit_code = 1  # Ensure non-zero exit on failure
+
+                # A17 : Remonter fidèlement le message d'erreur du headnode ou des nœuds
+                job_error = job.get('error_message') or job.get('error')
+                if job_error:
+                    print(f"\n❌ Error message: {job_error}")
+                if nodes_data and isinstance(nodes_data, list):
+                    for nd in nodes_data:
+                        if isinstance(nd, dict) and nd.get('status') == 'failed' and nd.get('error_message'):
+                            print(f"❌ Node '{nd.get('name')}' failed: {nd.get('error_message')}")
 
                 # Infrastructure-level failure messages
                 if exit_code == -99:
@@ -548,7 +958,8 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 elif exit_code == 255:
                     print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
                 else:
-                    print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
+                    if not job_error:
+                        print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
                 return exit_code
 
             if not status_printed and status != last_status:
