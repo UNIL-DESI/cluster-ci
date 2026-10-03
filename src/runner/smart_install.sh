@@ -88,32 +88,93 @@ run_pip_silently() {
 
 # Install project deps. Strategy: freeze system packages as constraints to prevent
 # pip from re-downloading torch (426MB), nvidia-cudnn (444MB), etc.
-# Dynamically exclude all project dependencies from constraints to avoid conflicts
-# when the container ships custom builds (e.g., NeMo transformers + huggingface-hub).
+# Only exclude packages from constraints whose installed version in the container
+# DOES NOT satisfy the version bounds declared in pyproject.toml (e.g., custom NeMo builds).
+# Packages already satisfying the bound (e.g. huggingface-hub>=0.20.0 with 0.23.4) MUST remain
+# pinned in constraints to avoid unwanted PyPI upgrades and permission errors on /usr/local/bin.
 CONSTRAINTS_FILE="/tmp/cluster-ci-system-constraints.txt"
 
-# Extract project dependency names from pyproject.toml
+# Extract project dependency names from pyproject.toml that conflict with container packages
 PROJECT_DEPS=""
 if [ -f "pyproject.toml" ]; then
     PROJECT_DEPS=$(python3 -c "
-import re
+import sys, re
+
 try:
-    with open('pyproject.toml') as f:
-        content = f.read()
-    # Simple extraction: find lines in dependencies array
-    in_deps = False
-    for line in content.split('\n'):
-        if 'dependencies' in line and '=' in line:
-            in_deps = True; continue
-        if in_deps:
-            if line.strip().startswith(']'): break
-            m = re.match(r'\s*\"([a-zA-Z0-9_.-]+)', line)
-            if m: print(m.group(1).lower().replace('-','_').replace('.','_'))
-except: pass
-" 2>/dev/null)
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        from pip._vendor.packaging.requirements import Requirement
+except ImportError:
+    # If packaging is unavailable, we cannot reliably evaluate PEP 440/508 bounds.
+    # The safest alternative is to keep constraints intact rather than blindly excluding.
+    sys.stderr.write('⚠️  [Cluster-CI] Warning: packaging not available, keeping constraints intact\n')
+    sys.exit(0)
+
+deps = []
+try:
+    import tomllib
+    with open('pyproject.toml', 'rb') as f:
+        data = tomllib.load(f)
+    deps = data.get('project', {}).get('dependencies', [])
+except Exception:
+    pass
+
+if not deps:
+    try:
+        with open('pyproject.toml', 'r', encoding='utf-8') as f:
+            content = f.read()
+        in_deps = False
+        for line in content.splitlines():
+            line_s = line.strip()
+            if 'dependencies' in line_s and '=' in line_s:
+                in_deps = True
+                continue
+            if in_deps:
+                if line_s.startswith(']'):
+                    break
+                m = re.match(r'^\s*[\"\']([^\"\']+)[\"\']', line)
+                if m:
+                    deps.append(m.group(1))
+    except Exception:
+        pass
+
+installed = {}
+try:
+    import importlib.metadata as meta
+    for dist in meta.distributions():
+        dname = dist.metadata.get('Name')
+        if dname:
+            norm = re.sub(r'[-_.]+', '-', dname).lower()
+            installed[norm] = dist.version
+except Exception:
+    pass
+
+conflicting = set()
+for dep_str in deps:
+    try:
+        req = Requirement(dep_str)
+        if req.marker and not req.marker.evaluate():
+            continue
+        norm_name = re.sub(r'[-_.]+', '-', req.name).lower()
+        if norm_name in installed:
+            inst_ver = installed[norm_name]
+            try:
+                satisfies = req.specifier.contains(inst_ver, prereleases=True)
+            except Exception:
+                satisfies = False
+            if not satisfies:
+                conflicting.add(norm_name.replace('-', '_'))
+                conflicting.add(norm_name.replace('_', '-'))
+    except Exception:
+        pass
+
+for name in sorted(conflicting):
+    print(name)
+" 2>/dev/null || true)
 fi
 
-# Build grep exclusion pattern from project deps
+# Build grep exclusion pattern from conflicting project deps
 EXCLUDE_PATTERN=""
 for dep in $PROJECT_DEPS; do
     if [ -n "$EXCLUDE_PATTERN" ]; then
@@ -129,7 +190,7 @@ if [ -n "$EXCLUDE_PATTERN" ]; then
         | grep -ivE "$EXCLUDE_PATTERN" \
         > "$CONSTRAINTS_FILE"
     EXCLUDED_COUNT=$(echo "$PROJECT_DEPS" | wc -w)
-    echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned ($EXCLUDED_COUNT project deps excluded)"
+    echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned ($EXCLUDED_COUNT conflicting deps excluded)"
 else
     pip freeze --all 2>/dev/null | grep -v "^-e " | grep -v "^#" \
         | grep -v " @ " \
@@ -142,9 +203,6 @@ run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/
     run_pip_silently --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local -e .
 }
 
-run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" dvc-http || {
-    run_pip_silently --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local dvc-http
-}
 
 # --- NVSHMEM Stub Fix for DGX Spark (PyTorch container) ---
 # vLLM searches for libnvshmem.so on multi-GPU/cluster builds. On the single-GPU Spark,
@@ -200,6 +258,17 @@ if [ -n "$BNB_DIR" ] && command -v nvcc >/dev/null; then
             ln -s "libbitsandbytes_cuda${HIGHEST_SO}.so" "$BNB_DIR/libbitsandbytes_cuda${SYS_CUDA}.so"
         fi
     fi
+fi
+
+# Ensure isolated DVC launcher from uv tool is preserved in /home/user/.local/bin
+# (prevents pip install -e . or pip dependencies from overwriting it with a broken shebang)
+UV_DVC_BIN="/home/user/.local/share/uv/tools/dvc/bin/dvc"
+if [ -f "$UV_DVC_BIN" ]; then
+    mkdir -p /home/user/.local/bin
+    ln -sf "$UV_DVC_BIN" /home/user/.local/bin/dvc
+    echo "🔧 [Cluster-CI] Restored isolated DVC launcher symlink ($UV_DVC_BIN -> /home/user/.local/bin/dvc)"
+else
+    echo "⚠️  [Cluster-CI] Warning: isolated uv DVC binary not found at $UV_DVC_BIN"
 fi
 
 # Save hash only after successful install
