@@ -4,6 +4,11 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+# A15 - Rétention pathologique de la base de données SQLite (Cluster-CI v3)
+# La base n'est purgée qu'en cas de croissance pathologique (> 1 Go).
+DB_RETENTION_PATHOLOGICAL_THRESHOLD_BYTES = 1024 * 1024 * 1024  # 1 Go
+DB_RETENTION_PATHOLOGICAL_DAYS = 365  # 365 jours
+
 # Default resource requirements for a stage if unspecified (amendments A16)
 DEFAULT_RESOURCES: Dict[str, Any] = {
     "image": "nvcr.io/nvidia/pytorch:26.05-py3",
@@ -33,8 +38,10 @@ ALLOWED_CLUSTER_KEYS = {
 def parse_project_cluster_ci(repo_path: str) -> Dict[str, Any]:
     """Parse .cluster-ci file in the project repository root for resource overrides.
     
-    Supports existing settings (REQUIRED_RAM, REQUIRED_VRAM, DOCKER_IMAGE, ALLOWED_WORKERS)
-    and new v3 job equivalents (REQUIRED_CPUS, REQUIRED_GPUS, REQUIRED_STORAGE).
+    Extracts default resources according to Cluster-CI v3 amendments A16:
+    REQUIRED_CPUS, REQUIRED_GPUS, REQUIRED_RAM / --ram, REQUIRED_VRAM,
+    REQUIRED_STORAGE / REQUIRED_DISK, DOCKER_IMAGE, DOCKER_IMAGE_ARM64,
+    DOCKER_IMAGE_AMD64, ALLOWED_WORKERS.
     """
     ci_path = os.path.join(repo_path, ".cluster-ci")
     if not os.path.isfile(ci_path):
