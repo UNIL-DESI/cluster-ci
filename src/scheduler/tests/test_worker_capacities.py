@@ -640,5 +640,23 @@ class TestWorkerCapacities(unittest.TestCase):
                 self.assertTrue(any("Workspace concurrency constraint" in m for m in log_ctx.output))
                 self.assertTrue(any("shares single workspace" in m for m in log_ctx.output))
 
+    def test_corrupt_gpu_ids_fails_fast_with_remedy(self):
+        """Verify corrupt gpu_ids fails fast with English cause + remedy and updates job status to failed."""
+        job = {
+            "job_id": "job-corrupt-gpu",
+            "repo": "user/repo",
+            "branch": "main",
+            "gpu_ids": "corrupt-json-{not-an-array}"
+        }
+        with patch("src.scheduler.worker_agent.update_job_status") as mock_update, \
+             patch("src.scheduler.worker_agent.purge_orphan_runners_and_containers"):
+            with self.assertRaises(ValueError) as ctx:
+                execute_job(job)
+            self.assertIn("corrupt or unparseable gpu_ids", str(ctx.exception))
+            self.assertIn("remedy:", str(ctx.exception))
+            failed_calls = [c for c in mock_update.call_args_list if len(c[0]) > 1 and c[0][1] == "failed"]
+            self.assertTrue(len(failed_calls) > 0)
+            self.assertIn("remedy:", failed_calls[0][1].get("error_message", ""))
+
 
 

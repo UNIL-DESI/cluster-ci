@@ -1016,13 +1016,13 @@ def list_workers():
             if w.get('docker_images') and isinstance(w['docker_images'], str):
                 try:
                     w['docker_images'] = json.loads(w['docker_images'])
-                except Exception:
-                    pass
+                except Exception as e:
+                    app.logger.warning(f"Could not parse docker_images JSON for worker {w.get('worker_id')}: {e}")
             if w.get('vram_per_gpu') and isinstance(w['vram_per_gpu'], str):
                 try:
                     w['vram_per_gpu'] = json.loads(w['vram_per_gpu'])
-                except Exception:
-                    pass
+                except Exception as e:
+                    app.logger.warning(f"Could not parse vram_per_gpu JSON for worker {w.get('worker_id')}: {e}")
             alloc = get_worker_allocated_resources(conn, w['worker_id'])
             w['gpus_total'] = get_worker_total_gpus(w)
             w['gpus_allocated'] = len(alloc.get('allocated_gpu_ids', []))

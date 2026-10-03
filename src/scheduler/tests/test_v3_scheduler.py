@@ -828,8 +828,12 @@ def test_headnode_last_resort_and_reserve(isolated_db, client):
 
 def test_concurrent_next_node_race_condition(client):
     """
-    Test de concurrence : 2 threads appellent next_node simultanément pour le même job.
-    Vérifie qu'aucun nœud n'est attribué en double (2 nœuds distincts attribués).
+    Test de concurrence et sérialisation intra-job :
+    Même job, 2 nœuds prêts, une seule machine éligible :
+    - 2 threads / runners appellent next_node simultanément pour le même job.
+    - L'un obtient un nœud ('run' / 'switch_image').
+    - Le 2e ATTEND ('wait', statut ready/pending en attente, jamais rejeté ni marqué impossible A17).
+    - Après la fin du 1er nœud ('done'), le 2e nœud est placé avec succès.
     """
     import threading
 
@@ -864,7 +868,7 @@ def test_concurrent_next_node_race_condition(client):
                     "worker": "W_CONC",
                     "status": "ready"
                 })
-                results.append(resp)
+                results.append((runner_id, resp))
         except Exception as e:
             errors.append(e)
 
@@ -877,18 +881,53 @@ def test_concurrent_next_node_race_condition(client):
 
     assert len(errors) == 0
     assert len(results) == 2
-    nodes_assigned = [r.get("node") for r in results if r.get("action") in ("run", "switch_image")]
-    # Vérification stricte : jamais le même nœud attribué aux deux runners
-    assert len(nodes_assigned) == len(set(nodes_assigned))
-    assert set(nodes_assigned) == {"task_alpha", "task_beta"}
+
+    # L'un des runners obtient run/switch_image, l'autre obtient wait (anti-affinité intra-job)
+    run_results = [r for r in results if r[1].get("action") in ("run", "switch_image")]
+    wait_results = [r for r in results if r[1].get("action") == "wait"]
+
+    assert len(run_results) == 1
+    assert len(wait_results) == 1
+
+    winner_runner, winner_resp = run_results[0]
+    first_node = winner_resp["node"]
+    assert first_node in ("task_alpha", "task_beta")
+
+    # Vérification DB : le nœud gagnant est 'running', le 2e nœud reste 'ready' (pending/attente)
+    # et n'est JAMAIS marqué 'failed' ou impossible A17
+    remaining_node = "task_beta" if first_node == "task_alpha" else "task_alpha"
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT node_name, status, error_message FROM job_nodes WHERE job_id = ?", (job_id,))
+        db_nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+        cursor.execute("SELECT status, error_message FROM jobs WHERE job_id = ?", (job_id,))
+        job_row = cursor.fetchone()
+
+    assert db_nodes[first_node][0] == "running"
+    assert db_nodes[remaining_node][0] == "ready"
+    assert db_nodes[remaining_node][1] is None
+    assert job_row["status"] == "running"
+    assert job_row["error_message"] is None
+
+    # Le 1er nœud termine son exécution avec succès ('done') -> le 2e nœud est alors placé
+    done_resp = scheduler_loop.handle_next_node({
+        "job_id": job_id,
+        "runner_id": winner_runner,
+        "worker": "W_CONC",
+        "node": first_node,
+        "status": "done",
+        "duration_s": 1.0
+    })
+    assert done_resp.get("action") in ("run", "switch_image")
+    assert done_resp.get("node") == remaining_node
 
     with persistence.get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT node_name, status, runner_id FROM job_nodes WHERE job_id = ?", (job_id,))
-        db_nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
-    assert db_nodes["task_alpha"][0] == "running"
-    assert db_nodes["task_beta"][0] == "running"
-    assert db_nodes["task_alpha"][1] != db_nodes["task_beta"][1]
+        final_nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+    assert final_nodes[first_node][0] == "done"
+    assert final_nodes[remaining_node][0] == "running"
+    assert final_nodes[remaining_node][1] == winner_runner
 
 
 # =========================================================================
@@ -956,7 +995,7 @@ def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client):
 
 def test_packing_two_branches_same_job_same_machine(client):
     """
-    Packing A11 : 2 branches parallèles d'un DAG s'exécutent en même temps sur la même machine.
+    Packing A11 : 2 nœuds de DEUX JOBS DIFFÉRENTS s'exécutent en même temps sur la même machine.
     """
     with persistence.get_db_conn() as conn:
         cursor = conn.cursor()
@@ -966,32 +1005,36 @@ def test_packing_two_branches_same_job_same_machine(client):
         ''')
         conn.commit()
 
-    plan = {
+    plan_1 = {
         "version": "3.0",
         "nodes": [
-            {"name": "branch_A", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}},
-            {"name": "branch_B", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}},
-            {"name": "join_step", "deps": ["branch_A", "branch_B"], "resources": {"ram_gb": 4.0, "cpus": 1}}
+            {"name": "branch_A", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}}
         ]
     }
-    j_id = client.post("/submit_job", json={"repo": "o/dag", "branch": "main", "plan": plan}).get_json()["job_id"]
+    plan_2 = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "branch_B", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}}
+        ]
+    }
+    j1_id = client.post("/submit_job", json={"repo": "o/dag1", "branch": "main", "plan": plan_1}).get_json()["job_id"]
+    j2_id = client.post("/submit_job", json={"repo": "o/dag2", "branch": "main", "plan": plan_2}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
-    # Runner 1 prend une des branches
-    s1 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r1", "worker": "W_SINGLE"}).get_json()
+    # Runner 1 prend branch_A de Job 1 sur W_SINGLE
+    s1 = client.post(f"/api/jobs/{j1_id}/next_node", json={"runner_id": "r1", "worker": "W_SINGLE"}).get_json()
     assert s1["action"] in ("run", "switch_image")
-    assert s1["node"] in ("branch_A", "branch_B")
+    assert s1["node"] == "branch_A"
 
-    # Runner 2 prend l'autre branche sur la MÊME machine pendant que la première tourne
-    s2 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r2", "worker": "W_SINGLE"}).get_json()
+    # Runner 2 prend branch_B de Job 2 sur la MÊME machine W_SINGLE pendant que le premier tourne
+    s2 = client.post(f"/api/jobs/{j2_id}/next_node", json={"runner_id": "r2", "worker": "W_SINGLE"}).get_json()
     assert s2["action"] in ("run", "switch_image")
-    assert s2["node"] in ("branch_A", "branch_B")
-    assert s2["node"] != s1["node"]
+    assert s2["node"] == "branch_B"
 
-    # Vérifier que les 2 nœuds sont 'running' sur W_SINGLE simultanément
+    # Vérifier que les 2 nœuds des 2 jobs sont 'running' sur W_SINGLE simultanément
     with persistence.get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT node_name, status, worker_id FROM job_nodes WHERE job_id = ? AND status = 'running'", (j_id,))
+        cursor.execute("SELECT node_name, status, worker_id FROM job_nodes WHERE job_id IN (?, ?) AND status = 'running'", (j1_id, j2_id))
         rows = cursor.fetchall()
         assert len(rows) == 2
         assert all(r[2] == "W_SINGLE" for r in rows)
@@ -1003,44 +1046,49 @@ def test_packing_two_branches_same_job_same_machine(client):
 
 def test_discrete_gpus_allocated_without_overcommit(client):
     """
-    Packing A11 : Attribution fine de GPU discrets sans overcommit :
-    - Worker avec 2 GPUs de 16 Go chacun.
-    - Nœud 1 (vram_gb=12.0) -> attribué GPU 0 (reste 4 Go).
-    - Nœud 2 (vram_gb=12.0) -> attribué GPU 1 (reste 4 Go).
-    - Nœud 3 (vram_gb=12.0) -> rejeté car aucun GPU n'a 12 Go de libre.
+    Packing A11 : Sur isipol09 (2 GPUs discrets), 2 nœuds gpus:1 de DEUX JOBS DIFFÉRENTS
+    reçoivent des gpu_ids différents sans overcommit. Un 3e job est mis en attente ('wait').
     """
-    vram_map = json.dumps({"0": 16.0, "1": 16.0})
+    vram_map = json.dumps([24.0, 24.0])
     with persistence.get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, vram_per_gpu, unified_memory, cpus, status, last_seen)
-            VALUES ('W_DISC_GPU', 'w_disc_gpu', 'http://127.0.0.1:9000', 64.0, 32.0, ?, 0, 16, 'online', CURRENT_TIMESTAMP)
+            INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, gpu_count, vram_per_gpu, unified_memory, cpus, status, last_seen)
+            VALUES ('ISIPOL09', 'isipol09', 'http://127.0.0.1:9000', 64.0, 48.0, 2, ?, 0, 16, 'online', CURRENT_TIMESTAMP)
         ''', (vram_map,))
         conn.commit()
 
-    plan = {
+    plan_1 = {
         "version": "3.0",
         "nodes": [
-            {"name": "gpu_node_1", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}},
-            {"name": "gpu_node_2", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}},
-            {"name": "gpu_node_3", "deps": [], "resources": {"ram_gb": 4.0, "vram_gb": 12.0}}
+            {"name": "gpu_node_1", "deps": [], "resources": {"ram_gb": 4.0, "gpus": 1, "vram_gb": 12.0}},
+            {"name": "gpu_node_1_extra", "deps": [], "resources": {"ram_gb": 4.0, "gpus": 1, "vram_gb": 12.0}}
         ]
     }
-    j_id = client.post("/submit_job", json={"repo": "o/gpu_pack", "branch": "main", "plan": plan}).get_json()["job_id"]
+    plan_2 = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "gpu_node_2", "deps": [], "resources": {"ram_gb": 4.0, "gpus": 1, "vram_gb": 12.0}}
+        ]
+    }
+    j1_id = client.post("/submit_job", json={"repo": "o/gpu_pack1", "branch": "main", "plan": plan_1}).get_json()["job_id"]
+    j2_id = client.post("/submit_job", json={"repo": "o/gpu_pack2", "branch": "main", "plan": plan_2}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
-    # Nœud 1
-    s1 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r1", "worker": "W_DISC_GPU"}).get_json()
+    # Nœud 1 du Job 1 sur ISIPOL09
+    s1 = client.post(f"/api/jobs/{j1_id}/next_node", json={"runner_id": "r1", "worker": "ISIPOL09"}).get_json()
     assert s1["action"] in ("run", "switch_image")
     assert s1["gpu_ids"] == [0]
 
-    # Nœud 2
-    s2 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r2", "worker": "W_DISC_GPU"}).get_json()
+    # Nœud 2 du Job 2 sur ISIPOL09 -> reçoit le second GPU distinct (GPU 1)
+    s2 = client.post(f"/api/jobs/{j2_id}/next_node", json={"runner_id": "r2", "worker": "ISIPOL09"}).get_json()
     assert s2["action"] in ("run", "switch_image")
     assert s2["gpu_ids"] == [1]
+    assert s1["gpu_ids"] != s2["gpu_ids"]
+    assert set(s1["gpu_ids"] + s2["gpu_ids"]) == {0, 1}
 
-    # Nœud 3 : les 2 GPUs ont 4 Go restants < 12 Go -> refusé, action wait
-    s3 = client.post(f"/api/jobs/{j_id}/next_node", json={"runner_id": "r3", "worker": "W_DISC_GPU"}).get_json()
+    # Demande d'un 3e nœud GPU sur ISIPOL09 alors que ses 2 GPUs sont occupés -> mis en attente sans overcommit
+    s3 = client.post(f"/api/jobs/{j1_id}/next_node", json={"runner_id": "r3", "worker": "ISIPOL09"}).get_json()
     assert s3["action"] == "wait"
 
 

@@ -827,10 +827,12 @@ def poll_for_job():
         logger.error(f"Failed to poll: {e}")
     return None
 
-def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None, runner_id=None, worker_id=None):
+def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None, runner_id=None, worker_id=None, error_message=None):
     payload = {"job_id": job_id, "status": status}
     if exit_code is not None:
         payload["exit_code"] = exit_code
+    if error_message is not None:
+        payload["error_message"] = error_message
     if commit_hash is not None:
         payload["commit_hash"] = commit_hash
     if viewer_port is not None:
@@ -950,13 +952,37 @@ def execute_job(job):
     if gids:
         try:
             parsed_gids = json.loads(gids) if isinstance(gids, str) else list(gids)
+            if not isinstance(parsed_gids, (list, tuple)):
+                raise ValueError(f"expected list of GPU IDs, got {type(parsed_gids).__name__}")
             if parsed_gids:
-                gpu_str = ",".join(str(g) for g in parsed_gids)
+                gpu_str = ",".join(str(int(g)) for g in parsed_gids)
                 logger.info(f"Injecting CLUSTER_CI_GPU_IDS={gpu_str} for job {job_id}")
                 env["CLUSTER_CI_GPU_IDS"] = gpu_str
                 env["CUDA_VISIBLE_DEVICES"] = gpu_str
-        except Exception:
-            pass
+        except Exception as e:
+            err_msg = (
+                f"Job {job_id} failed: corrupt or unparseable gpu_ids '{gids}': {e}; "
+                f"cause: worker_agent failed to decode assigned GPU device IDs; "
+                f"remedy: ensure scheduler stores gpu_ids as a valid JSON list of integers (e.g. [0])"
+            )
+            logger.error(f"❌ {err_msg}")
+            update_job_status(job_id, 'failed', exit_code=1, runner_id=runner_id, worker_id=WORKER_ID, error_message=err_msg)
+            try:
+                log_path = os.path.join(LOGS_DIR, f"{job_id}.log")
+                with open(log_path, 'a', encoding='utf-8') as lf:
+                    lf.write(f"\n[CLUSTER-CI ERROR] {err_msg}\n")
+            except Exception:
+                pass
+            with job_lock:
+                active_executors.pop(runner_id, None)
+                if active_executors:
+                    first_active = next(iter(active_executors.values()))
+                    current_job_id = first_active.get("job_id")
+                    current_process = first_active.get("process")
+                else:
+                    current_job_id = None
+                    current_process = None
+            raise ValueError(err_msg)
 
     if is_parallel:
         env["CLUSTER_CI_PARALLEL_MODE"] = "1"
