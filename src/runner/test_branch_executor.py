@@ -513,5 +513,89 @@ class TestBranchExecutor(unittest.TestCase):
         runner.remove_container(f"test-ci-integration-{os.getpid()}")
 
 
+    def test_executor_w6_cas_fetch_dependencies_failure(self):
+        """Vérifie que l'échec de W6 fetch_dependencies remonte missing_deps au headnode."""
+        from src.runner.fetch_cas_dependencies import FetchResult
+
+        self.headnode.server.next_node_responses = [
+            {
+                "action": "run",
+                "node": "cas_node",
+                "image": "python:3.11-slim",
+                "dep_paths": [],
+            },
+            {
+                "action": "finish",
+            },
+        ]
+
+        # Simuler un dvc.lock avec une dépendance CAS
+        dvc_lock_file = os.path.join(self.temp_dir, "dvc.lock")
+        with open(dvc_lock_file, "w", encoding="utf-8") as f:
+            f.write(
+                "schema: '2.0'\n"
+                "stages:\n"
+                "  cas_node:\n"
+                "    cmd: python train.py\n"
+                "    deps:\n"
+                "    - path: data/weights.bin\n"
+                "      md5: a1b2c3d4e5f60718293a4b5c6d7e8f90\n"
+            )
+
+        mock_docker = MockDockerRunner()
+        executor = BranchExecutor(
+            headnode_url=self.headnode.url,
+            job_id="job-cas-fail",
+            runner_id="runner-cas-1",
+            worker_id="worker-cas-1",
+            repo_dir=self.temp_dir,
+            target_repo="test/repo",
+            target_branch="main",
+            docker=mock_docker,
+            poll_interval=0.01,
+            heartbeat_interval=0.05,
+        )
+
+        mock_fetch_result = FetchResult(
+            success=False,
+            status="missing_deps",
+            missing_deps=["data/weights.bin"],
+            missing_hashes=["a1b2c3d4e5f60718293a4b5c6d7e8f90"],
+        )
+
+        with patch("src.runner.branch_executor.fetch_dependencies", return_value=mock_fetch_result) as mock_fetch, \
+             patch("src.runner.branch_executor.sync_before_node", return_value=True), \
+             patch("src.runner.branch_executor.commit_and_push_node", return_value=True):
+            exit_code = executor.run()
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(mock_fetch.called)
+
+        calls = self.headnode.server.next_node_calls
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["node"], "cas_node")
+        self.assertEqual(calls[1]["status"], "missing_deps")
+        self.assertEqual(calls[1]["missing_deps"], ["data/weights.bin"])
+
+    def test_custom_container_prefix(self):
+        """Vérifie la personnalisation du préfixe de conteneur via argument ou environnement."""
+        mock_docker = MockDockerRunner()
+        executor = BranchExecutor(
+            headnode_url=self.headnode.url,
+            job_id="myjob",
+            runner_id="runner-pfx",
+            worker_id="worker-pfx",
+            repo_dir=self.temp_dir,
+            target_repo="test/repo",
+            target_branch="main",
+            container_prefix="custom-prefix-",
+            docker=mock_docker,
+        )
+        executor.start_container_for_image("python:3.12-slim")
+        self.assertEqual(len(mock_docker.containers_started), 1)
+        self.assertTrue(mock_docker.containers_started[0]["name"].startswith("custom-prefix-"))
+        executor.stop_current_container()
+
+
 if __name__ == "__main__":
     unittest.main()

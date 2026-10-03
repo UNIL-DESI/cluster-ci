@@ -8,8 +8,9 @@ Communicates with headnode via:
 Handles:
   - Container lifecycle per Docker image (reusing container for same image).
   - Dedicated named volumes per image: cluster-ci-home-<repo>-<image_slug>.
-  - Git synchronization (sync_before_node, commit_and_push_node).
-  - Checking and fetching missing dep_paths via /fetch_artifact (Amendment A4).
+  - Configurable container name prefix (CLUSTER_CI_CONTAINER_PREFIX, default: cluster-job-).
+  - Git synchronization using W5 dvc_git_helper (sync_before_node, push_with_retries).
+  - Checking and fetching missing CAS dependencies using W6 fetch_cas_dependencies (Amendment A4).
   - Setting CUDA_VISIBLE_DEVICES per node.
   - Streaming prefixed logs: [node@machine].
 """
@@ -29,6 +30,14 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from src.runner import dvc_git_helper
+except (ImportError, SystemExit):
+    dvc_git_helper = None
+
+from src.runner.fetch_cas_dependencies import fetch_dependencies
+from src.scheduler.artifact_registry import extract_node_deps_from_dvc_lock
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [BranchExecutor] %(message)s",
@@ -37,49 +46,20 @@ logger = logging.getLogger("branch_executor")
 
 
 # =====================================================================
-# Adaptateur mince pour W5 (feat/v3-w5-gitsync / dvc_git_helper.py)
+# Fonctions Git / DVC directes (W5)
 # =====================================================================
 
-def sync_before_node(repo_dir: str, branch: str) -> bool:
+def sync_before_node(repo_dir: str, branch: str) -> None:
     """
-    Synchronisation amont avant exécution d'un nœud.
-    Appelle sync_before_node() de dvc_git_helper (W5) si disponible,
-    sinon utilise l'adaptateur mince local (git pull --rebase).
+    Synchronisation amont avant exécution d'un nœud via W5 dvc_git_helper.
+    Installe le pilote de fusion dvc.lock et effectue git pull --rebase origin <branch>.
     """
-    try:
-        from src.runner import dvc_git_helper
-        if hasattr(dvc_git_helper, "sync_before_node"):
-            logger.info("Appel de dvc_git_helper.sync_before_node (W5)")
-            return dvc_git_helper.sync_before_node(repo_dir=repo_dir, branch=branch)
-    except Exception as exc:
-        logger.debug("dvc_git_helper.sync_before_node indisponible: %s", exc)
-
-    # --- Adaptateur mince pour W5 ---
-    try:
-        logger.info("Exécution sync_before_node via adaptateur mince sur %s...", branch)
-        subprocess.run(
-            ["git", "fetch", "origin", branch],
-            cwd=repo_dir,
-            check=False,
-            capture_output=True,
-            timeout=60,
-        )
-        res = subprocess.run(
-            ["git", "pull", "--rebase", "origin", branch],
-            cwd=repo_dir,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if res.returncode != 0:
-            logger.warning("git pull --rebase a échoué: %s. Tentative rebase --abort...", res.stderr)
-            subprocess.run(["git", "rebase", "--abort"], cwd=repo_dir, check=False, capture_output=True)
-            return False
-        return True
-    except Exception as exc:
-        logger.warning("Erreur sync_before_node (adaptateur mince): %s", exc)
-        return False
+    logger.info("Synchronisation amont via W5 sync_before_node sur %s...", branch)
+    if dvc_git_helper is not None:
+        dvc_git_helper.sync_before_node(current_branch=branch, cwd=repo_dir)
+    else:
+        from src.runner import dvc_git_helper as dgh
+        dgh.sync_before_node(current_branch=branch, cwd=repo_dir)
 
 
 def commit_and_push_node(
@@ -89,94 +69,51 @@ def commit_and_push_node(
     out_paths: Optional[List[Any]] = None,
 ) -> bool:
     """
-    Commit et push (dvc.lock + sorties non cachées du nœud).
-    Appelle commit_and_push_node() de dvc_git_helper (W5) si disponible,
-    sinon utilise l'adaptateur mince avec nouvelles tentatives et backoff.
+    Commit et push (dvc.lock + sorties non cachées du nœud) avec W5 push_with_retries.
     """
-    try:
-        from src.runner import dvc_git_helper
-        if hasattr(dvc_git_helper, "commit_and_push_node"):
-            logger.info("Appel de dvc_git_helper.commit_and_push_node (W5)")
-            return dvc_git_helper.commit_and_push_node(
-                repo_dir=repo_dir,
-                node=node,
-                branch=branch,
-                out_paths=out_paths,
-            )
-    except Exception as exc:
-        logger.debug("dvc_git_helper.commit_and_push_node indisponible: %s", exc)
+    dvc_lock = os.path.join(repo_dir, "dvc.lock")
+    if os.path.exists(dvc_lock):
+        subprocess.run(["git", "add", "dvc.lock"], cwd=repo_dir, check=False)
 
-    # --- Adaptateur mince pour W5 ---
-    try:
-        dvc_lock = os.path.join(repo_dir, "dvc.lock")
-        if os.path.exists(dvc_lock):
-            subprocess.run(["git", "add", "dvc.lock"], cwd=repo_dir, check=False)
-
-        if out_paths:
-            for item in out_paths:
-                p = item if isinstance(item, str) else item.get("path")
-                is_cache = False if isinstance(item, str) else item.get("cache", True)
-                if p and not is_cache and os.path.exists(os.path.join(repo_dir, p)):
+    if out_paths:
+        for item in out_paths:
+            p = item if isinstance(item, str) else item.get("path")
+            is_cache = False if isinstance(item, str) else item.get("cache", True)
+            if p and not is_cache:
+                full_p = os.path.join(repo_dir, p)
+                if os.path.exists(full_p):
                     subprocess.run(["git", "add", "-f", p], cwd=repo_dir, check=False)
 
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-        )
-        if not status.stdout.strip():
-            logger.info("Aucun fichier modifié à commiter pour le nœud %s.", node)
-            return True
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if not status.stdout.strip():
+        logger.info("Aucun fichier modifié à commiter pour le nœud %s.", node)
+        return True
 
-        subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
-        subprocess.run(["git", "config", "user.email", "bot@cluster-ci.io"], cwd=repo_dir, check=False)
-        commit_msg = f"chore(ci): complete node {node} [skip ci]"
-        commit_res = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=repo_dir,
-            capture_output=True,
-            text=True,
-        )
-        if commit_res.returncode != 0:
-            logger.warning("git commit a échoué: %s", commit_res.stderr)
-            return False
-
-        max_attempts = 5
-        for attempt in range(1, max_attempts + 1):
-            push_res = subprocess.run(
-                ["git", "push", "origin", f"HEAD:{branch}"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if push_res.returncode == 0:
-                logger.info("Push réussi pour le nœud %s (tentative %d).", node, attempt)
-                return True
-            logger.warning(
-                "Échec push pour %s (tentative %d/%d): %s. Rebase...",
-                node,
-                attempt,
-                max_attempts,
-                push_res.stderr,
-            )
-            pull_res = subprocess.run(
-                ["git", "pull", "--rebase", "origin", branch],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if pull_res.returncode != 0:
-                subprocess.run(["git", "rebase", "--abort"], cwd=repo_dir, check=False, capture_output=True)
-            time.sleep(2 * attempt)
-
-        logger.error("Échec définitif du push après %d tentatives pour le nœud %s.", max_attempts, node)
+    subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
+    subprocess.run(["git", "config", "user.email", "bot@cluster-ci.io"], cwd=repo_dir, check=False)
+    commit_msg = f"chore(ci): complete node {node} [skip ci]"
+    commit_res = subprocess.run(
+        ["git", "commit", "-m", commit_msg],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if commit_res.returncode != 0:
+        logger.warning("git commit a échoué: %s", commit_res.stderr)
         return False
-    except Exception as exc:
-        logger.error("Exception lors du commit/push pour le nœud %s: %s", node, exc)
-        return False
+
+    logger.info("Push des modifications pour le nœud %s via W5 push_with_retries...", node)
+    if dvc_git_helper is not None:
+        dvc_git_helper.push_with_retries(current_branch=branch, cwd=repo_dir)
+    else:
+        from src.runner import dvc_git_helper as dgh
+        dgh.push_with_retries(current_branch=branch, cwd=repo_dir)
+    return True
 
 
 # =====================================================================
@@ -314,6 +251,7 @@ class BranchExecutor:
         heartbeat_interval: float = 15.0,
         current_container: Optional[str] = None,
         current_image: Optional[str] = None,
+        container_prefix: Optional[str] = None,
     ):
         self.headnode_url = headnode_url.rstrip("/") if headnode_url else ""
         self.job_id = job_id
@@ -329,6 +267,7 @@ class BranchExecutor:
         self.vram_limit = vram_limit
         self.poll_interval = poll_interval
         self.heartbeat_interval = heartbeat_interval
+        self.container_prefix = container_prefix or os.environ.get("CLUSTER_CI_CONTAINER_PREFIX", "cluster-job-")
 
         # Résolution du dossier racine de cluster-ci
         if base_dir:
@@ -369,7 +308,6 @@ class BranchExecutor:
         self._heartbeat_thread.start()
 
     def _stop_heartbeat(self) -> None:
-        # Le thread étant en mode daemon, le flag self.is_running = False suffit
         pass
 
     def _heartbeat_worker(self) -> None:
@@ -428,7 +366,7 @@ class BranchExecutor:
             return json.loads(content)
 
     # -----------------------------------------------------------------
-    # Gestion des Dépendances Lourdes (/fetch_artifact - Amendement A4)
+    # Gestion des Dépendances Lourdes (W6 CAS Fetcher - Amendement A4)
     # -----------------------------------------------------------------
 
     def _get_workers_from_headnode(self) -> List[Dict[str, Any]]:
@@ -446,6 +384,7 @@ class BranchExecutor:
         return []
 
     def _fetch_artifact_from_worker(self, worker_target: str, path: str) -> bool:
+        """Rapatrie un fichier brut depuis un worker pair via /fetch_artifact."""
         try:
             base = worker_target.rstrip("/")
             if not base.startswith("http://") and not base.startswith("https://"):
@@ -476,18 +415,70 @@ class BranchExecutor:
         resources: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
-        Vérifie la présence locale des dépendances requises (dep_paths).
-        Si un chemin est absent, tente de le récupérer depuis les workers détenteurs.
+        Vérifie la présence locale des dépendances requises et rapatrie les objets CAS DVC
+        depuis les workers pairs via fetch_cas_dependencies (W6), avec repli sur /fetch_artifact.
         Retourne la liste des dépendances introuvables (vide si tout est présent).
         """
-        if not dep_paths:
+        dvc_lock_path = os.path.join(self.repo_dir, "dvc.lock")
+        deps: List[Dict[str, Any]] = []
+        if os.path.isfile(dvc_lock_path):
+            try:
+                deps = extract_node_deps_from_dvc_lock(dvc_lock_path, node)
+            except Exception as exc:
+                logger.debug("Extraction dvc.lock impossible pour %s: %s", node, exc)
+
+        cas_deps = [d for d in deps if d.get("md5")]
+        if cas_deps:
+            # Sources map: {md5: [urls]}
+            sources_map: Dict[str, List[str]] = {}
+            dep_sources_dict = dep_sources or {}
+            for k, urls in dep_sources_dict.items():
+                url_list = urls if isinstance(urls, list) else [urls]
+                sources_map.setdefault(k.strip().lower(), []).extend(url_list)
+
+            workers_hint = (resources or {}).get("workers") or []
+            all_workers = list(workers_hint)
+            if not all_workers and self.headnode_url:
+                hw_list = self._get_workers_from_headnode()
+                for w in hw_list:
+                    s_url = w.get("service_url")
+                    if s_url and s_url not in all_workers:
+                        all_workers.append(s_url)
+
+            for d in cas_deps:
+                md5 = d.get("md5", "")
+                if md5:
+                    for w in all_workers:
+                        if w not in sources_map.get(md5, []):
+                            sources_map.setdefault(md5, []).append(w)
+
+            result = fetch_dependencies(
+                dependencies=cas_deps,
+                sources_map=sources_map,
+                repo_dir=self.repo_dir,
+                repo_name=self.target_repo,
+                run_checkout=True,
+            )
+
+            if not result.success:
+                missing = result.missing_deps or result.missing_hashes
+                logger.warning("Dépendances introuvables via W6 CAS fetcher pour %s: %s", node, missing)
+                return missing
+
+        # Vérification et repli pour les chemins (dep_paths ou extraits de dvc.lock)
+        all_paths = list(dep_paths or [])
+        for d in deps:
+            p = d.get("path")
+            if p and p not in all_paths:
+                all_paths.append(p)
+
+        if not all_paths and not cas_deps:
             return []
 
-        missing: List[str] = []
-        dep_sources = dep_sources or {}
+        missing_paths: List[str] = []
         workers_hint = (resources or {}).get("workers") or []
 
-        for path in dep_paths:
+        for path in all_paths:
             local_path = os.path.join(self.repo_dir, path)
             if os.path.exists(local_path) and (
                 os.path.isdir(local_path) or os.path.getsize(local_path) > 0
@@ -499,7 +490,7 @@ class BranchExecutor:
             fetched = False
 
             candidate_urls: List[str] = []
-            if path in dep_sources:
+            if dep_sources and path in dep_sources:
                 sources = dep_sources[path]
                 if isinstance(sources, list):
                     candidate_urls.extend(sources)
@@ -523,13 +514,10 @@ class BranchExecutor:
                     break
 
             if not fetched:
-                logger.warning(
-                    "Dépendance %s introuvable auprès des pairs détenteurs.",
-                    path,
-                )
-                missing.append(path)
+                logger.warning("Dépendance %s introuvable auprès des pairs.", path)
+                missing_paths.append(path)
 
-        return missing
+        return missing_paths
 
     # -----------------------------------------------------------------
     # Cycle de Vie des Conteneurs
@@ -543,7 +531,7 @@ class BranchExecutor:
         """
         Démarre un conteneur dédié sur l'image spécifiée, avec named volume
         dédié cluster-ci-home-<repo>-<image_slug> pour /home/user.
-        Exécute l'initialisation nécessaire (root init, uv tool dvc, smart_install).
+        Exécute l'initialisation nécessaire avec set -euo pipefail et dvc --version.
         """
         resources = resources or {}
         ram_limit = resources.get("ram_gb", self.ram_limit)
@@ -552,7 +540,7 @@ class BranchExecutor:
         image_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", image).strip("-")
         repo_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", self.target_repo).strip("-")
         home_volume = f"cluster-ci-home-{repo_slug}-{image_slug}"
-        container_name = f"cluster-job-{self.safe_job_id}-{image_slug}"
+        container_name = f"{self.container_prefix}{self.safe_job_id}-{image_slug}"
 
         logger.info(
             "Démarrage du conteneur %s sur l'image %s (volume: %s)",
@@ -599,13 +587,22 @@ class BranchExecutor:
         )
         self.docker.exec_in_container(self.current_container, init_cmd, user="root")
 
-        # 2. Outils de base (dvc via uv tool)
+        # 2. Outils de base (uv, dvc via uv tool, dvc-viewer) avec set -euo pipefail
         bootstrap_cmd = (
-            "export PATH=$PATH:/home/user/.local/bin && "
-            "(uv --version 2>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install uv --user --break-system-packages 2>/dev/null || true) && "
-            "uv tool install --force dvc --with dvc-http 2>/dev/null || true"
+            "set -euo pipefail\n"
+            "export PATH=$PATH:/home/user/.local/bin\n"
+            "if ! command -v uv >/dev/null 2>&1; then\n"
+            "    python3 -m pip install uv --user --break-system-packages >/dev/null 2>&1 || (curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1)\n"
+            "fi\n"
+            "uv tool install --force dvc --with dvc-http\n"
+            "uv tool upgrade dvc-viewer || uv tool install git+https://github.com/UNIL-DESI/dvc-viewer.git || true\n"
+            "dvc --version\n"
         )
-        self.docker.exec_in_container(self.current_container, bootstrap_cmd)
+        boot_code, boot_out = self.docker.exec_in_container(self.current_container, bootstrap_cmd)
+        if boot_code != 0:
+            raise RuntimeError(
+                f"Échec initialisation dvc/uv dans le conteneur {self.current_container} (code {boot_code}):\n{boot_out}"
+            )
 
         # 3. smart_install avec clé de cache par image (dans son volume dédié)
         if os.path.exists(os.path.join(self.repo_dir, "pyproject.toml")):
@@ -749,10 +746,10 @@ class BranchExecutor:
                 self.current_node = target_node
                 node_start_time = time.time()
 
-                # 1. Sync amont avant exécution
+                # 1. Sync amont avant exécution via W5
                 sync_before_node(repo_dir=self.repo_dir, branch=self.target_branch)
 
-                # 2. Vérification et rapatriement des dep_paths
+                # 2. Vérification et rapatriement des dep_paths via W6
                 missing = self.fetch_missing_deps(
                     node=target_node,
                     dep_paths=dep_paths,
@@ -785,7 +782,7 @@ class BranchExecutor:
                 node_duration = time.time() - node_start_time
 
                 if node_exit_code == 0:
-                    # 4. Commit + push de dvc.lock et sorties non cachées
+                    # 4. Commit + push de dvc.lock et sorties non cachées via W5
                     commit_and_push_node(
                         repo_dir=self.repo_dir,
                         node=target_node,
@@ -839,6 +836,7 @@ def main() -> None:
     parser.add_argument("--heartbeat-interval", type=float, default=15.0)
     parser.add_argument("--current-container", default=None)
     parser.add_argument("--current-image", default=None)
+    parser.add_argument("--container-prefix", default=None, help="Prefix for container names (default: CLUSTER_CI_CONTAINER_PREFIX or cluster-job-)")
 
     args = parser.parse_args()
 
@@ -857,6 +855,7 @@ def main() -> None:
         heartbeat_interval=args.heartbeat_interval,
         current_container=args.current_container,
         current_image=args.current_image,
+        container_prefix=args.container_prefix,
     )
 
     exit_code = executor.run()
