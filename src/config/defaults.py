@@ -220,3 +220,19 @@ def validate_and_resolve_resources(
         )
 
     return resolved
+
+
+# Scheduling: Worker placement priority defaults (Amendement A13/A14)
+# Convention: Higher value = preferred first.
+# Default: All non-headnode machines share standard priority (50).
+# Headnode is strictly the worker of last resort (0).
+DEFAULT_PLACEMENT_PRIORITY: int = 50
+HEADNODE_PLACEMENT_PRIORITY: int = 0
+
+# Headnode Resource Reservation & Packing Ceilings (Amendement A11/A12/A14)
+DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
+DEFAULT_HEADNODE_CPU_RESERVE: int = 2
+DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
+DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
+
+
