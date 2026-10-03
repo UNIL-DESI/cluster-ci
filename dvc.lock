@@ -5,5 +5,8 @@ stages:
   toy_b_step2:
     cmd: python3 -c "import time; print('toy_b_step2 running'); time.sleep(30)"
   toy_gpu_2:
-    cmd: python3 -c "import time, torch; print('toy_gpu_2 running, CUDA:', 
-      torch.cuda.is_available()); time.sleep(75)"
+    cmd: python3 -c "import time, torch; print('toy_gpu_2 running, CUDA:', torch.cuda.is_available());
+      time.sleep(75)"
+  toy_gpu_1:
+    cmd: python3 -c "import time, torch; print('toy_gpu_1 running, CUDA:', torch.cuda.is_available());
+      time.sleep(75)"
