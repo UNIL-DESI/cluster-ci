@@ -193,6 +193,10 @@ for ((i=1; i<=WORKER_COUNT; i++)); do
     pass_val="${!pass_var}"
     
     if [ -n "$ip_val" ]; then
+        if [ "$ip_val" = "$HEADNODE_IP" ]; then
+            echo "ℹ️  Worker $i ($ip_val) is the Headnode (already updated in dual-mode). Skipping duplicate worker deployment."
+            continue
+        fi
         echo "==========================================================="
         echo "🚀 Updating Worker $i ($ip_val)..."
         echo "==========================================================="
