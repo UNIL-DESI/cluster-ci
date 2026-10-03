@@ -2086,6 +2086,83 @@ def proxy_request(target_url, base_href=None, local_worker_api=False):
             body = body.replace("'/static/", "'static/")
             if base_href:
                 body = body.replace('<head>', f'<head><base href="{base_href}">', 1)
+
+            # Injected script for DVC-Viewer fixes (W12):
+            # (1) Mutualize /api/pipeline polling (1 request per cycle instead of 5 parallel requests)
+            # (3) Condition 'Pipeline running' banner on actual active runs for this repository
+            # (4) Back button on stage detail panel
+            viewer_patch_script = """<script>
+            (function() {
+                // 1. Deduplicate api/pipeline fetches (Singleton promise per 2.5s cycle)
+                let _pPromise = null, _pTime = 0, _pCache = null;
+                const _origFetch = window.fetch;
+                window.fetch = function(url, opts) {
+                    if (typeof url === 'string' && (url === 'api/pipeline' || url.endsWith('/api/pipeline'))) {
+                        const now = Date.now();
+                        if (_pCache && (now - _pTime < 2500)) {
+                            return Promise.resolve(new Response(JSON.stringify(_pCache), { headers: { 'Content-Type': 'application/json' } }));
+                        }
+                        if (_pPromise) return _pPromise;
+                        _pPromise = _origFetch.apply(this, arguments).then(async r => {
+                            if (r.ok) { _pCache = await r.clone().json(); _pTime = Date.now(); }
+                            return r;
+                        }).finally(() => { _pPromise = null; });
+                        return _pPromise;
+                    }
+                    return _origFetch.apply(this, arguments);
+                };
+
+                // 2. Add Back button to sidebar stage detail panel
+                function injectBackButton() {
+                    const detail = document.getElementById('sidebar-detail');
+                    if (detail && !document.getElementById('btn-back-stages')) {
+                        const header = detail.querySelector('.sidebar-header') || detail;
+                        const btn = document.createElement('button');
+                        btn.id = 'btn-back-stages';
+                        btn.innerHTML = '← Étapes';
+                        btn.title = 'Retour à la liste des étapes';
+                        btn.className = 'btn btn-sm btn-outline-secondary mb-2';
+                        btn.style.cssText = 'cursor:pointer;padding:3px 10px;font-size:0.75rem;border-radius:4px;border:1px solid #64748b;background:rgba(255,255,255,0.05);color:#94a3b8;margin-bottom:10px;display:inline-flex;align-items:center;gap:4px;font-weight:600;';
+                        btn.onclick = () => { if (typeof window.clearDetail === 'function') window.clearDetail(); };
+                        header.prepend(btn);
+                    }
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', injectBackButton);
+                } else {
+                    injectBackButton();
+                }
+
+                // 3. Condition 'Pipeline running' toast on actual repo activity
+                const pathParts = window.location.pathname.split('/').filter(Boolean);
+                const vIdx = pathParts.indexOf('view');
+                const currentRepo = (vIdx !== -1 && pathParts.length > vIdx + 2) ? (pathParts[vIdx+1] + '/' + pathParts[vIdx+2]) : null;
+                
+                const _origShowToast = window.showToast;
+                if (typeof _origShowToast === 'function') {
+                    window.showToast = function(msg, type) {
+                        if (type === 'running' && currentRepo) {
+                            fetch('/api/runs/active').then(r => r.ok ? r.json() : []).then(runs => {
+                                const isCurrentActive = runs.some(rn => (rn.repo === currentRepo || (rn.repo && rn.repo.endsWith(currentRepo))));
+                                if (isCurrentActive) {
+                                    _origShowToast.call(window, msg, type);
+                                } else {
+                                    const toast = document.getElementById('exec-toast');
+                                    if (toast) toast.classList.remove('visible');
+                                }
+                            }).catch(() => {});
+                            return;
+                        }
+                        return _origShowToast.apply(this, arguments);
+                    };
+                }
+            })();
+            </script>"""
+            if '</body>' in body:
+                body = body.replace('</body>', f'{viewer_patch_script}</body>', 1)
+            else:
+                body += viewer_patch_script
+
             response = Response(body, status=resp.status_code, headers=headers)
             response.headers['Content-Type'] = content_type
             return response

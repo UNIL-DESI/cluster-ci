@@ -150,6 +150,12 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertIn("Cluster-CI", resp.text)
         self.assertIn("v3DagModal", resp.text)
         self.assertIn("v3-log-filter-container", resp.text)
+        self.assertIn("<style>", resp.text)
+        self.assertIn("ansiToHtml", resp.text)
+        self.assertIn("getActiveRuns", resp.text)
+        self.assertIn("Alerte Disque (&gt;85%)", resp.text)
+        self.assertNotIn("Packing A11", resp.text)
+        self.assertNotIn("CPUs Admis (A11)", resp.text)
 
     def test_local_mermaid_static_serving(self):
         resp = self.client.get("/static/mermaid.min.js")

@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <script src="/static/mermaid.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <style>
         :root, [data-theme="light"] {
             --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             --font-mono: 'Fira Code', 'Courier New', Courier, monospace;
@@ -2013,6 +2014,10 @@
                                     ${isMaintenance ? '<span class="badge-premium badge-maintenance-premium"><i class="bi bi-tools me-1"></i>🛠️ Maintenance Barrier</span>' : ''}
                                     <span class="badge-premium badge-primary-premium"><i class="bi bi-git me-1"></i>${escapeHtml(run.branch)}</span>
                                     ${v3BadgesHtml}
+                                    ${run.worker_id ? `<span class="badge-premium badge-info-premium" title="Machine hôte assignée"><i class="bi bi-pc-display-horizontal me-1"></i>${escapeHtml(run.worker_id)}</span>` : (run.home_worker ? `<span class="badge-premium badge-info-premium" title="Machine hôte"><i class="bi bi-pc-display-horizontal me-1"></i>${escapeHtml(run.home_worker)}</span>` : '')}
+                                    <span id="active-run-stage-${run.job_id}" class="d-inline-flex align-items-center">
+                                        ${(run.current_stage || run.stage || run.active_stage) ? `<span class="badge-premium badge-warning-premium" title="Étape active"><i class="bi bi-play-circle-fill me-1"></i>${escapeHtml(run.current_stage || run.stage || run.active_stage)}</span>` : ''}
+                                    </span>
                                     ${run.is_local ? '<span class="badge-premium" style="background:var(--info-light);color:var(--info);"><i class="bi bi-house-door-fill me-1"></i>LOCAL</span>' : ''}
                                     <span class="text-muted" style="font-size:0.8rem;">Job ${run.job_id.substring(0,8)}…</span>
                                     ${run.username ? `<span class="text-muted" style="font-size:0.8rem;">par <strong>${escapeHtml(run.username)}</strong></span>` : ''}
@@ -2034,6 +2039,43 @@
                     ${isV3 ? `<div id="active-run-v3-branches-${run.job_id}" class="mt-2 pt-2 border-top"></div>` : ''}
                 </div>
             `;
+
+            // Asynchronously resolve active stage if not already provided
+            setTimeout(async () => {
+                const stageEl = document.getElementById(`active-run-stage-${run.job_id}`);
+                if (!stageEl || stageEl.innerHTML.trim() !== '') return;
+                try {
+                    const stResp = await fetch(`/job_status/${run.job_id}`);
+                    if (stResp.ok) {
+                        const stData = await stResp.json();
+                        if (stData.nodes && Array.isArray(stData.nodes)) {
+                            const runningNodes = stData.nodes.filter(n => n.status === 'running');
+                            if (runningNodes.length > 0) {
+                                stageEl.innerHTML = runningNodes.map(n => 
+                                    `<span class="badge-premium badge-warning-premium" title="Étape DVC en cours"><i class="bi bi-play-circle-fill me-1"></i>${escapeHtml(n.name)}${n.machine ? ` @ ${escapeHtml(n.machine)}` : ''}</span>`
+                                ).join(' ');
+                                return;
+                            }
+                        } else if (stData.current_stage || stData.stage) {
+                            stageEl.innerHTML = `<span class="badge-premium badge-warning-premium" title="Étape DVC en cours"><i class="bi bi-play-circle-fill me-1"></i>${escapeHtml(stData.current_stage || stData.stage)}</span>`;
+                            return;
+                        }
+                    }
+                    const logResp = await fetch(`/api/jobs/${run.job_id}/logs?offset=0`);
+                    if (logResp.ok) {
+                        const logData = await logResp.json();
+                        if (logData.logs) {
+                            const stageMatches = [...logData.logs.matchAll(/(?:Running stage|Stage)\s+['"]?([a-zA-Z0-9_\-@\.]+)/gi)];
+                            if (stageMatches.length > 0) {
+                                const lastStage = stageMatches[stageMatches.length - 1][1];
+                                stageEl.innerHTML = `<span class="badge-premium badge-warning-premium" title="Étape DVC en cours"><i class="bi bi-play-circle-fill me-1"></i>${escapeHtml(lastStage)}</span>`;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // silent fallback
+                }
+            }, 60);
 
             if (isV3) {
                 setTimeout(() => {
@@ -2529,6 +2571,38 @@
             }
         }
 
+        // Shared active runs fetcher (Deduplicates simultaneous calls per cycle)
+        let _activeRunsPromise = null;
+        let _activeRunsCacheTime = 0;
+        let _activeRunsCache = null;
+
+        async function getActiveRuns(forceRefresh = false) {
+            const now = Date.now();
+            if (!forceRefresh && _activeRunsCache && (now - _activeRunsCacheTime < 3000)) {
+                return _activeRunsCache;
+            }
+            if (_activeRunsPromise) {
+                return _activeRunsPromise;
+            }
+            _activeRunsPromise = (async () => {
+                try {
+                    const resp = await fetch('/api/runs/active');
+                    if (resp.ok) {
+                        _activeRunsCache = await resp.json();
+                        _activeRunsCacheTime = Date.now();
+                        return _activeRunsCache;
+                    }
+                    return [];
+                } catch (err) {
+                    console.error("Failed to fetch active runs:", err);
+                    return [];
+                } finally {
+                    _activeRunsPromise = null;
+                }
+            })();
+            return _activeRunsPromise;
+        }
+
         async function loadProjects() {
             if (projectAbortController) {
                 projectAbortController.abort();
@@ -2543,14 +2617,15 @@
             loadClusterStats();
 
             try {
-                const resp = await fetch('/api/projects');
-                const activeResp = await fetch('/api/runs/active');
+                const [resp, activeRuns] = await Promise.all([
+                    fetch('/api/projects'),
+                    getActiveRuns()
+                ]);
                 
-                if (!resp.ok || !activeResp.ok) {
+                if (!resp.ok) {
                     throw new Error('Failed to load dashboard data');
                 }
                 const projects = await resp.json();
-                const activeRuns = await activeResp.json();
 
                 container.innerHTML = '';
                 
@@ -3598,8 +3673,7 @@
                 const resp = await fetch('/workers');
                 if (!resp.ok) return;
                 const workers = await resp.json();
-                const activeResp = await fetch('/api/runs/active');
-                const activeRuns = activeResp.ok ? await activeResp.json() : [];
+                const activeRuns = await getActiveRuns();
                 
                 let queue = [];
                 try {
@@ -3777,8 +3851,8 @@
                     </div>
                 `;
 
-                // 2. Physical Worker diagnostic cards with A11 & A13
-                let cardsHtml = '<h4 class="mb-3 text-secondary d-flex align-items-center gap-2"><i class="bi bi-hdd-network"></i> Diagnostics des Machines (Multi-Exécuteurs & Capacités A11/A13)</h4><div class="row row-cols-1 row-cols-lg-2 g-4 mb-4">';
+                // 2. Physical Worker diagnostic cards with multi-executors & capacities
+                let cardsHtml = '<h4 class="mb-3 text-secondary d-flex align-items-center gap-2"><i class="bi bi-hdd-network"></i> Diagnostics des Machines & Exécuteurs</h4><div class="row row-cols-1 row-cols-lg-2 g-4 mb-4">';
 
                 onlineWorkers.forEach(w => {
                     const executors = executorsPerWorker[w.worker_id] || [];
@@ -3805,7 +3879,20 @@
                     const cpuColor = pctCpus >= 90 ? 'bg-danger' : (pctCpus >= 70 ? 'bg-warning' : 'bg-primary');
                     const ramColor = pctRam >= 90 ? 'bg-danger' : (pctRam >= 70 ? 'bg-warning' : 'bg-success');
 
-                    // Unified memory calculation: Σ(ram+vram) ≤ total − 8 Go (Formula A11)
+                    // Storage calculation (Physical disk used vs total with >85% critical alert)
+                    const storageTotal = w.total_storage_gb || w.storage_gb || 0;
+                    const storageAvail = w.available_storage_gb !== undefined ? w.available_storage_gb : storageTotal;
+                    const storageUsed = storageTotal > 0 ? Math.max(0, storageTotal - storageAvail) : 0;
+                    const storageUsedPct = storageTotal > 0 ? Math.min(100, Math.max(0, (storageUsed / storageTotal * 100))).toFixed(1) : 0;
+                    let storageColor = 'bg-success';
+                    if (storageUsedPct >= 85) {
+                        storageColor = 'bg-danger';
+                    } else if (storageUsedPct >= 70) {
+                        storageColor = 'bg-warning';
+                    }
+                    const isDiskCritical = storageUsedPct >= 85;
+
+                    // Unified memory calculation: Σ(ram+vram) ≤ total − 8 Go
                     let memoryGaugesHtml = '';
                     if (isUnified) {
                         const unifiedCap = Math.max(0, capRam - 8);
@@ -3816,7 +3903,7 @@
                         memoryGaugesHtml = `
                             <div class="mb-2 p-2 rounded border bg-light">
                                 <div class="d-flex justify-content-between align-items-center mb-1 small">
-                                    <span class="fw-bold text-dark"><i class="bi bi-memory me-1 text-info"></i>Mémoire Unifiée Admise (A11)</span>
+                                    <span class="fw-bold text-dark"><i class="bi bi-memory me-1 text-info"></i>Mémoire Unifiée Admise</span>
                                     <span class="font-monospace fw-semibold">${sumUnifiedAdm.toFixed(1)} / ${unifiedCap.toFixed(1)} GB (${pctUnified}%)</span>
                                 </div>
                                 <div class="progress" style="height: 8px;">
@@ -3871,7 +3958,7 @@
                         `;
                     }
 
-                    // A11 - List of all active executors on this machine
+                    // List of all active executors on this machine
                     let executorsListHtml = '';
                     if (executors.length > 0) {
                         executorsListHtml = `
@@ -3880,7 +3967,7 @@
                                     <h6 class="text-primary mb-0 d-flex align-items-center gap-1" style="font-size: 0.85rem;">
                                         <i class="bi bi-layers-fill"></i> Exécuteurs Actifs (${executors.length})
                                     </h6>
-                                    <span class="badge bg-primary-subtle text-primary border" style="font-size: 0.7rem;">Packing A11</span>
+                                    <span class="badge bg-primary-subtle text-primary border" style="font-size: 0.7rem;">Partage Actif</span>
                                 </div>
                                 <div class="d-flex flex-column gap-2">
                         `;
@@ -3942,7 +4029,7 @@
                         `;
                     }
 
-                    // A13 - Local Docker images display from heartbeat (w.docker_images)
+                    // Local Docker images display from heartbeat (w.docker_images)
                     let dockerImagesHtml = '';
                     let dockerImagesCount = 0;
                     let dockerImagesListHtml = '';
@@ -3984,7 +4071,7 @@
                             <div class="mt-3 pt-2 border-top">
                                 <details class="small">
                                     <summary class="d-flex justify-content-between align-items-center text-secondary fw-semibold" style="cursor: pointer; user-select: none;">
-                                        <span><i class="bi bi-boxes text-info me-1"></i>Images Docker locales (A13)</span>
+                                        <span><i class="bi bi-boxes text-info me-1"></i>Images Docker locales en cache</span>
                                         <span class="badge bg-info-subtle text-info rounded-pill">${dockerImagesCount}</span>
                                     </summary>
                                     <div class="mt-2 p-2 rounded bg-light border" style="max-height: 160px; overflow-y: auto;">
@@ -3996,7 +4083,7 @@
                     } else {
                         dockerImagesHtml = `
                             <div class="mt-2 pt-2 border-top text-muted small" style="font-size: 0.74rem;">
-                                <i class="bi bi-box-seam text-secondary me-1"></i>Images locales A13 : aucune image déclarée
+                                <i class="bi bi-box-seam text-secondary me-1"></i>Images Docker locales : aucune image déclarée
                             </div>
                         `;
                     }
@@ -4011,20 +4098,20 @@
                                                 <i class="bi bi-pc-display-horizontal text-primary me-1"></i>${escapeHtml(w.hostname || w.worker_id.substring(0,8))}
                                             </h5>
                                             ${w.arch ? `<span class="badge bg-secondary-subtle text-secondary" style="font-size:0.7rem;">${escapeHtml(w.arch)}</span>` : ''}
-                                            ${isUnified ? `<span class="badge bg-info-subtle text-info border" style="font-size:0.7rem;"><i class="bi bi-cpu me-1"></i>Unified Mem</span>` : ''}
+                                            ${isUnified ? `<span class="badge bg-info-subtle text-info border" style="font-size:0.7rem;"><i class="bi bi-cpu me-1"></i>Mémoire Unifiée</span>` : ''}
                                         </div>
                                         <span class="badge ${isBusy ? 'bg-primary-subtle text-primary border border-primary-subtle' : 'bg-success-subtle text-success border border-success-subtle'}">
-                                            <i class="bi bi-circle-fill" style="font-size:0.5rem; vertical-align:middle;"></i> ${isBusy ? 'Occupée (Admise)' : 'Disponible'}
+                                            <i class="bi bi-circle-fill" style="font-size:0.5rem; vertical-align:middle;"></i> ${isBusy ? 'Occupée' : 'Disponible'}
                                         </span>
                                     </div>
                                     ${w.gpu_name ? `<div class="small text-muted mb-2"><i class="bi bi-gpu-card me-1 text-success"></i>${escapeHtml(w.gpu_name)}${capVram > 0 ? ` &bull; ${Math.round(capVram)} GB VRAM` : ''}</div>` : ''}
                                     
                                     <hr class="my-2">
 
-                                    <!-- Jauges Ressources Admises vs Capacité (A11) -->
+                                    <!-- Jauges Ressources Admises vs Capacité -->
                                     <div class="mb-2">
                                         <div class="d-flex justify-content-between mb-1 small">
-                                            <span class="fw-bold text-muted"><i class="bi bi-cpu me-1"></i>CPUs Admis (A11)</span>
+                                            <span class="fw-bold text-muted"><i class="bi bi-cpu me-1"></i>CPUs Admis</span>
                                             <span class="font-monospace">${admCpus} / ${capCpus} cpus (${pctCpus}%)</span>
                                         </div>
                                         <div class="progress" style="height: 8px;">
@@ -4033,6 +4120,23 @@
                                     </div>
 
                                     ${memoryGaugesHtml}
+
+                                    <!-- Jauge Stockage Disque (avec alerte >85%) -->
+                                    <div class="mb-2">
+                                        <div class="d-flex justify-content-between mb-1 small">
+                                            <span class="fw-bold text-muted"><i class="bi bi-hdd-fill me-1"></i>Stockage Disque</span>
+                                            <span class="font-monospace">${storageUsed.toFixed(1)} / ${storageTotal.toFixed(1)} GB (${storageUsedPct}%)</span>
+                                        </div>
+                                        <div class="progress" style="height: 8px;">
+                                            <div class="progress-bar ${storageColor}" style="width: ${storageUsedPct}%"></div>
+                                        </div>
+                                        ${isDiskCritical ? `
+                                            <div class="alert alert-danger py-1 px-2 mt-1 mb-0 d-flex align-items-center gap-1 small" style="font-size: 0.72rem; border-radius: 4px;">
+                                                <i class="bi bi-exclamation-triangle-fill flex-shrink-0 text-danger"></i>
+                                                <span><strong>Alerte Disque (&gt;85%) :</strong> Saturation critique (${storageUsedPct}%).</span>
+                                            </div>
+                                        ` : ''}
+                                    </div>
 
                                     <!-- Liste des Exécuteurs Actifs (A11) -->
                                     ${executorsListHtml}
@@ -4438,6 +4542,72 @@
             renderLogContent(content, true);
         }
 
+        function stripAnsi(str) {
+            if (!str) return '';
+            return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+        }
+
+        function ansiToHtml(str) {
+            if (!str) return '';
+            if (!str.includes('\x1b')) return escapeHtml(str);
+
+            const ansiMap = {
+                '30': 'color: #64748b;',
+                '31': 'color: #ef4444;',
+                '32': 'color: #10b981;',
+                '33': 'color: #f59e0b;',
+                '34': 'color: #3b82f6;',
+                '35': 'color: #a855f7;',
+                '36': 'color: #06b6d4;',
+                '37': 'color: #f1f5f9;',
+                '90': 'color: #94a3b8;',
+                '91': 'color: #f87171;',
+                '92': 'color: #34d399;',
+                '93': 'color: #fbbf24;',
+                '94': 'color: #60a5fa;',
+                '95': 'color: #c084fc;',
+                '96': 'color: #22d3ee;',
+                '97': 'color: #ffffff;',
+                '1': 'font-weight: 600;',
+                '2': 'opacity: 0.75;',
+                '4': 'text-decoration: underline;'
+            };
+
+            let result = '';
+            let openSpans = 0;
+            const regex = /\x1b\[([0-9;]*)m/g;
+            let lastIndex = 0;
+            let match;
+
+            while ((match = regex.exec(str)) !== null) {
+                result += escapeHtml(str.slice(lastIndex, match.index));
+                lastIndex = regex.lastIndex;
+
+                const codes = match[1] ? match[1].split(';') : ['0'];
+                if (codes.includes('0') || codes.length === 0 || match[1] === '') {
+                    while (openSpans > 0) {
+                        result += '</span>';
+                        openSpans--;
+                    }
+                } else {
+                    let styles = [];
+                    for (const c of codes) {
+                        if (ansiMap[c]) styles.push(ansiMap[c]);
+                    }
+                    if (styles.length > 0) {
+                        result += `<span style="${styles.join(' ')}">`;
+                        openSpans++;
+                    }
+                }
+            }
+            result += escapeHtml(str.slice(lastIndex));
+            while (openSpans > 0) {
+                result += '</span>';
+                openSpans--;
+            }
+            return result.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+        }
+
         function highlightLogLine(line) {
             if (!line) return '<span class="log-line">&nbsp;</span>';
 
@@ -4451,32 +4621,33 @@
                 lineText = nodeMatch[3];
             }
 
-            const escaped = escapeHtml(lineText);
+            const cleanText = stripAnsi(lineText);
+            const formatted = ansiToHtml(lineText);
 
             // Error / Fail / Exception / Traceback
-            if (/\b(ERROR|FAIL|FAILED|FATAL|EXCEPTION|CRITICAL)\b|Traceback \(most recent call last\):|Exit code [1-9]|❌/i.test(lineText)) {
-                return `<span class="log-line log-line-error">${nodeTagHtml}${escaped}</span>`;
+            if (/\b(ERROR|FAIL|FAILED|FATAL|EXCEPTION|CRITICAL)\b|Traceback \(most recent call last\):|Exit code [1-9]|❌/i.test(cleanText)) {
+                return `<span class="log-line log-line-error">${nodeTagHtml}${formatted}</span>`;
             }
             // Warning
-            if (/\b(WARN|WARNING|DEPRECATED|ALERT)\b|⚠️/i.test(lineText)) {
-                return `<span class="log-line log-line-warn">${nodeTagHtml}${escaped}</span>`;
+            if (/\b(WARN|WARNING|DEPRECATED|ALERT)\b|⚠️/i.test(cleanText)) {
+                return `<span class="log-line log-line-warn">${nodeTagHtml}${formatted}</span>`;
             }
             // Info / OK / Passed / Success
-            if (/\b(SUCCESS|PASSED|SUCCESSFULLY|COMPLETED|OK)\b|✅|✓/i.test(lineText)) {
-                return `<span class="log-line log-line-success">${nodeTagHtml}${escaped}</span>`;
+            if (/\b(SUCCESS|PASSED|SUCCESSFULLY|COMPLETED|OK)\b|✅|✓/i.test(cleanText)) {
+                return `<span class="log-line log-line-success">${nodeTagHtml}${formatted}</span>`;
             }
             // Commands / DVC / Shell
-            if (/^\s*(\$|>|\+|Running stage|dvc |python |pytest |git |bash |cd |export |echo )/i.test(lineText)) {
-                return `<span class="log-line log-line-cmd">${nodeTagHtml}${escaped}</span>`;
+            if (/^\s*(\$|>|\+|Running stage|dvc |python |pytest |git |bash |cd |export |echo )/i.test(cleanText)) {
+                return `<span class="log-line log-line-cmd">${nodeTagHtml}${formatted}</span>`;
             }
 
             // Timestamps / dates at start of line
             const tsRegex = /^(\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\]?|\b\d{2}:\d{2}:\d{2}\b)/;
-            if (tsRegex.test(escaped)) {
-                return `<span class="log-line">${nodeTagHtml}${escaped.replace(tsRegex, '<span class="log-line-timestamp">$1</span>')}</span>`;
+            if (tsRegex.test(cleanText)) {
+                return `<span class="log-line">${nodeTagHtml}${formatted.replace(tsRegex, '<span class="log-line-timestamp">$1</span>')}</span>`;
             }
 
-            return `<span class="log-line">${nodeTagHtml}${escaped}</span>`;
+            return `<span class="log-line">${nodeTagHtml}${formatted}</span>`;
         }
 
         function renderLogContent(content, reset) {
@@ -4546,7 +4717,7 @@
             const stageName = currentSelectedStage ? currentSelectedStage.replace(/[^a-zA-Z0-9_-]/g, '_') : 'logs';
             const filterSuffix = currentV3NodeFilter ? `_${currentV3NodeFilter.replace(/[^a-zA-Z0-9_-]/g, '_')}` : '';
             const filename = `cluster_ci_${stageName}${filterSuffix}_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.log`;
-            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const blob = new Blob([stripAnsi(text)], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -4564,6 +4735,7 @@
             if (currentV3NodeFilter) {
                 text = filterLogsByNode(text, currentV3NodeFilter);
             }
+            text = stripAnsi(text);
             
             if (!text) {
                 console.warn('copyLogs: no text to copy (empty section or no stage selected)');
@@ -4772,13 +4944,11 @@
         async function silentRefreshRootView() {
             if (currentState.view !== 'root') return;
             try {
-                // Refresh cluster stats
+                // Refresh active runs with shared single request per cycle
+                const activeRuns = await getActiveRuns(true);
                 loadClusterStats();
 
-                // Refresh active runs section
-                const activeResp = await fetch('/api/runs/active');
-                if (activeResp.ok) {
-                    const activeRuns = await activeResp.json();
+                if (activeRuns) {
                     const header = container.querySelector('.col-12.full-width.mb-3.mt-2');
                     // Update active run cards in-place by finding existing ones
                     const existingRunCards = container.querySelectorAll('.active-run-card');
