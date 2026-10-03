@@ -389,15 +389,25 @@ class TestBranchExecutor(unittest.TestCase):
         self.assertEqual(len(dvc_commands), 0)
 
     def test_executor_fetches_missing_dep_from_worker(self):
-        """Vérifie le rapatriement P2P automatique d'une dépendance présente sur un pair."""
+        """Vérifie le rapatriement CAS W6 multi-sources avec vérification md5 sans repli /fetch_artifact."""
+        from src.runner.fetch_cas_dependencies import FetchResult
+
         rel_path = "data/features.parquet"
         file_bytes = b"PARQUET_MAGIC_BYTES_12345"
+        file_md5 = "e1b2c3d4e5f60718293a4b5c6d7e8f90"
 
-        # Simuler l'artefact sur le serveur headnode / worker
-        self.headnode.server.artifacts[rel_path] = file_bytes  # type: ignore[attr-defined]
-        self.headnode.server.workers_list = [  # type: ignore[attr-defined]
-            {"worker_id": "W2", "service_url": self.headnode.url}
-        ]
+        # Simuler un dvc.lock avec la dépendance et son hash md5
+        dvc_lock_file = os.path.join(self.temp_dir, "dvc.lock")
+        with open(dvc_lock_file, "w", encoding="utf-8") as f:
+            f.write(
+                "schema: '2.0'\n"
+                "stages:\n"
+                "  train_model:\n"
+                "    cmd: python train.py\n"
+                "    deps:\n"
+                f"    - path: {rel_path}\n"
+                f"      md5: {file_md5}\n"
+            )
 
         self.headnode.server.next_node_responses = [  # type: ignore[attr-defined]
             {
@@ -411,6 +421,14 @@ class TestBranchExecutor(unittest.TestCase):
                 "action": "finish",
             },
         ]
+
+        dest_file = os.path.join(self.temp_dir, rel_path)
+
+        def mock_fetch_impl(*args, **kwargs):
+            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+            with open(dest_file, "wb") as f:
+                f.write(file_bytes)
+            return FetchResult(success=True, status="success", downloaded_hashes=[file_md5])
 
         mock_docker = MockDockerRunner()
         executor = BranchExecutor(
@@ -426,12 +444,13 @@ class TestBranchExecutor(unittest.TestCase):
             heartbeat_interval=0.05,
         )
 
-        with patch("src.runner.branch_executor.sync_before_node", return_value=True), \
+        with patch("src.runner.branch_executor.fetch_dependencies", side_effect=mock_fetch_impl) as mock_fetch, \
+             patch("src.runner.branch_executor.sync_before_node", return_value=True), \
              patch("src.runner.branch_executor.commit_and_push_node", return_value=True):
             executor.run()
 
+        self.assertTrue(mock_fetch.called)
         # Le fichier a bien été écrit localement dans le workspace
-        dest_file = os.path.join(self.temp_dir, rel_path)
         self.assertTrue(os.path.exists(dest_file))
         with open(dest_file, "rb") as f:
             self.assertEqual(f.read(), file_bytes)

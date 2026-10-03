@@ -383,30 +383,6 @@ class BranchExecutor:
             logger.debug("Erreur list_workers: %s", exc)
         return []
 
-    def _fetch_artifact_from_worker(self, worker_target: str, path: str) -> bool:
-        """Rapatrie un fichier brut depuis un worker pair via /fetch_artifact."""
-        try:
-            base = worker_target.rstrip("/")
-            if not base.startswith("http://") and not base.startswith("https://"):
-                base = f"http://{base}:6000"
-            url = f"{base}/fetch_artifact/{self.target_repo}/{path}"
-            headers = {}
-            if self.cluster_token:
-                headers["Authorization"] = f"Bearer {self.cluster_token}"
-
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                if resp.status == 200:
-                    dest = os.path.join(self.repo_dir, path)
-                    os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    with open(dest, "wb") as f:
-                        shutil.copyfileobj(resp, f)
-                    logger.info("Dépendance %s récupérée avec succès depuis %s", path, base)
-                    return True
-        except Exception as exc:
-            logger.debug("Échec fetch %s depuis %s: %s", path, worker_target, exc)
-        return False
-
     def fetch_missing_deps(
         self,
         node: str,
@@ -416,8 +392,9 @@ class BranchExecutor:
     ) -> List[str]:
         """
         Vérifie la présence locale des dépendances requises et rapatrie les objets CAS DVC
-        depuis les workers pairs via fetch_cas_dependencies (W6), avec repli sur /fetch_artifact.
-        Retourne la liste des dépendances introuvables (vide si tout est présent).
+        depuis les workers pairs via fetch_cas_dependencies (W6), multi-sources avec vérification MD5 stricte,
+        SANS repli /fetch_artifact.
+        En cas d'échec, consigne une erreur explicite avec la cause et retourne les dépendances manquantes.
         """
         dvc_lock_path = os.path.join(self.repo_dir, "dvc.lock")
         deps: List[Dict[str, Any]] = []
@@ -462,10 +439,16 @@ class BranchExecutor:
 
             if not result.success:
                 missing = result.missing_deps or result.missing_hashes
-                logger.warning("Dépendances introuvables via W6 CAS fetcher pour %s: %s", node, missing)
+                cause = result.error_message or f"statut {result.status}: objets CAS introuvables sur les sources candidates ou intégrité md5 invalide"
+                logger.error(
+                    "❌ Échec récupération des dépendances CAS (W6) pour le nœud %s: %s (cause: %s)",
+                    node,
+                    missing,
+                    cause,
+                )
                 return missing
 
-        # Vérification et repli pour les chemins (dep_paths ou extraits de dvc.lock)
+        # Vérification des chemins locaux sans repli /fetch_artifact (W6)
         all_paths = list(dep_paths or [])
         for d in deps:
             p = d.get("path")
@@ -476,8 +459,6 @@ class BranchExecutor:
             return []
 
         missing_paths: List[str] = []
-        workers_hint = (resources or {}).get("workers") or []
-
         for path in all_paths:
             local_path = os.path.join(self.repo_dir, path)
             if os.path.exists(local_path) and (
@@ -486,36 +467,12 @@ class BranchExecutor:
                 logger.info("Dépendance déjà présente localement : %s", path)
                 continue
 
-            logger.info("Dépendance absente localement, tentative de rapatriement : %s", path)
-            fetched = False
-
-            candidate_urls: List[str] = []
-            if dep_sources and path in dep_sources:
-                sources = dep_sources[path]
-                if isinstance(sources, list):
-                    candidate_urls.extend(sources)
-                elif isinstance(sources, str):
-                    candidate_urls.append(sources)
-
-            for w in workers_hint:
-                if w not in candidate_urls:
-                    candidate_urls.append(w)
-
-            if not candidate_urls and self.headnode_url:
-                hw_list = self._get_workers_from_headnode()
-                for w in hw_list:
-                    s_url = w.get("service_url")
-                    if s_url and s_url not in candidate_urls:
-                        candidate_urls.append(s_url)
-
-            for worker_target in candidate_urls:
-                if self._fetch_artifact_from_worker(worker_target, path):
-                    fetched = True
-                    break
-
-            if not fetched:
-                logger.warning("Dépendance %s introuvable auprès des pairs.", path)
-                missing_paths.append(path)
+            logger.error(
+                "❌ Dépendance %s introuvable localement pour le nœud %s (repli /fetch_artifact interdit sous W6 CAS)",
+                path,
+                node,
+            )
+            missing_paths.append(path)
 
         return missing_paths
 
