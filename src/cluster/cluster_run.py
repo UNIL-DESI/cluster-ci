@@ -22,20 +22,37 @@ import urllib.error
 import tarfile
 import hashlib
 import zipfile
+import shutil
 
 # Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
 try:
-    from src.config.defaults import DEFAULT_RESOURCES
+    from src.config.defaults import (
+        DEFAULT_RESOURCES,
+        DEFAULT_CPUS,
+        DEFAULT_GPUS,
+        DEFAULT_STORAGE_GB,
+    )
     DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
 except ImportError:
     try:
-        from config.defaults import DEFAULT_RESOURCES
+        from config.defaults import (
+            DEFAULT_RESOURCES,
+            DEFAULT_CPUS,
+            DEFAULT_GPUS,
+            DEFAULT_STORAGE_GB,
+        )
         DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
     except ImportError:
         try:
             from scheduler.defaults import DEFAULT_RAM_GB
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
         except ImportError:
             DEFAULT_RAM_GB = 10.0
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
 
 try:
     from src.scheduler.submit_job import (
@@ -53,7 +70,7 @@ except ImportError:
     except ImportError:
         def run_planner_for_submission(repo_dir="."):
             import subprocess
-            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.scheduler.planner")
+            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
             cmd = (
                 ["uv", "run", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
                 if shutil.which("uv")
@@ -1545,6 +1562,26 @@ def parse_cluster_ci_config(project_dir="."):
     if aw_match:
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
+    # Parse REQUIRED_CPUS (A16)
+    cpus_req = DEFAULT_CPUS
+    cpus_match = re.search(r'REQUIRED_CPUS\s*=\s*(\d+)', content)
+    if cpus_match:
+        cpus_req = int(cpus_match.group(1))
+
+    # Parse REQUIRED_GPUS (A16)
+    gpus_req = DEFAULT_GPUS
+    gpus_match = re.search(r'REQUIRED_GPUS\s*=\s*(\d+)', content)
+    if gpus_match:
+        gpus_req = int(gpus_match.group(1))
+    elif vram_req > 0:
+        gpus_req = 1
+
+    # Parse REQUIRED_STORAGE / REQUIRED_DISK (A16)
+    storage_req = DEFAULT_STORAGE_GB
+    storage_match = re.search(r'(?:REQUIRED_STORAGE|REQUIRED_DISK)\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    if storage_match:
+        storage_req = float(storage_match.group(1))
+
     # Parse PARALLEL_STAGES
     parallel_stages = False
     ps_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
@@ -1554,6 +1591,12 @@ def parse_cluster_ci_config(project_dir="."):
     return {
         "ram_required_gb": ram_req,
         "vram_required_gb": vram_req,
+        "cpus_required": cpus_req,
+        "gpus_required": gpus_req,
+        "storage_required_gb": storage_req,
+        "cpus": cpus_req,
+        "gpus": gpus_req,
+        "storage_gb": storage_req,
         "max_runtime_hours": max_runtime,
         "exposed_port": exposed_port,
         "custom_web_app": custom_web_app,
@@ -1629,6 +1672,30 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
     return False
 
 
+def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None):
+    """Fetch logs from headnode with priority on /job_logs/{job_id} and fallback on /api/jobs/{job_id}/logs."""
+    routes = [
+        f"{headnode_url}/job_logs/{job_id}?offset={offset}",
+        f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}",
+    ]
+    for url in routes:
+        try:
+            req = urllib.request.Request(url)
+            if cluster_token:
+                req.add_header("Authorization", f"Bearer {cluster_token}")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    return data.get("logs", ""), data.get("offset", offset)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue
+            break
+        except Exception:
+            break
+    return "", offset
+
+
 def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     """Poll job status and stream live logs directly from headnode API for a local run."""
     init_log_redirection()
@@ -1637,20 +1704,12 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     last_nodes_summary = None
 
     while True:
-        # 1. Fetch latest logs from Headnode API
+        # 1. Fetch latest logs from Headnode API (priorité /job_logs, repli /api/jobs/{id}/logs)
         try:
-            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
-            req = urllib.request.Request(logs_url)
-            if cluster_token:
-                req.add_header("Authorization", f"Bearer {cluster_token}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    log_resp = json.loads(resp.read().decode("utf-8"))
-                    new_logs = log_resp.get("logs", "")
-                    offset = log_resp.get("offset", offset)
-                    if new_logs and isinstance(new_logs, str):
-                        for line in new_logs.splitlines():
-                            print_line(line)
+            new_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
+            if new_logs and isinstance(new_logs, str):
+                for line in new_logs.splitlines():
+                    print_line(line)
         except Exception:
             # Silently continue on temporary network glitches while polling logs
             pass
@@ -1686,17 +1745,10 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     elif status in ("completed", "failed"):
                         # Drain any remaining logs one final time
                         try:
-                            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
-                            req = urllib.request.Request(logs_url)
-                            if cluster_token:
-                                req.add_header("Authorization", f"Bearer {cluster_token}")
-                            with urllib.request.urlopen(req, timeout=5) as r2:
-                                if r2.status == 200:
-                                    log_resp = json.loads(r2.read().decode("utf-8"))
-                                    final_logs = log_resp.get("logs", "")
-                                    if final_logs and isinstance(final_logs, str):
-                                        for line in final_logs.splitlines():
-                                            print_line(line)
+                            final_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
+                            if final_logs and isinstance(final_logs, str):
+                                for line in final_logs.splitlines():
+                                    print_line(line)
                         except Exception:
                             pass
 
@@ -1712,7 +1764,17 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                             return int(ret_code)
                         else:
                             ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
-                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})")
+                            print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})", file=sys.stderr)
+                            # A17 : Afficher tel quel le message d'erreur du headnode
+                            job_error = job_data.get("error_message") or job_data.get("error")
+                            if job_error:
+                                print(f"❌ Error message: {job_error}", file=sys.stderr)
+                            if nodes_data and isinstance(nodes_data, list):
+                                for nd in nodes_data:
+                                    if isinstance(nd, dict) and nd.get("status") == "failed":
+                                        node_err = nd.get("error_message")
+                                        if node_err:
+                                            print(f"❌ Node '{nd.get('name', 'unknown')}' failed: {node_err}", file=sys.stderr)
                             return int(ret_code)
         except Exception:
             # Status check temporary error
@@ -1793,6 +1855,12 @@ def local_run():
         "is_local": True,
         "source_transfer_id": source_transfer_id,
     }
+    if config.get("cpus") is not None:
+        payload["cpus"] = config["cpus"]
+    if config.get("gpus") is not None:
+        payload["gpus"] = config["gpus"]
+    if config.get("storage_gb") is not None:
+        payload["storage_gb"] = config["storage_gb"]
     if plan is not None:
         payload["plan"] = plan
 
@@ -1819,7 +1887,14 @@ def local_run():
             error_body = e.read().decode("utf-8")
         except Exception:
             pass
-        print(f"❌ Error submitting local job (HTTP {e.code}): {e.reason} - {error_body}", file=sys.stderr)
+        err_msg = error_body
+        try:
+            err_json = json.loads(error_body)
+            if isinstance(err_json, dict) and "error" in err_json:
+                err_msg = err_json["error"]
+        except Exception:
+            pass
+        print(f"❌ Error submitting local job (HTTP {e.code}): {err_msg}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         _delete_local_transfer(headnode_url, source_transfer_id, cluster_token)
@@ -1839,6 +1914,8 @@ def local_run():
     except KeyboardInterrupt:
         USER_INTERRUPTED = True
         print("\n🛑 Execution interrupted by user.")
+        _headnode_stop_job(job_id, headnode_url, cluster_token)
+        cleanup()
         sys.exit(130)
 
 def main():

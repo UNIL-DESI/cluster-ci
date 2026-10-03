@@ -7,17 +7,33 @@ import signal
 
 # Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
 try:
-    from src.config.defaults import DEFAULT_RESOURCES
+    from src.config.defaults import (
+        DEFAULT_RESOURCES,
+        DEFAULT_CPUS,
+        DEFAULT_GPUS,
+        DEFAULT_STORAGE_GB,
+    )
     DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
 except ImportError:
     try:
-        from config.defaults import DEFAULT_RESOURCES
+        from config.defaults import (
+            DEFAULT_RESOURCES,
+            DEFAULT_CPUS,
+            DEFAULT_GPUS,
+            DEFAULT_STORAGE_GB,
+        )
         DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
     except ImportError:
         try:
             from scheduler.defaults import DEFAULT_RAM_GB
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
         except ImportError:
             DEFAULT_RAM_GB = 10.0
+            DEFAULT_CPUS = 2
+            DEFAULT_GPUS = 0
+            DEFAULT_STORAGE_GB = 0.0
 
 
 def get_planner_module_name():
@@ -399,6 +415,23 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     if aw_match:
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
+    # Parse REQUIRED_CPUS (A16)
+    cpus_match = re.search(r'REQUIRED_CPUS\s*=\s*(\d+)', content)
+    cpus_req = int(cpus_match.group(1)) if cpus_match else None
+
+    # Parse REQUIRED_GPUS (A16)
+    gpus_match = re.search(r'REQUIRED_GPUS\s*=\s*(\d+)', content)
+    if gpus_match:
+        gpus_req = int(gpus_match.group(1))
+    elif vram_req > 0:
+        gpus_req = 1
+    else:
+        gpus_req = None
+
+    # Parse REQUIRED_STORAGE or REQUIRED_DISK (A16)
+    storage_match = re.search(r'(?:REQUIRED_STORAGE|REQUIRED_DISK)\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
+    storage_req = float(storage_match.group(1)) if storage_match else None
+
     # Parse PARALLEL_STAGES & execution planificateur W1 (v3)
     parallel_stages_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
     parallel_stages_enabled = bool(parallel_stages_match)
@@ -447,10 +480,29 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "is_local": is_local,
             "local_repo_path": local_repo_path,
         }
+        if cpus_req is not None:
+            payload["cpus"] = cpus_req
+            payload["required_cpus"] = cpus_req
+        if gpus_req is not None:
+            payload["gpus"] = gpus_req
+            payload["required_gpus"] = gpus_req
+        if storage_req is not None:
+            payload["storage_gb"] = storage_req
+            payload["required_storage"] = storage_req
         if plan is not None:
             payload["plan"] = plan
 
         resp = requests.post(f"{headnode_url}/submit_job", json=payload, headers=headers, timeout=10)
+        if resp.status_code >= 400:
+            err_msg = resp.text
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, dict) and "error" in err_json:
+                    err_msg = err_json["error"]
+            except Exception:
+                pass
+            print(f"❌ Error submitting job (HTTP {resp.status_code}): {err_msg}", file=sys.stderr)
+            sys.exit(1)
         resp.raise_for_status()
         job_data = resp.json()
         job_id = job_data['job_id']
@@ -489,10 +541,60 @@ def wait_for_job(headnode_url, job_id, branch=None):
         token = os.environ.get("CLUSTER_TOKEN")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-        # === NON-DRAFT BRANCHES: Detach GHA without killing the worker job ===
-        # The worker job continues running independently. We clear gh_run_id
-        # so clean_ghosts won't kill it when it sees the GHA run as cancelled.
-        if not is_draft_branch:
+        # === DRAFT BRANCHES OU INTERRUPT UTILISATEUR (SIGINT / Ctrl+C) : Annulation du job entier ===
+        if is_draft_branch or sig == signal.SIGINT:
+            worker_url = None
+            cancel_error = None
+
+            # 1. Annulation globale sur le Headnode via POST /api/jobs/{job_id}/stop (A17 / Multi-machines)
+            try:
+                stop_resp = requests.post(f"{headnode_url}/api/jobs/{job_id}/stop", headers=headers, timeout=10)
+                if stop_resp.status_code not in (200, 404):
+                    cancel_error = f"Headnode returned HTTP {stop_resp.status_code}: {stop_resp.text}"
+            except Exception as e:
+                cancel_error = e
+
+            # 2. Récupérer l'URL du worker si disponible pour notification de repli direct
+            try:
+                resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
+                if resp.status_code == 200:
+                    job = resp.json()
+                    worker_url = job.get('worker_service_url')
+            except Exception as e:
+                if not cancel_error:
+                    cancel_error = e
+
+            if worker_url:
+                try:
+                    requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
+                except Exception as e:
+                    if not cancel_error:
+                        cancel_error = e
+
+            try:
+                requests.post(f"{headnode_url}/update_job_status", json={
+                    "job_id": job_id,
+                    "status": "failed",
+                    "exit_code": -signal.SIGTERM
+                }, headers=headers, timeout=10)
+            except Exception as e:
+                if not cancel_error:
+                    cancel_error = e
+
+            # Messages de journalisation enveloppés
+            try:
+                print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating full cancellation to headnode...")
+                if cancel_error:
+                    print(f"⚠️ Error during cancellation: {cancel_error}")
+                else:
+                    print("✅ Cancellation signal sent.")
+            except (BrokenPipeError, Exception):
+                pass
+
+            sys.exit(128 + sig)
+
+        # === NON-DRAFT BRANCHES (SIGTERM GHA) : Detach GHA without killing worker job ===
+        else:
             try:
                 requests.post(f"{headnode_url}/update_job_status", json={
                     "job_id": job_id,
@@ -505,54 +607,6 @@ def wait_for_job(headnode_url, job_id, branch=None):
             except (BrokenPipeError, Exception):
                 pass
             sys.exit(128 + sig)
-
-        # === DRAFT BRANCHES: Full cancellation propagation (fast-iteration mode) ===
-        worker_url = None
-        cancel_error = None
-        
-        # 1. Network calls first in isolated try-except blocks, before ANY print()
-        try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
-            resp.raise_for_status()
-            job = resp.json()
-            worker_url = job.get('worker_service_url')
-        except Exception as e:
-            cancel_error = e
-
-        if worker_url:
-            try:
-                requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
-            except Exception as e:
-                if not cancel_error:
-                    cancel_error = e
-
-        try:
-            requests.post(f"{headnode_url}/update_job_status", json={
-                "job_id": job_id,
-                "status": "failed",
-                "exit_code": -signal.SIGTERM
-            }, headers=headers, timeout=10)
-        except Exception as e:
-            if not cancel_error:
-                cancel_error = e
-
-        # 2. Print statements wrapped in try...except BrokenPipeError
-        try:
-            print(f"\n🛑 Signal received ({signal.Signals(sig).name}). Propagating cancellation...")
-            if cancel_error:
-                print(f"⚠️ Error during cancellation: {cancel_error}")
-            else:
-                if worker_url:
-                    print(f"📡 Sending cancellation to worker: {worker_url}")
-                    print("✅ Cancellation signal sent.")
-                else:
-                    print("⚠️ Job was not yet assigned to a worker or worker info missing.")
-        except BrokenPipeError:
-            pass
-        except Exception:
-            pass
-
-        sys.exit(128 + sig)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -751,14 +805,18 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
-                except Exception:
-                    pass
+                except requests.exceptions.RequestException:
+                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs headnode: {unexpected_err}\n")
 
             if logs_resp is None and worker_url:
                 try:
                     logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
-                except Exception:
-                    pass
+                except requests.exceptions.RequestException:
+                    pass  # Tolérer les micro-coupures réseau transitoires lors du polling
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs worker: {unexpected_err}\n")
 
             if logs_resp and logs_resp.status_code == 200:
                 try:
@@ -774,8 +832,10 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         sys.stdout.write(new_logs)
                         sys.stdout.flush()
                         log_offset = logs_data.get('offset', log_offset)
-                except Exception:
-                    pass
+                except (ValueError, KeyError) as json_err:
+                    sys.stderr.write(f"\n⚠️ Format de logs invalide reçu du headnode/worker: {json_err}\n")
+                except Exception as unexpected_err:
+                    sys.stderr.write(f"\n⚠️ Erreur inattendue traitement logs: {unexpected_err}\n")
 
             if status == 'completed':
                 print_final_dag_summary(nodes_data, job_id)
@@ -786,6 +846,15 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 exit_code = job.get('exit_code')
                 if exit_code is None or exit_code == 0:
                     exit_code = 1  # Ensure non-zero exit on failure
+
+                # A17 : Remonter fidèlement le message d'erreur du headnode ou des nœuds
+                job_error = job.get('error_message') or job.get('error')
+                if job_error:
+                    print(f"\n❌ Error message: {job_error}")
+                if nodes_data and isinstance(nodes_data, list):
+                    for nd in nodes_data:
+                        if isinstance(nd, dict) and nd.get('status') == 'failed' and nd.get('error_message'):
+                            print(f"❌ Node '{nd.get('name')}' failed: {nd.get('error_message')}")
 
                 # Infrastructure-level failure messages
                 if exit_code == -99:
@@ -808,7 +877,8 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 elif exit_code == 255:
                     print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
                 else:
-                    print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
+                    if not job_error:
+                        print(f"\n❌ Job {job_id} failed with exit code {exit_code}")
                 return exit_code
 
             if not status_printed and status != last_status:

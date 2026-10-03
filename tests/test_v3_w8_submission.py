@@ -313,6 +313,148 @@ class TestV3W8Submission(unittest.TestCase):
         self.assertIn("PARALLEL_STAGES", run_script)
         self.assertIn("uv", run_script)
 
+    def test_a16_resources_parsing_and_submission_payload(self):
+        """(A16) Vérifie le parsing de REQUIRED_CPUS, REQUIRED_GPUS, REQUIRED_STORAGE et leur transmission."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ci_file = os.path.join(tmp_dir, ".cluster-ci")
+            with open(ci_file, "w", encoding="utf-8") as f:
+                f.write(
+                    "MAX_RUNTIME_HOURS=2\n"
+                    "REQUIRED_RAM=16GB\n"
+                    "REQUIRED_CPUS=8\n"
+                    "REQUIRED_GPUS=2\n"
+                    "REQUIRED_STORAGE=50GB\n"
+                )
+
+            # 1. Vérification dans parse_cluster_ci_config (cluster_run.py)
+            cfg = parse_cluster_ci_config(tmp_dir)
+            self.assertEqual(cfg["cpus"], 8)
+            self.assertEqual(cfg["gpus"], 2)
+            self.assertEqual(cfg["storage_gb"], 50.0)
+
+            # 2. Vérification dans submit_job.py payload
+            posted_payload = {}
+
+            def fake_post(url, **kwargs):
+                nonlocal posted_payload
+                if url.endswith("/submit_job"):
+                    posted_payload = kwargs.get("json", {})
+                    mock_resp = MagicMock()
+                    mock_resp.status_code = 200
+                    mock_resp.json.return_value = {"job_id": "job-a16-test"}
+                    return mock_resp
+                elif url.endswith("/update_job_status"):
+                    mock_resp = MagicMock()
+                    mock_resp.status_code = 200
+                    return mock_resp
+                return MagicMock(status_code=404)
+
+            with patch("requests.get", return_value=MagicMock(status_code=200)):
+                with patch("requests.post", side_effect=fake_post):
+                    job_id = submit_job(
+                        headnode_url="http://fake-headnode:5000",
+                        repo="UNIL-DESI/test-repo",
+                        branch="main",
+                        is_local=True,
+                        local_repo_path=tmp_dir,
+                    )
+
+            self.assertEqual(job_id, "job-a16-test")
+            self.assertEqual(posted_payload.get("cpus"), 8)
+            self.assertEqual(posted_payload.get("gpus"), 2)
+            self.assertEqual(posted_payload.get("storage_gb"), 50.0)
+
+    def test_a17_rejection_error_verbatim_on_submit(self):
+        """(A17) Vérifie qu'un refus HTTP du headnode est affiché tel quel et entraîne une sortie avec code non nul."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ci_file = os.path.join(tmp_dir, ".cluster-ci")
+            with open(ci_file, "w", encoding="utf-8") as f:
+                f.write("MAX_RUNTIME_HOURS=1\n")
+
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.text = '{"error": "No available workers with 64GB RAM matching required constraints"}'
+            mock_resp.json.return_value = {"error": "No available workers with 64GB RAM matching required constraints"}
+
+            with patch("requests.post", return_value=mock_resp):
+                with pytest.raises(SystemExit) as exc_info:
+                    submit_job(
+                        headnode_url="http://fake-headnode:5000",
+                        repo="UNIL-DESI/test-repo",
+                        branch="main",
+                        is_local=True,
+                        local_repo_path=tmp_dir,
+                    )
+                self.assertNotEqual(exc_info.value.code, 0)
+
+    def test_a17_job_failure_displays_headnode_error_message(self):
+        """(A17) Vérifie que les messages d'erreur du headnode (refus, OOM, échec de nœud) sont remontés fidèlement."""
+        def fake_get(url, **kwargs):
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            if "/job_status/" in url:
+                mock_resp.json.return_value = {
+                    "job_id": "test-fail-job",
+                    "status": "failed",
+                    "exit_code": 1,
+                    "error_message": "Node 'train_stage' killed: CUDA out of memory (OOMKilled)",
+                    "nodes": [
+                        {
+                            "name": "train_stage",
+                            "status": "failed",
+                            "error_message": "CUDA out of memory (allocated 14GB, reserved 15GB)",
+                        }
+                    ],
+                }
+            elif "/job_logs/" in url or "/logs" in url:
+                mock_resp.json.return_value = {"logs": "", "offset": 0}
+            return mock_resp
+
+        with patch("requests.get", side_effect=fake_get):
+            with patch("time.sleep", return_value=None):
+                exit_code = wait_for_job(
+                    headnode_url="http://fake-headnode:5000",
+                    job_id="test-fail-job",
+                    branch="feat/v3",
+                )
+        self.assertEqual(exit_code, 1)
+
+    def test_ctrl_c_cancels_entire_job_via_stop_endpoint(self):
+        """(Multi-machines) Vérifie que Ctrl+C (SIGINT) contacte POST /api/jobs/{job_id}/stop sur le headnode."""
+        import signal
+
+        stop_called_urls = []
+
+        def fake_post(url, **kwargs):
+            stop_called_urls.append(url)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"status": "ok"}
+            return mock_resp
+
+        with patch("requests.post", side_effect=fake_post):
+            with patch("requests.get", return_value=MagicMock(status_code=200, json=lambda: {"status": "running"})):
+                with patch("signal.signal") as mock_signal:
+                    captured_handler = None
+
+                    def fake_reg_signal(sig, handler):
+                        nonlocal captured_handler
+                        if sig == signal.SIGINT:
+                            captured_handler = handler
+
+                    mock_signal.side_effect = fake_reg_signal
+                    try:
+                        with patch("time.sleep", side_effect=KeyboardInterrupt):
+                            wait_for_job("http://fake-headnode:5000", "test-job-stop", branch="cluster-draft/test")
+                    except KeyboardInterrupt:
+                        pass
+
+                    self.assertIsNotNone(captured_handler)
+                    with pytest.raises(SystemExit) as exc_info:
+                        captured_handler(signal.SIGINT, None)
+
+                    self.assertIn("http://fake-headnode:5000/api/jobs/test-job-stop/stop", stop_called_urls)
+
 
 if __name__ == "__main__":
     unittest.main()
