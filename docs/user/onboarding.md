@@ -79,12 +79,13 @@ Before running your first job, you need to set up two files at the root of your 
 This file was created automatically by the install script. It controls how much RAM, VRAM, and time your job can use. Open it and adjust the values to match your needs:
 
 ```ini
-REQUIRED_RAM=2GB
+REQUIRED_RAM=10GB
 REQUIRED_VRAM=24GB
 MAX_RUNTIME_HOURS=4
+# Optional: PARALLEL_STAGES=true
 ```
 
-→ See the **[Configuration Reference](configuration.md)** for a complete list of all available parameters.
+→ See the **[Configuration Reference](configuration.md)** and **[Per-Stage Resources Guide](stage_resources.md)** for complete details on resource settings.
 
 ### `dvc.yaml` — Experiment Pipeline
 

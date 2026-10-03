@@ -123,3 +123,54 @@ Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC a
 Below is the schema outlining how jobs enter the execution queue, how placement constraints are evaluated by the scheduler, and how workers are allocated to execution slots.
 
 ![Scheduling Queue](../assets/images/scheduling_queue.png)
+
+---
+
+## 8. Adding Worker Nodes & Hardware Telemetry (v3)
+
+Cluster-CI v3 implements **fully automated capability discovery**. Adding a new worker node requires zero manual configuration in the scheduler and zero code changes in the headnode.
+
+### Provisioning a New Machine
+
+To integrate a new physical worker into the cluster:
+
+1. Run the worker one-liner installation script:
+   ```bash
+   curl -H 'Cache-Control: no-cache, no-store' -sSL "https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=$(date +%s)" | bash -s -- worker
+   ```
+2. Provide the `HEADNODE_URL` and `CLUSTER_TOKEN` when prompted.
+3. Distribute the inter-worker SSH public key (`~/.ssh/id_rsa.pub`) to enable peer-to-peer artifact transfers.
+
+Once the `cluster-worker-agent` service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.
+
+### Automatic Capability Discovery
+
+During the registration handshake (`POST /register_worker`), the worker agent scans its local hardware and reports:
+
+* **CPU Cores (`cpus`)**: Physical and logical CPU core counts via `psutil`.
+* **RAM (`total_ram_gb`, `available_ram_gb`)**: Total and available physical RAM in GB.
+* **GPU & VRAM (`vram_per_gpu`, `gpu_count`, `gpu_name`)**: Per-GPU VRAM capacity obtained via `nvidia-smi`.
+* **Unified Memory Detection (`unified_memory`)**: Automatically detects Grace Blackwell architectures (GB10) where CPU and GPU share a unified NVLink-C2C memory pool.
+* **Architecture (`arch`)**: CPU architecture (`x86_64` vs `aarch64` / `arm64`).
+* **Disk Space (`disk_free_gb`)**: Available filesystem capacity for workspace and Docker layers.
+
+### Scheduler Admission Logic
+
+The headnode scheduler uses these reported telemetry fields to make admission decisions:
+
+```python
+# Unified memory architecture (Grace Blackwell GB10)
+if worker["unified_memory"]:
+    is_admissible = (stage["ram_gb"] + stage["vram_gb"]) <= (worker["total_ram_gb"] - 8.0)
+
+# Discrete architecture (e.g. RTX 3090, AMD/Intel CPUs)
+else:
+    is_admissible = (
+        stage["ram_gb"] <= (worker["available_ram_gb"] - 8.0) and
+        stage["vram_gb"] <= sum_available_vram(worker)
+    )
+```
+
+<!-- v3: à vérifier contre l'implémentation : structure exacte du payload register_worker et nom des colonnes SQLite -->
+For stages scheduled on discrete multi-GPU machines, the scheduler dynamically assigns specific GPU indices and injects `CUDA_VISIBLE_DEVICES` into the container environment.
+

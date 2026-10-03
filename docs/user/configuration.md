@@ -14,10 +14,13 @@ REQUIRED_RAM=16GB
 REQUIRED_VRAM=24GB
 MAX_RUNTIME_HOURS=6
 
+# Optional: parallel DAG execution across workers
+PARALLEL_STAGES=true
+
 # Optional: restrict to specific workers
 ALLOWED_WORKERS=gb10-node1,gb10-node2
 
-# Optional: run only specific DVC stages
+# Optional: run only specific DVC stages (classic mode)
 STAGES=train
 ```
 
@@ -32,8 +35,8 @@ These parameters control resource allocation and job timeout. Every `.cluster-ci
 | Parameter | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `MAX_RUNTIME_HOURS` | **Yes** | — | Maximum allowed runtime in hours (1–24). The job is automatically killed if it exceeds this limit. |
-| `REQUIRED_RAM` | No | `2GB` | Minimum physical RAM required on the worker. The cluster reserves 8 GB per worker for the OS, so a 128 GB worker can accept up to 120 GB. |
-| `REQUIRED_VRAM` | No | `0GB` | Minimum GPU VRAM required. Set to `0GB` (or omit) to allow execution on CPU-only nodes. |
+| `REQUIRED_RAM` | No | `10GB` | Minimum physical RAM required on the worker. The cluster reserves 8 GB per worker for the OS, so a 128 GB worker can accept up to 120 GB. *(Can also be overridden per stage in `dvc.yaml` via `meta.cluster.ram_gb`)*. |
+| `REQUIRED_VRAM` | No | `0GB` | Minimum GPU VRAM required. Set to `0GB` (or omit) to allow execution on CPU-only nodes. *(Can also be overridden per stage in `dvc.yaml` via `meta.cluster.vram_gb`)*. |
 
 !!! warning "Set realistic values"
     If you request more RAM or VRAM than any worker can provide, your job will stay in the queue indefinitely. Check the [Dashboard](dashboard.md) to see available worker capacities.
@@ -42,10 +45,27 @@ These parameters control resource allocation and job timeout. Every `.cluster-ci
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `STAGES` | *(empty — runs full pipeline)* | Comma-separated list of DVC stage names to execute. If empty or set to `all`, the cluster runs `dvc repro` (the full pipeline). To run a subset, specify the **last stage** you want — DVC will automatically run all its upstream dependencies. |
+| `PARALLEL_STAGES` | `false` | When set to `true`, enables **Parallel DAG execution** across multiple cluster workers. Independent branches of your `dvc.yaml` pipeline run concurrently on available nodes. See [Parallel DAG Execution](parallel_execution.md). |
+| `STAGES` | *(empty — runs full pipeline)* | Comma-separated list of DVC stage names to execute (used in classic sequential mode). If empty or set to `all`, the cluster runs `dvc repro`. |
 | `ALLOWED_WORKERS` | *(empty — all workers eligible)* | Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090). |
 
-### Web Application Support
+---
+
+## Per-Stage Resource Overrides (`meta.cluster`)
+
+In addition to repository-wide parameters in `.cluster-ci`, Cluster-CI v3 supports fine-grained resource definitions inside `dvc.yaml` under `meta.cluster`.
+
+Parameters specified in `dvc.yaml` take precedence over `.cluster-ci`:
+* `meta.cluster.image` overrides `DOCKER_IMAGE`
+* `meta.cluster.ram_gb` overrides `REQUIRED_RAM`
+* `meta.cluster.vram_gb` overrides `REQUIRED_VRAM`
+* `meta.cluster.workers` overrides `ALLOWED_WORKERS`
+
+For complete syntax and examples, see the [Per-Stage Resources Guide](stage_resources.md).
+
+---
+
+## Web Application Support
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
@@ -63,7 +83,9 @@ CUSTOM_WEB_APP=true
 
 Your Gradio app will then be accessible from the Dashboard while the job is running.
 
-### Docker Overrides
+---
+
+## Docker Overrides
 
 These parameters let you customize the Docker image and runtime settings. See the [Docker Containers Guide](containers.md) for detailed usage.
 
@@ -94,8 +116,10 @@ REQUIRED_RAM=24GB
 REQUIRED_VRAM=24GB
 MAX_RUNTIME_HOURS=12
 
+# ── Parallel Execution ──
+PARALLEL_STAGES=true
+
 # ── Execution Control ──
-STAGES=train
 ALLOWED_WORKERS=gb10-node1,gb10-node2
 
 # ── Docker (optional) ──
@@ -114,7 +138,7 @@ DOCKER_FLAGS=--env-file=custom.env
 When you run the install script, the following minimal template is created:
 
 ```ini
-REQUIRED_RAM=2GB
+REQUIRED_RAM=10GB
 REQUIRED_VRAM=0GB
 MAX_RUNTIME_HOURS=1
 ```
