@@ -398,3 +398,88 @@ class TestGCW9Deliverables:
         for name in invalid_names:
             with pytest.raises(ValueError):
                 gc.validate_project_name(name)
+
+    def test_storage_saturation_threshold_required(self, monkeypatch):
+        """(1) Le ménage ne se déclenche QUE si stockage saturé (< 50GB / 100GB). Zéro purge à l'âge seul."""
+        p_path = self._create_project("very_old_proj", status="idle", hours_ago=500.0, files={"old.bin": 1000})
+
+        # Free space is 150 GB (ample space, > 100 GB maintenance & > 50 GB emergency threshold)
+        monkeypatch.setattr(gc, "get_free_space", lambda: 150 * 1024**3)
+
+        gc.run_transfer_gc()
+        gc.run_gc()
+
+        # Project MUST remain intact because disk is not saturated
+        assert (p_path / "old.bin").exists()
+        with open(gc.get_registry_path(), "r") as f:
+            reg = json.load(f)
+        assert reg["very_old_proj"]["status"] == "idle"
+
+        # Now simulate disk saturation (< 50 GB emergency threshold)
+        monkeypatch.setattr(gc, "get_free_space", lambda: 20 * 1024**3)
+        gc.run_gc()
+
+        # Now it is evicted
+        assert not (p_path / "old.bin").exists()
+
+    def test_a11_shared_dvc_cache_protection_when_active_executor_on_repo(self, monkeypatch):
+        """(3) A11 : le cache DVC partagé d'un dépôt n'est purgé que si AUCUN exécuteur de ce dépôt n'est actif."""
+        ws_idle = self._create_project("UNIL-DESI/my-repo_runner_1", status="idle", hours_ago=48.0, files={"code.py": 100}, has_dvc_cache=True)
+        ws_active = self._create_project("UNIL-DESI/my-repo_runner_2", status="running", hours_ago=0.1, files={"code2.py": 100})
+
+        current_space = [40 * 1024**3]  # starts < 50 GB
+        monkeypatch.setattr(gc, "get_free_space", lambda: current_space[0])
+
+        # Intercept cleanup_level_4
+        l4_called = []
+        orig_l4 = gc.cleanup_level_4
+        def track_l4(path, name=None):
+            l4_called.append(name)
+            return orig_l4(path, name)
+        monkeypatch.setattr(gc, "cleanup_level_4", track_l4)
+
+        # Intercept cleanup_level_5
+        l5_called = []
+        monkeypatch.setattr(gc, "cleanup_level_5", lambda path, name=None: l5_called.append(name))
+
+        gc.run_gc()
+
+        # Level 4 DVC cache MUST NOT be called for ws_idle because ws_active is running on same base repo!
+        assert "UNIL-DESI/my-repo_runner_1" not in l4_called
+        assert (ws_idle / ".dvc" / "cache").exists()
+        # Active workspace MUST NEVER be touched in Tier 5
+        assert "UNIL-DESI/my-repo_runner_2" not in l5_called
+        assert (ws_active / "code2.py").exists()
+
+    def test_docker_images_lru_cleanup(self, monkeypatch):
+        """(2) Images Docker inutilisées triées par LRU, jamais si un conteneur actif ou arrêté existe."""
+        def mock_docker_ps_a(*args, **kwargs):
+            # Container stopped using image 'used_img:tag'
+            return mock.Mock(returncode=0, stdout="used_img:tag\tsha256:111111111111\n")
+
+        def mock_docker_images(*args, **kwargs):
+            # 3 images: one used, two unused with different creation dates (LRU)
+            stdout = (
+                "111111111111\tused_img\ttag\t5.0GB\t2026-05-01 10:00:00\n"
+                "222222222222\tunused_old\tv1\t10.0GB\t2023-01-01 10:00:00\n"
+                "333333333333\tunused_new\tv2\t15.0GB\t2026-01-01 10:00:00\n"
+            )
+            return mock.Mock(returncode=0, stdout=stdout)
+
+        monkeypatch.setattr(gc.subprocess, "run", lambda cmd, *a, **kw: (
+            mock_docker_ps_a() if "ps" in cmd else
+            mock_docker_images() if "images" in cmd else
+            mock.Mock(returncode=0, stdout="")
+        ))
+
+        unused = gc.get_unused_docker_images()
+        # Used image must be filtered out
+        assert len(unused) == 2
+        # LRU order: oldest (2023) first, then (2026)
+        assert unused[0]["id"] == "222222222222"
+        assert unused[0]["ref"] == "unused_old:v1"
+        assert unused[0]["size_bytes"] == int(10.0 * 1024**3)
+
+        assert unused[1]["id"] == "333333333333"
+        assert unused[1]["ref"] == "unused_new:v2"
+

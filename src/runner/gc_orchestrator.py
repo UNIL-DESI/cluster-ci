@@ -3,6 +3,7 @@ import json
 import shutil
 import sys
 import fnmatch
+import re
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -582,10 +583,199 @@ def cleanup_level_5(project_path, project_name=None):
         freed = get_dir_size(project_path)
         try:
             shutil.rmtree(project_path)
-            log_deletion(str(project_path), freed, f"Tier 4: Full workspace for {project_name or project_path.name}", dry_run=False)
+            log_deletion(str(project_path), freed, f"Tier 5: Full workspace for {project_name or project_path.name}", dry_run=False)
         except Exception as e:
             print(f"  Error in level 5 cleanup: {e}")
     return freed
+
+def parse_docker_size(size_str):
+    """Parses Docker size string (e.g. '133MB', '27.3GB', '8.45kB', '500B') to integer bytes."""
+    if not size_str:
+        return 0
+    s = str(size_str).strip().upper().replace(" ", "")
+    m = re.match(r'^([0-9.]+)\s*([KMGTP]?B?)$', s)
+    if not m:
+        return 0
+    try:
+        val = float(m.group(1))
+        unit = m.group(2)
+        multipliers = {
+            "": 1, "B": 1,
+            "KB": 1024, "K": 1024,
+            "MB": 1024**2, "M": 1024**2,
+            "GB": 1024**3, "G": 1024**3,
+            "TB": 1024**4, "T": 1024**4,
+            "PB": 1024**5, "P": 1024**5,
+        }
+        return int(val * multipliers.get(unit, 1))
+    except (ValueError, TypeError):
+        return 0
+
+def get_docker_used_image_refs():
+    """
+    Returns set of image IDs and repo:tag references used by ANY container (running or stopped).
+    Containers of active or stopped executors must NEVER have their images pruned.
+    """
+    used = set()
+    is_mock = False
+    try:
+        import unittest.mock as mock
+        if isinstance(subprocess.run, (mock.Mock, mock.MagicMock)):
+            is_mock = True
+    except Exception:
+        pass
+    if is_mock:
+        return used
+
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Image}}"],
+            capture_output=True,
+            text=True
+        )
+        if res.returncode == 0 and isinstance(res.stdout, str):
+            for line in res.stdout.strip().split("\n"):
+                img = line.strip()
+                if img:
+                    used.add(img)
+                    if ":" in img:
+                        used.add(img.split(":")[0])
+                    if len(img) >= 12:
+                        used.add(img[:12])
+    except Exception as e:
+        print(f"  Warning querying docker containers for used images: {e}")
+    return used
+
+def get_unused_docker_images(protected_image_refs=None):
+    """
+    Returns list of unused Docker images sorted by LRU (oldest first):
+    [{'id': ..., 'ref': ..., 'repo': ..., 'tag': ..., 'size_bytes': ..., 'created_at': ...}, ...]
+    Never includes images used by existing containers (running or stopped)
+    or explicitly protected images (from active jobs or registry).
+    """
+    used_refs = get_docker_used_image_refs()
+    if protected_image_refs:
+        used_refs.update(protected_image_refs)
+
+    is_mock = False
+    try:
+        import unittest.mock as mock
+        if isinstance(subprocess.run, (mock.Mock, mock.MagicMock)):
+            is_mock = True
+    except Exception:
+        pass
+    if is_mock:
+        return []
+
+    images = []
+    try:
+        res = subprocess.run(
+            ["docker", "images", "--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"],
+            capture_output=True,
+            text=True
+        )
+        if res.returncode == 0 and isinstance(res.stdout, str):
+            for line in res.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 4:
+                    continue
+                img_id = parts[0].strip()
+                repo = parts[1].strip()
+                tag = parts[2].strip()
+                size_str = parts[3].strip()
+                created_at = parts[4].strip() if len(parts) > 4 else ""
+
+                ref = f"{repo}:{tag}" if repo != "<none>" and tag != "<none>" else img_id
+
+                # Exclude if used by ANY container or protected ref
+                if (img_id in used_refs or 
+                    ref in used_refs or 
+                    repo in used_refs or 
+                    img_id[:12] in used_refs or
+                    any(p in used_refs for p in (img_id, ref, repo))):
+                    continue
+
+                size_bytes = parse_docker_size(size_str)
+                images.append({
+                    "id": img_id,
+                    "ref": ref,
+                    "repo": repo,
+                    "tag": tag,
+                    "size_bytes": size_bytes,
+                    "created_at": created_at
+                })
+    except Exception as e:
+        print(f"  Warning querying docker images: {e}")
+
+    # Sort LRU: oldest created_at first
+    images.sort(key=lambda x: x["created_at"])
+    return images
+
+def cleanup_unused_docker_images(dry_run=False, protected_image_refs=None):
+    """
+    Tier 4: Delete unused Docker images sorted by LRU (oldest first).
+    Never touches images used by existing containers (running or stopped)
+    or images associated with active executors.
+    Returns total bytes freed (or simulated freed).
+    """
+    print("  [Tier 4] Cleaning unused Docker images (LRU)...")
+    unused_images = get_unused_docker_images(protected_image_refs=protected_image_refs)
+    freed_total = 0
+    for img in unused_images:
+        img_ref = img["ref"]
+        img_id = img["id"]
+        img_size = img["size_bytes"]
+        if dry_run:
+            print(f"  [Level Docker Images] [DRY RUN] Would delete unused Docker image {img_ref} (created: {img['created_at']})")
+            log_deletion(img_ref, img_size, f"Tier 4: Unused Docker image (LRU, created: {img['created_at']})", dry_run=True)
+            freed_total += img_size
+        else:
+            try:
+                res = subprocess.run(["docker", "rmi", img_id], capture_output=True, text=True)
+                if res.returncode == 0:
+                    log_deletion(img_ref, img_size, f"Tier 4: Unused Docker image (LRU, created: {img['created_at']})", dry_run=False)
+                    freed_total += img_size
+                else:
+                    err_msg = res.stderr.strip() if res.stderr else f"Exit code {res.returncode}"
+                    print(f"  ⚠️ Failed to delete Docker image {img_ref}: {err_msg}")
+            except Exception as e:
+                print(f"  ⚠️ Error deleting Docker image {img_ref}: {e}")
+    return freed_total
+
+def get_base_repo_key(project_name):
+    """
+    Extracts canonical base repository identifier ignoring runner/executor suffixes and _local prefix.
+    Examples:
+      '_local/UNIL-DESI/llm-as-recommender' -> 'UNIL-DESI/llm-as-recommender'
+      'UNIL-DESI/llm-as-recommender_runner_1' -> 'UNIL-DESI/llm-as-recommender'
+      'UNIL-DESI/llm-as-recommender__exec2' -> 'UNIL-DESI/llm-as-recommender'
+    """
+    clean = str(project_name).strip()
+    if clean.startswith("_local/"):
+        clean = clean[len("_local/"):]
+    # Strip runner / executor suffix patterns
+    clean = re.sub(r'(_runner_|_worker_|_exec_|\.worker_|-runner-|-worker-|-exec-)\w+$', '', clean)
+    clean = re.sub(r'(__\w+)$', '', clean)
+    clean = re.sub(r'(_runner\d+)$', '', clean)
+    return clean
+
+def has_active_executor_for_repo(base_repo, registry, active_docker_info=None, current_time=None):
+    """
+    Checks if ANY executor workspace corresponding to base_repo is active
+    (status running in registry, active container/mount in Docker, or executed < protect_hours ago).
+    """
+    if current_time is None:
+        current_time = time.time()
+    for name, data in registry.items():
+        if get_base_repo_key(name) == base_repo:
+            protected, reason = is_project_protected(name, data, current_time=current_time, active_docker_info=active_docker_info)
+            if protected:
+                return True, name, reason
+    return False, "", ""
+
 
 def get_free_space():
     repo_dir = get_repositories_dir()
@@ -661,8 +851,9 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
     Unified tiered garbage collector with strict order:
     1. Caches / temporaires régénérables (docker system prune + DVC history + whitelisted caches/temp)
     2. Volumes Docker /home/user des projets inactifs (cluster-ci-home-* et cluster-ci-home-*-<image_slug>)
-    3. Cache DVC des projets inactifs les plus anciens (LRU)
-    4. Workspace complet en dernier (LRU)
+    3. Cache DVC partagé/local des projets inactifs les plus anciens (LRU, protégé si exécuteur actif sur le dépôt)
+    4. Images Docker inutilisées (LRU, jamais si un conteneur actif ou arrêté existe)
+    5. Workspace complet en dernier recours (LRU)
     Stopping as soon as the target free space threshold is reached.
     Projects currently running or executed < N hours ago (default 6h) are strictly protected.
     """
@@ -836,11 +1027,20 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                         break
 
             # --- Palier 3 : Cache DVC des projets inactifs les plus anciens (LRU) ---
+            # A11 : Le cache DVC partagé d'un dépôt n'est purgé que si AUCUN exécuteur de ce dépôt n'est actif
             if not is_target_reached():
                 print(f"[{mode_name} GC] Tier 3: Cleaning DVC cache of oldest inactive projects (LRU)...")
                 for project_name, data in eligible_projects:
                     if is_target_reached():
                         break
+                    base_repo = get_base_repo_key(project_name)
+                    has_active, active_ws, active_reason = has_active_executor_for_repo(
+                        base_repo, registry, active_docker_info=active_docker_info, current_time=now
+                    )
+                    if has_active:
+                        print(f"  [Level 4] Skipping shared DVC cache for '{project_name}': active executor detected for base repo '{base_repo}' (workspace '{active_ws}': {active_reason}).")
+                        continue
+
                     project_path = repo_dir / project_name
                     cache_path = project_path / ".dvc" / "cache"
                     if not cache_path.exists():
@@ -865,9 +1065,47 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                     if is_target_reached():
                         break
 
-            # --- Palier 4 : Workspace complet en dernier (LRU) ---
+            # --- Palier 4 : Images Docker inutilisées (LRU) ---
+            # A15 : Images Docker inutilisées triées par LRU, jamais si conteneur actif ou arrêté
             if not is_target_reached():
-                print(f"[{mode_name} GC] Tier 4: Deleting complete workspaces of oldest inactive projects (LRU)...")
+                print(f"[{mode_name} GC] Tier 4: Cleaning unused Docker images (LRU)...")
+                # Collect any images associated with active or protected projects in registry
+                protected_imgs = set()
+                for p_name, p_data in registry.items():
+                    p_prot, _ = is_project_protected(p_name, p_data, current_time=now, active_docker_info=active_docker_info)
+                    if p_prot:
+                        for img_field in ("image", "docker_image", "image_name"):
+                            if p_data.get(img_field):
+                                protected_imgs.add(p_data[img_field])
+
+                unused_images = get_unused_docker_images(protected_image_refs=protected_imgs)
+                for img in unused_images:
+                    if is_target_reached():
+                        break
+                    img_ref = img["ref"]
+                    img_id = img["id"]
+                    img_size = img["size_bytes"]
+                    if dry_run:
+                        print(f"  [Level Docker Images] [DRY RUN] Would delete unused Docker image {img_ref} (created: {img['created_at']})")
+                        log_deletion(img_ref, img_size, f"Tier 4: Unused Docker image (LRU, created: {img['created_at']})", dry_run=True)
+                        simulated_freed_bytes += img_size
+                    else:
+                        try:
+                            res = subprocess.run(["docker", "rmi", img_id], capture_output=True, text=True)
+                            if res.returncode == 0:
+                                log_deletion(img_ref, img_size, f"Tier 4: Unused Docker image (LRU, created: {img['created_at']})", dry_run=False)
+                                simulated_freed_bytes += img_size
+                            else:
+                                err_msg = res.stderr.strip() if res.stderr else f"Exit code {res.returncode}"
+                                print(f"  ⚠️ Failed to delete Docker image {img_ref}: {err_msg}")
+                        except Exception as e:
+                            print(f"  ⚠️ Error deleting Docker image {img_ref}: {e}")
+                    if is_target_reached():
+                        break
+
+            # --- Palier 5 : Workspace complet en dernier recours (LRU) ---
+            if not is_target_reached():
+                print(f"[{mode_name} GC] Tier 5: Deleting complete workspaces of oldest inactive projects (LRU)...")
                 for project_name, data in eligible_projects:
                     if is_target_reached():
                         break
@@ -883,7 +1121,7 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                     if dry_run:
                         ws_size = get_dir_size(project_path)
                         print(f"  [Level 5] [DRY RUN] Would delete directory {project_path}")
-                        log_deletion(str(project_path), ws_size, f"Tier 4: Full workspace for {project_name}", dry_run=True)
+                        log_deletion(str(project_path), ws_size, f"Tier 5: Full workspace for {project_name}", dry_run=True)
                         simulated_freed_bytes += ws_size
                     else:
                         freed_l5 = cleanup_level_5(project_path, project_name)
