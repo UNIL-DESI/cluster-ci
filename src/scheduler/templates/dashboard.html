@@ -1170,22 +1170,22 @@
             text-transform: uppercase;
             letter-spacing: 0.03em;
         }
-        .v3-status-done { background: #d1fae5; color: #065f46; }
-        [data-theme="dark"] .v3-status-done { background: rgba(16, 185, 129, 0.2); color: #34d399; }
-        .v3-status-running { background: #dbeafe; color: #1e40af; animation: pulse-border 1.5s infinite; }
-        [data-theme="dark"] .v3-status-running { background: rgba(59, 130, 246, 0.25); color: #60a5fa; }
-        .v3-status-ready { background: #cffafe; color: #155e75; }
-        [data-theme="dark"] .v3-status-ready { background: rgba(6, 182, 212, 0.2); color: #22d3ee; }
-        .v3-status-pending { background: #f1f5f9; color: #475569; }
-        [data-theme="dark"] .v3-status-pending { background: rgba(71, 85, 105, 0.25); color: #94a3b8; }
-        .v3-status-blocked { background: #ffedd5; color: #9a3412; }
-        [data-theme="dark"] .v3-status-blocked { background: rgba(234, 88, 12, 0.2); color: #fb923c; }
-        .v3-status-failed { background: #fee2e2; color: #991b1b; }
-        [data-theme="dark"] .v3-status-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
-        .v3-status-missing_deps { background: #fce7f3; color: #9d174d; }
-        [data-theme="dark"] .v3-status-missing_deps { background: rgba(236, 72, 153, 0.2); color: #f472b6; }
-        .v3-status-skipped { background: #e2e8f0; color: #475569; }
-        [data-theme="dark"] .v3-status-skipped { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+        .v3-status-done { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        [data-theme="dark"] .v3-status-done { background: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); }
+        .v3-status-running { background: #dbeafe; color: #1e40af; border: 1px solid #3b82f6; animation: pulse-border 1.5s infinite; }
+        [data-theme="dark"] .v3-status-running { background: rgba(59, 130, 246, 0.25); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.5); }
+        .v3-status-ready { background: #cffafe; color: #155e75; border: 1px solid #06b6d4; }
+        [data-theme="dark"] .v3-status-ready { background: rgba(6, 182, 212, 0.25); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.5); }
+        .v3-status-pending { background: #e2e8f0; color: #0f172a; border: 1px solid #94a3b8; font-weight: 700; }
+        [data-theme="dark"] .v3-status-pending { background: rgba(100, 116, 139, 0.4); color: #ffffff; border: 1px solid rgba(148, 163, 184, 0.6); font-weight: 700; }
+        .v3-status-blocked { background: #ffedd5; color: #9a3412; border: 1px solid #f97316; }
+        [data-theme="dark"] .v3-status-blocked { background: rgba(234, 88, 12, 0.25); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.5); }
+        .v3-status-failed { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+        [data-theme="dark"] .v3-status-failed { background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.5); }
+        .v3-status-missing_deps { background: #fce7f3; color: #9d174d; border: 1px solid #ec4899; }
+        [data-theme="dark"] .v3-status-missing_deps { background: rgba(236, 72, 153, 0.25); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.5); }
+        .v3-status-skipped { background: #e2e8f0; color: #0f172a; border: 1px solid #64748b; font-weight: 700; }
+        [data-theme="dark"] .v3-status-skipped { background: rgba(100, 116, 139, 0.4); color: #ffffff; border: 1px solid rgba(148, 163, 184, 0.6); font-weight: 700; }
 
         @keyframes pulse-border {
             0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
@@ -1370,7 +1370,7 @@
                         </span>
                         <div>
                             <h5 class="modal-title fw-bold mb-0" id="v3DagModalLabel" style="color: var(--text-primary);">Pipeline & Distribution Multi-Nœuds</h5>
-                            <span id="v3-dag-modal-subtitle" class="text-muted small"></span>
+                            <span id="v3-dag-modal-subtitle" class="small" style="color: #cbd5e1 !important;"></span>
                         </div>
                     </div>
                     <div class="d-flex align-items-center gap-2">
@@ -1383,7 +1383,7 @@
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                 </div>
-                <div class="modal-body p-4" style="background: var(--bg-body, #f8fafc);">
+                <div class="modal-body p-4" style="background: var(--bg-page) !important;">
                     <!-- 1. En-tête Job & Allocation Machines -->
                     <div id="v3-dag-overview-container" class="mb-4">
                         <div class="text-center py-4">
@@ -1410,14 +1410,14 @@
                             </h6>
                             <!-- Légende des couleurs d'états -->
                             <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size: 0.75rem;">
-                                <span class="v3-node-status-badge v3-status-done"><i class="bi bi-check-circle-fill"></i> done</span>
-                                <span class="v3-node-status-badge v3-status-running"><i class="bi bi-play-circle-fill"></i> running</span>
-                                <span class="v3-node-status-badge v3-status-ready"><i class="bi bi-hourglass-split"></i> ready</span>
-                                <span class="v3-node-status-badge v3-status-pending"><i class="bi bi-clock"></i> pending</span>
-                                <span class="v3-node-status-badge v3-status-blocked"><i class="bi bi-slash-circle"></i> blocked</span>
-                                <span class="v3-node-status-badge v3-status-failed"><i class="bi bi-x-circle-fill"></i> failed</span>
-                                <span class="v3-node-status-badge v3-status-missing_deps"><i class="bi bi-exclamation-triangle-fill"></i> missing_deps</span>
-                                <span class="v3-node-status-badge v3-status-skipped"><i class="bi bi-skip-forward-fill"></i> skipped</span>
+                                <span class="v3-node-status-badge v3-status-done"><i class="bi bi-check-circle-fill"></i> TERMINÉ</span>
+                                <span class="v3-node-status-badge v3-status-running"><i class="bi bi-play-circle-fill"></i> EN COURS</span>
+                                <span class="v3-node-status-badge v3-status-ready"><i class="bi bi-hourglass-split"></i> PRÊT</span>
+                                <span class="v3-node-status-badge v3-status-pending"><i class="bi bi-clock"></i> EN ATTENTE</span>
+                                <span class="v3-node-status-badge v3-status-blocked"><i class="bi bi-slash-circle"></i> BLOQUÉ</span>
+                                <span class="v3-node-status-badge v3-status-failed"><i class="bi bi-x-circle-fill"></i> ÉCHEC</span>
+                                <span class="v3-node-status-badge v3-status-missing_deps"><i class="bi bi-exclamation-triangle-fill"></i> DÉPENDANCES MANQUANTES</span>
+                                <span class="v3-node-status-badge v3-status-skipped"><i class="bi bi-skip-forward-fill"></i> IGNORÉ</span>
                             </div>
                         </div>
                         <div class="v3-dag-wrapper shadow-sm">
@@ -1467,8 +1467,8 @@
                     </div>
                 </div>
                 <div class="modal-footer d-flex justify-content-between align-items-center" style="background: var(--bg-card); border-top: 1px solid var(--border-color);">
-                    <div class="text-muted small">
-                        <i class="bi bi-info-circle me-1"></i> Ordonnancement automatique avec équité aux frontières de nœuds et affinité CAS P2P.
+                    <div class="small" style="color: #cbd5e1 !important;">
+                        <i class="bi bi-info-circle me-1 text-info"></i> Ordonnancement automatique avec équité aux frontières de nœuds et affinité CAS P2P.
                     </div>
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
                 </div>
@@ -1749,7 +1749,7 @@
             // Subtitle
             const subtitleEl = document.getElementById('v3-dag-modal-subtitle');
             const commitShort = job.commit_hash ? job.commit_hash.substring(0, 8) : 'HEAD';
-            subtitleEl.innerHTML = `<strong>${escapeHtml(job.repo || '')}</strong> @${escapeHtml(job.branch || '')} &bull; <span class="font-monospace">Commit: ${commitShort}</span> &bull; Job ID: ${job.job_id.substring(0, 8)}…`;
+            subtitleEl.innerHTML = `<span style="color: #f1f5f9; font-weight: 600;">${escapeHtml(job.repo || '')}</span> <span style="color: #cbd5e1;">@${escapeHtml(job.branch || '')} &bull; <span class="font-monospace" style="color: #e2e8f0;">Commit: ${commitShort}</span> &bull; Job ID: ${job.job_id.substring(0, 8)}…</span>`;
 
             // Active workers list
             let activeWorkersList = [];
@@ -1905,9 +1905,18 @@
                 const tr = document.createElement('tr');
                 tr.className = 'v3-node-row';
                 tr.setAttribute('data-node-name', n.name.toLowerCase());
-                tr.setAttribute('data-node-status', n.status);
-
-                const statusBadge = `<span class="v3-node-status-badge v3-status-${n.status}">${escapeHtml(n.status)}</span>`;
+                const statusLabelsFr = {
+                    done: 'TERMINÉ',
+                    running: 'EN COURS',
+                    ready: 'PRÊT',
+                    pending: 'EN ATTENTE',
+                    blocked: 'BLOQUÉ',
+                    failed: 'ÉCHEC',
+                    missing_deps: 'DÉPENDANCES MANQUANTES',
+                    skipped: 'IGNORÉ'
+                };
+                const labelFr = statusLabelsFr[n.status] || (n.status || '').toUpperCase();
+                const statusBadge = `<span class="v3-node-status-badge v3-status-${n.status}">${escapeHtml(labelFr)}</span>`;
                 const machineStr = n.machine ? `<span class="badge bg-light text-dark border font-monospace"><i class="bi bi-pc-display-horizontal me-1"></i>${escapeHtml(n.machine)}</span>` : '<span class="text-muted small">—</span>';
                 
                 const res = n.resources || {};
@@ -3928,7 +3937,7 @@
                 `;
 
                 // 2. Physical Worker diagnostic cards with multi-executors & capacities
-                let cardsHtml = '<h4 class="mb-3 text-secondary d-flex align-items-center gap-2"><i class="bi bi-hdd-network"></i> Diagnostics des Machines & Exécuteurs</h4><div class="row row-cols-1 row-cols-lg-2 g-4 mb-4">';
+                let cardsHtml = '<h4 class="mb-3 fw-bold d-flex align-items-center gap-2" style="color: var(--text-primary);"><i class="bi bi-hdd-network text-primary"></i> Diagnostics des Machines & Exécuteurs</h4><div class="row row-cols-1 row-cols-lg-2 g-4 mb-4">';
 
                 onlineWorkers.forEach(w => {
                     const executors = executorsPerWorker[w.worker_id] || [];
