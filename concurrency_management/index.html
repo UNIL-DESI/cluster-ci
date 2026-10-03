@@ -569,6 +569,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../user/stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../user/parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../user/dashboard/" class="md-nav__link">
         
   
@@ -1050,15 +1106,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#concurrency-model" class="md-nav__link">
+  <a href="#1-concurrency-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Concurrency Model
+        1. Concurrency Model
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Concurrency Model">
+    <nav class="md-nav" aria-label="1. Concurrency Model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1089,10 +1145,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#gha-concurrency-configuration" class="md-nav__link">
+  <a href="#2-branch-exclusivity-vs-intra-job-parallelism-v3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GHA Concurrency Configuration
+        2. Branch Exclusivity vs Intra-Job Parallelism (v3)
       
     </span>
   </a>
@@ -1100,49 +1156,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#signal-propagation" class="md-nav__link">
+  <a href="#3-signal-propagation-multi-worker-cancellation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Signal Propagation
+        3. Signal Propagation &amp; Multi-Worker Cancellation
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Signal Propagation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#draft-branches-full-cancel" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Draft Branches (Full Cancel)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#non-draft-branches-detach-continue" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-Draft Branches (Detach &amp; Continue)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#headnode-auto-cancellation-logic" class="md-nav__link">
+  <a href="#4-headnode-auto-cancellation-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Headnode Auto-Cancellation Logic
+        4. Headnode Auto-Cancellation Rules
       
     </span>
   </a>
@@ -1167,16 +1195,17 @@
 
 
 <h1 id="concurrency-management-signal-propagation">Concurrency Management &amp; Signal Propagation</h1>
-<p>This document describes how Cluster-CI handles GitHub Actions job concurrency and ensures that compute resources on Workers are correctly freed.</p>
-<h2 id="concurrency-model">Concurrency Model</h2>
+<p>This document describes how Cluster-CI handles GitHub Actions job concurrency, enforces branch exclusivity, and ensures compute resources across single or multiple workers are correctly freed.</p>
+<hr />
+<h2 id="1-concurrency-model">1. Concurrency Model</h2>
 <p>Cluster-CI uses a <strong>dual-mode concurrency strategy</strong> based on branch type:</p>
 <h3 id="draft-branches-cluster-draft-aggressive-cancel">Draft Branches (<code>cluster-draft/*</code>) — Aggressive Cancel</h3>
 <p>Used by <code>cluster-run</code> for fast iteration. A new submission <strong>immediately cancels</strong> any active job (pending, assigned, or running) for the same user/branch.</p>
 <ul>
 <li>GHA: <code>cancel-in-progress: true</code> → kills the old workflow run instantly.</li>
-<li><code>submit_job.py</code>: signal handler propagates full cancellation to the worker.</li>
+<li><code>submit_job.py</code>: signal handler propagates full cancellation to all active workers.</li>
 <li>Headnode: auto-cancels all active jobs matching the same user or draft branch.</li>
-<li>Worker: receives <code>/cancel/&lt;job_id&gt;</code> → eradicates process tree, purges VRAM, frees RAM.</li>
+<li>Workers: each active worker receives <code>/cancel/&lt;job_id&gt;</code> → eradicates process tree, purges VRAM, frees RAM.</li>
 </ul>
 <h3 id="non-draft-branches-main-feature-etc-detach-queue">Non-Draft Branches (<code>main</code>, <code>feature/*</code>, etc.) — Detach &amp; Queue</h3>
 <p>Used for production pipelines. A new submission <strong>does not cancel</strong> the running job.</p>
@@ -1184,42 +1213,49 @@
 <li>GHA: <code>cancel-in-progress: true</code> → the old <strong>monitoring workflow</strong> is replaced, but...</li>
 <li><code>submit_job.py</code>: signal handler sends <code>detach_gha=True</code> to headnode instead of cancelling. This clears <code>gh_run_id</code> so <code>clean_ghosts</code> won't kill the still-running worker job.</li>
 <li>Headnode: only cancels <strong>pending</strong> jobs on the same branch (not running/assigned). Enforces "only one pending per branch".</li>
-<li>Worker: the running job <strong>continues uninterrupted</strong> without any signal.</li>
+<li>Workers: running jobs <strong>continue uninterrupted</strong> without any cancellation signal.</li>
 </ul>
 <p><strong>Example scenario on <code>main</code>:</strong>
 1. Job A is <strong>running</strong> on <code>main</code>. GHA workflow #1 monitors it.
 2. User pushes → GHA workflow #2 starts → GHA kills workflow #1 (concurrency).
-3. <code>submit_job.py</code> (workflow #1) detaches GHA from job A → worker keeps running.
+3. <code>submit_job.py</code> (workflow #1) detaches GHA from job A → workers keep running.
 4. <code>submit_job.py</code> (workflow #2) submits job B → headnode queues it as <strong>pending</strong>.
 5. User pushes again → GHA workflow #3 starts → kills workflow #2.
 6. <code>submit_job.py</code> (workflow #2) detaches from job B → headnode cancels job B (pending, replaced by C).
 7. Job A finishes → Job C starts executing.</p>
-<h2 id="gha-concurrency-configuration">GHA Concurrency Configuration</h2>
-<p>In <code>.github/workflows/cluster-ci.yml</code>:
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">concurrency</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${{ github.workflow }}-${{ github.actor }}-${{ github.ref_name }}</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">cancel-in-progress</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-</span></code></pre></div></p>
-<p>The concurrency group is scoped per branch (<code>github.ref</code>), ensuring that different branches/PRs never interfere with each other. The actual non-cancellation logic is handled at the application level in <code>submit_job.py</code>.</p>
-<h2 id="signal-propagation">Signal Propagation</h2>
-<h3 id="draft-branches-full-cancel">Draft Branches (Full Cancel)</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>GitHub Actions -&gt; [SIGTERM] -&gt; submit_job.py
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                                     |
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                      [propagate cancellation]
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>                                     |
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>                          Worker (/cancel/&lt;job_id&gt;)
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>                                     |
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>                          [Kill Process Tree] -&gt; RAM Free
+<hr />
+<h2 id="2-branch-exclusivity-vs-intra-job-parallelism-v3">2. Branch Exclusivity vs Intra-Job Parallelism (v3)</h2>
+<p>A core tenet of Cluster-CI is preventing conflicting writes on the same Git branch:</p>
+<ul>
+<li><strong>Inter-Job Exclusivity</strong>: Two distinct jobs targeting the same repository and branch cannot execute simultaneously. A second job on the same branch must wait in the queue until the active job completes or is cancelled.</li>
+<li><strong>Intra-Job Parallelism (<code>PARALLEL_STAGES=true</code>)</strong>: In parallel DAG mode, multiple worker nodes (up to 8) can operate concurrently on the <strong>same job</strong> and branch. Concurrent Git pushes of metrics and <code>dvc.lock</code> are harmonized by the automated <code>dvc.lock</code> merge driver and exponential backoff pull/rebase routines.</li>
+</ul>
+<hr />
+<h2 id="3-signal-propagation-multi-worker-cancellation">3. Signal Propagation &amp; Multi-Worker Cancellation</h2>
+<p>When a job cancellation is initiated (via GHA workflow cancellation, terminal <code>Ctrl+C</code>, or Dashboard <strong>Stop</strong>):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>GitHub Actions / Client -&gt; [SIGTERM] -&gt; submit_job.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                              │
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                   [POST /api/jobs/&lt;id&gt;/stop]
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                              │
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                                      Headnode Service
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                                              │
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                                 ┌────────────┴────────────┐
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                                 ▼                         ▼
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                        Worker A (/cancel/&lt;id&gt;)   Worker B (/cancel/&lt;id&gt;)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                                 │                         │
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                        [Kill Process Tree]       [Kill Process Tree]
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                        [Purge VRAM / RAM]        [Purge VRAM / RAM]
 </span></code></pre></div>
-<h3 id="non-draft-branches-detach-continue">Non-Draft Branches (Detach &amp; Continue)</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>GitHub Actions -&gt; [SIGTERM] -&gt; submit_job.py
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                                     |
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>                      [detach_gha=True to headnode]
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                      [clear gh_run_id in DB]
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                                     |
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>                          Worker: (no signal, job continues)
-</span></code></pre></div>
-<h2 id="headnode-auto-cancellation-logic">Headnode Auto-Cancellation Logic</h2>
+<!-- v3: à vérifier contre l'implémentation : endpoint /api/jobs/<id>/stop et diffusion à active_workers -->
+
+<ol>
+<li>The cancellation request notifies the headnode.</li>
+<li>The headnode marks remaining unexecuted stages as <code>blocked</code>.</li>
+<li>The headnode iterates over all active workers assigned to the job (<code>active_workers</code>) and dispatches <code>POST /cancel/&lt;job_id&gt;</code> to each worker agent.</li>
+<li>Each worker kills its container and process hierarchy, purging VRAM and returning to idle within seconds.</li>
+</ol>
+<hr />
+<h2 id="4-headnode-auto-cancellation-rules">4. Headnode Auto-Cancellation Rules</h2>
 <p>On every <code>/submit_job</code> call, the headnode scans active jobs and applies cancellation rules:</p>
 <table>
 <thead>

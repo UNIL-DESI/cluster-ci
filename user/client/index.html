@@ -561,10 +561,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-real-time-log-streaming" class="md-nav__link">
+  <a href="#3-real-time-log-streaming-multi-machine-multiplexing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Real-Time Log Streaming
+        3. Real-Time Log Streaming &amp; Multi-Machine Multiplexing
       
     </span>
   </a>
@@ -572,15 +572,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-command-reference" class="md-nav__link">
+  <a href="#4-command-reference-cli-syntax" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Command Reference
+        4. Command Reference &amp; CLI Syntax
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Command Reference">
+    <nav class="md-nav" aria-label="4. Command Reference &amp; CLI Syntax">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -643,6 +643,17 @@
     <span class="md-ellipsis">
       
         cluster-run sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#graceful-interruption-ctrlc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graceful Interruption (Ctrl+C)
       
     </span>
   </a>
@@ -812,6 +823,62 @@
     
   
     CI & Queue Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
   
 
     
@@ -1374,10 +1441,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-real-time-log-streaming" class="md-nav__link">
+  <a href="#3-real-time-log-streaming-multi-machine-multiplexing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Real-Time Log Streaming
+        3. Real-Time Log Streaming &amp; Multi-Machine Multiplexing
       
     </span>
   </a>
@@ -1385,15 +1452,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-command-reference" class="md-nav__link">
+  <a href="#4-command-reference-cli-syntax" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Command Reference
+        4. Command Reference &amp; CLI Syntax
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Command Reference">
+    <nav class="md-nav" aria-label="4. Command Reference &amp; CLI Syntax">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1456,6 +1523,17 @@
     <span class="md-ellipsis">
       
         cluster-run sync
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#graceful-interruption-ctrlc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graceful Interruption (Ctrl+C)
       
     </span>
   </a>
@@ -1585,26 +1663,62 @@
 </ol>
 <p>Your local working tree and branch status remain <strong>completely untouched</strong> throughout this process.</p>
 <hr />
-<h2 id="3-real-time-log-streaming">3. Real-Time Log Streaming</h2>
+<h2 id="3-real-time-log-streaming-multi-machine-multiplexing">3. Real-Time Log Streaming &amp; Multi-Machine Multiplexing</h2>
 <p>Cluster-CI streams logs from the executing container back to your terminal in real-time.</p>
 <ul>
 <li><strong>Primary channel</strong>: Low-latency streaming via <code>ppng.io</code>.</li>
-<li><strong>Fallback</strong>: If <code>ppng.io</code> is unreachable, the client polls the GitHub Actions API (<code>gh run view --log</code>).</li>
+<li><strong>Fallback</strong>: If <code>ppng.io</code> is unreachable, the client polls the GitHub Actions API (<code>gh run view --log</code>) or Headnode <code>/job_logs/{job_id}</code>.</li>
 <li><strong>Progress bars</strong>: <code>tqdm</code> progress bars update in-place without generating log spam.</li>
-<li><strong>Local copies</strong>: Logs are saved to <code>.cluster-ci-logs/</code> (last 5 runs kept automatically).</li>
+<li><strong>Multi-machine multiplexing (<code>[node@machine]</code>)</strong>: Delivered in <code>feat/v3</code> (<code>format_multi_machine_log_line</code> in <code>src/cluster/cluster_run.py:1710</code> and <code>src/scheduler/submit_job.py:230</code>), logs emitted across concurrent nodes are dynamically tagged with <code>[&lt;stage&gt;@&lt;worker&gt;]</code>:
+    <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[prepare_data@HEC45801] Loading raw features...
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>[train_variant@HEC45803] Epoch 1/10 - loss: 0.421
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>[evaluate@HEC45801] Test accuracy: 0.942
+</span></code></pre></div></li>
+<li><strong>Resilient endpoint fallback</strong>: Log polling requests query <code>GET /job_logs/{job_id}</code> in priority. If the route returns HTTP 404, the client automatically displays a warning and falls back to <code>GET /api/jobs/{job_id}/logs</code> (<code>src/cluster/cluster_run.py:1697</code>):
+    <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>⚠️ Avertissement : Route /job_logs/&lt;job_id&gt; introuvable (HTTP 404), bascule de repli vers /api/jobs/&lt;job_id&gt;/logs.
+</span></code></pre></div></li>
 </ul>
 <hr />
-<h2 id="4-command-reference">4. Command Reference</h2>
+<h2 id="4-command-reference-cli-syntax">4. Command Reference &amp; CLI Syntax</h2>
+<p>The <code>cluster-run</code> CLI accepts the following arguments according to its command-line specification:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run [command] [run_id] [--local]
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Argument / Flag</th>
+<th style="text-align: left;">Type / Values</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>command</code></td>
+<td style="text-align: left;"><code>list</code>, <code>view</code>, <code>cancel</code>, <code>sync</code> <em>(optional)</em></td>
+<td style="text-align: left;">Action to perform. If omitted, triggers a new execution run.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>run_id</code></td>
+<td style="text-align: left;"><code>string</code> <em>(optional)</em></td>
+<td style="text-align: left;">Target GitHub Actions run ID or local job ID for <code>view</code> or <code>cancel</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--local</code></td>
+<td style="text-align: left;">flag</td>
+<td style="text-align: left;">Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits.</td>
+</tr>
+</tbody>
+</table>
 <h3 id="cluster-run-default-execution"><code>cluster-run</code> (Default Execution)</h3>
 <p>Triggers a shadow run of your workspace via GitHub Actions.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>cluster-run
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run
 </span></code></pre></div>
 *   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster draft branch.
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.</p>
 <h3 id="cluster-run-local-direct-headnode-execution-for-sensitive-data"><code>cluster-run --local</code> (Direct Headnode Execution for Sensitive Data)</h3>
 <p>Triggers a direct local run on the Headnode without pushing to GitHub or creating shadow commits.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-run<span class="w"> </span>--local
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>--local
 </span></code></pre></div>
 *   Ingests current directory directly from the Headnode local filesystem (<code>130.223.73.209</code>).
 *   Performs fail-fast validation (<code>HTTP 400</code>) before job placement.
@@ -1613,37 +1727,39 @@
 *   For setup and access requirements, see the <strong><a href="../sensitive_data/">Sensitive Data &amp; Local Execution Guide</a></strong>.</p>
 <h3 id="cluster-run-list"><code>cluster-run list</code></h3>
 <p>List recent runs.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-run<span class="w"> </span>list
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>list
 </span></code></pre></div>
 *   Displays the run ID, status (Completed, In-Progress, Queued), and completion time.</p>
 <h3 id="cluster-run-view"><code>cluster-run view</code></h3>
 <p>View logs for a run.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
 </span></code></pre></div>
-*   If <code>&lt;run_id&gt;</code> is omitted, it targets your last triggered run.</p>
+*   If <code>run_id</code> is omitted, it targets your last triggered run.</p>
 <h3 id="cluster-run-cancel"><code>cluster-run cancel</code></h3>
 <p>Terminate a running job.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>&lt;run_id&gt;
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
 </span></code></pre></div>
-*   If <code>&lt;run_id&gt;</code> is omitted, it targets your latest active run.
-*   Sends a cancellation request to the cluster and cleans up local tracking files.</p>
+*   If <code>run_id</code> is omitted, it targets your latest active run.
+*   Sends a cancellation request (<code>POST /api/jobs/{id}/stop</code>) to the cluster and cleans up local tracking files.</p>
 <h3 id="cluster-run-sync"><code>cluster-run sync</code></h3>
 <p>Manually synchronize remote results.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run<span class="w"> </span>sync
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>cluster-run<span class="w"> </span>sync
 </span></code></pre></div>
 *   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote branch and applies them to your local directory.
 *   Useful if log streaming was interrupted or if you want to pull results from an older run.</p>
+<h3 id="graceful-interruption-ctrlc">Graceful Interruption (<code>Ctrl+C</code>)</h3>
+<p>When running <code>cluster-run</code> (or <code>cluster-run --local</code>), pressing <code>Ctrl+C</code> sends an interrupt signal (<code>SIGINT</code>). The client traps this signal, immediately calls <code>POST /api/jobs/{id}/stop</code> on the Headnode to stop all assigned workers and running containers cleanly, clears the local run state, and exits with code <code>130</code>.</p>
 <hr />
 <h2 id="5-safety-features">5. Safety Features</h2>
 <h3 id="orphaned-run-recovery">Orphaned Run Recovery</h3>
 <p>If your terminal crashes or you force-kill <code>cluster-run</code>, the active job continues on the cluster. The next time you run any <code>cluster-run</code> command, the CLI detects the orphaned run and automatically sends a termination request, freeing cluster resources.</p>
 <h3 id="line-ending-protection">Line-Ending Protection</h3>
 <p>When sharing code between Windows and Linux, line-ending differences can corrupt binary files (models, images). The <code>cluster-run</code> CLI automatically configures <code>.gitattributes</code> to prevent this:
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>*.pt binary
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>*.pkl binary
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>*.png binary
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>*.csv text eol=lf
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>*.yaml text eol=lf
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>*.pt binary
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>*.pkl binary
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>*.png binary
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>*.csv text eol=lf
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>*.yaml text eol=lf
 </span></code></pre></div></p>
 <h3 id="pre-commit-validation">Pre-commit Validation</h3>
 <p>The installation injects a Git pre-commit hook that validates your <code>pyproject.toml</code> before each commit:</p>

@@ -580,6 +580,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../dashboard/" class="md-nav__link">
         
   
@@ -691,10 +747,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#essential-parameters" class="md-nav__link">
+  <a href="#essential-hardware-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Essential Parameters
+        Essential &amp; Hardware Parameters
       
     </span>
   </a>
@@ -712,7 +768,23 @@
   
 </li>
         
-          <li class="md-nav__item">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-stage-resource-overrides-metacluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-Stage Resource Overrides (meta.cluster)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#web-application-support" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -722,8 +794,8 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
   <a href="#docker-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -731,11 +803,6 @@
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1225,10 +1292,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#essential-parameters" class="md-nav__link">
+  <a href="#essential-hardware-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Essential Parameters
+        Essential &amp; Hardware Parameters
       
     </span>
   </a>
@@ -1246,7 +1313,23 @@
   
 </li>
         
-          <li class="md-nav__item">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-stage-resource-overrides-metacluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-Stage Resource Overrides (meta.cluster)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#web-application-support" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1256,8 +1339,8 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
   <a href="#docker-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1265,11 +1348,6 @@
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1322,16 +1400,19 @@
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">6</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Optional: restrict to specific workers</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Optional: parallel DAG execution across workers</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Optional: run only specific DVC stages</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="na">STAGES</span><span class="o">=</span><span class="s">train</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Optional: restrict to specific workers</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># Optional: run only specific DVC stages (classic mode)</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="na">STAGES</span><span class="o">=</span><span class="s">train</span>
 </span></code></pre></div>
 <hr />
 <h2 id="parameter-reference">Parameter Reference</h2>
-<h3 id="essential-parameters">Essential Parameters</h3>
-<p>These parameters control resource allocation and job timeout. Every <code>.cluster-ci</code> file should include them.</p>
+<h3 id="essential-hardware-parameters">Essential &amp; Hardware Parameters</h3>
+<p>These parameters control resource allocation and job timeout.</p>
 <table>
 <thead>
 <tr>
@@ -1349,22 +1430,43 @@
 <td style="text-align: left;">Maximum allowed runtime in hours (1–24). The job is automatically killed if it exceeds this limit.</td>
 </tr>
 <tr>
+<td style="text-align: left;"><code>REQUIRED_CPUS</code></td>
+<td style="text-align: left;">No</td>
+<td style="text-align: left;"><code>2</code></td>
+<td style="text-align: left;">Number of CPU cores allocated for execution (integer <code>&gt;= 1</code>). Overridden by <code>meta.cluster.cpus</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>REQUIRED_GPUS</code></td>
+<td style="text-align: left;">No</td>
+<td style="text-align: left;"><code>0</code></td>
+<td style="text-align: left;">Number of physical GPUs allocated (integer <code>&gt;= 0</code>). Overridden by <code>meta.cluster.gpus</code>.</td>
+</tr>
+<tr>
 <td style="text-align: left;"><code>REQUIRED_RAM</code></td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;"><code>2GB</code></td>
-<td style="text-align: left;">Minimum physical RAM required on the worker. The cluster reserves 8 GB per worker for the OS, so a 128 GB worker can accept up to 120 GB.</td>
+<td style="text-align: left;"><code>10GB</code></td>
+<td style="text-align: left;">Minimum physical RAM required on the worker. Can also be passed via <code>--ram &lt;GB&gt;</code>. Overridden by <code>meta.cluster.ram_gb</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>REQUIRED_VRAM</code></td>
 <td style="text-align: left;">No</td>
 <td style="text-align: left;"><code>0GB</code></td>
-<td style="text-align: left;">Minimum GPU VRAM required. Set to <code>0GB</code> (or omit) to allow execution on CPU-only nodes.</td>
+<td style="text-align: left;">Minimum GPU VRAM required. When <code>0GB</code>, job runs on CPU-only nodes. Overridden by <code>meta.cluster.vram_gb</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>REQUIRED_STORAGE</code></td>
+<td style="text-align: left;">No</td>
+<td style="text-align: left;"><code>0GB</code></td>
+<td style="text-align: left;">Minimum free disk space in GB required on the worker. Also recognized as <code>REQUIRED_DISK</code>. Overridden by <code>meta.cluster.storage_gb</code>.</td>
 </tr>
 </tbody>
 </table>
 <div class="admonition warning">
-<p class="admonition-title">Set realistic values</p>
-<p>If you request more RAM or VRAM than any worker can provide, your job will stay in the queue indefinitely. Check the <a href="../dashboard/">Dashboard</a> to see available worker capacities.</p>
+<p class="admonition-title">GPU Consistency &amp; Realistic Values</p>
+<ul>
+<li>If <code>REQUIRED_VRAM &gt; 0</code> is set without specifying <code>REQUIRED_GPUS</code>, Cluster-CI automatically defaults <code>gpus</code> to <code>1</code> so the GPU allocation check succeeds.</li>
+<li>If you request more RAM or VRAM than any worker can provide, your job will stay in the queue indefinitely. Check the <a href="../dashboard/">Dashboard</a> to see available worker capacities.</li>
+</ul>
 </div>
 <h3 id="execution-control">Execution Control</h3>
 <table>
@@ -1377,18 +1479,36 @@
 </thead>
 <tbody>
 <tr>
+<td style="text-align: left;"><code>PARALLEL_STAGES</code></td>
+<td style="text-align: left;"><code>false</code></td>
+<td style="text-align: left;">When set to <code>true</code>, enables <strong>Parallel DAG execution</strong> across multiple cluster workers. Independent branches of your <code>dvc.yaml</code> pipeline run concurrently on available nodes. See <a href="../parallel_execution/">Parallel DAG Execution</a>.</td>
+</tr>
+<tr>
 <td style="text-align: left;"><code>STAGES</code></td>
 <td style="text-align: left;"><em>(empty — runs full pipeline)</em></td>
-<td style="text-align: left;">Comma-separated list of DVC stage names to execute. If empty or set to <code>all</code>, the cluster runs <code>dvc repro</code> (the full pipeline). To run a subset, specify the <strong>last stage</strong> you want — DVC will automatically run all its upstream dependencies.</td>
+<td style="text-align: left;">Comma-separated list of DVC stage names to execute (used in classic sequential mode). If empty or set to <code>all</code>, the cluster runs <code>dvc repro</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>ALLOWED_WORKERS</code></td>
 <td style="text-align: left;"><em>(empty — all workers eligible)</em></td>
-<td style="text-align: left;">Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090).</td>
+<td style="text-align: left;">Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090). Overridden by <code>meta.cluster.workers</code>.</td>
 </tr>
 </tbody>
 </table>
-<h3 id="web-application-support">Web Application Support</h3>
+<hr />
+<h2 id="per-stage-resource-overrides-metacluster">Per-Stage Resource Overrides (<code>meta.cluster</code>)</h2>
+<p>In addition to repository-wide parameters in <code>.cluster-ci</code>, Cluster-CI v3 supports fine-grained resource definitions inside <code>dvc.yaml</code> under <code>stages.&lt;stage_name&gt;.meta.cluster</code>.</p>
+<p>Parameters specified in <code>dvc.yaml</code> take precedence over <code>.cluster-ci</code>:
+* <code>meta.cluster.image</code> / <code>image_arm64</code> / <code>image_amd64</code> overrides <code>DOCKER_IMAGE</code> / <code>DOCKER_IMAGE_ARM64</code> / <code>DOCKER_IMAGE_AMD64</code>
+* <code>meta.cluster.cpus</code> overrides <code>REQUIRED_CPUS</code> (default: 2)
+* <code>meta.cluster.gpus</code> overrides <code>REQUIRED_GPUS</code> (default: 0)
+* <code>meta.cluster.ram_gb</code> overrides <code>REQUIRED_RAM</code> / <code>--ram</code> (default: 10.0)
+* <code>meta.cluster.vram_gb</code> overrides <code>REQUIRED_VRAM</code> (default: 0.0)
+* <code>meta.cluster.storage_gb</code> overrides <code>REQUIRED_STORAGE</code> / <code>REQUIRED_DISK</code> (default: 0.0)
+* <code>meta.cluster.workers</code> overrides <code>ALLOWED_WORKERS</code></p>
+<p>For complete syntax and examples, see the <a href="../stage_resources/">Per-Stage Resources Guide</a>.</p>
+<hr />
+<h2 id="web-application-support">Web Application Support</h2>
 <table>
 <thead>
 <tr>
@@ -1418,7 +1538,8 @@
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="na">CUSTOM_WEB_APP</span><span class="o">=</span><span class="s">true</span>
 </span></code></pre></div></p>
 <p>Your Gradio app will then be accessible from the Dashboard while the job is running.</p>
-<h3 id="docker-overrides">Docker Overrides</h3>
+<hr />
+<h2 id="docker-overrides">Docker Overrides</h2>
 <p>These parameters let you customize the Docker image and runtime settings. See the <a href="../containers/">Docker Containers Guide</a> for detailed usage.</p>
 <table>
 <thead>
@@ -1460,22 +1581,24 @@
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">12</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># ── Execution Control ──</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="na">STAGES</span><span class="o">=</span><span class="s">train</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># ── Docker (optional) ──</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/my-org/my-custom-image:latest</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
-</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># ── Web Application (optional) ──</span>
-</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="c1"># EXPOSED_PORT=7860</span>
-</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1"># CUSTOM_WEB_APP=true</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># ── Parallel Execution ──</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="c1"># ── Execution Control ──</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="c1"># ── Docker (optional) ──</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/my-org/my-custom-image:latest</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1"># ── Web Application (optional) ──</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="c1"># EXPOSED_PORT=7860</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="c1"># CUSTOM_WEB_APP=true</span>
 </span></code></pre></div>
 <hr />
 <h2 id="default-template">Default Template</h2>
 <p>When you run the install script, the following minimal template is created:</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">10GB</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">0GB</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">1</span>
 </span></code></pre></div>

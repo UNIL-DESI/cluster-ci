@@ -569,6 +569,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../user/stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user/parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../user/dashboard/" class="md-nav__link">
         
   
@@ -1212,7 +1268,10 @@
 <li><strong>JIT Pre-flight Purge</strong>: Before spawning new container runtimes.</li>
 <li><strong>Cancellation Webhook</strong>: Triggered immediately upon receiving <code>/cancel/&lt;job_id&gt;</code>.</li>
 <li><strong>Systemd Shutdown Hook</strong>: Executed on worker agent SIGTERM signals to ensure absolute clean states.</li>
+<li><strong>v3 Node Rebalancing &amp; Yield</strong>: When a worker yields (<code>action: "yield"</code>) at a DAG stage boundary or transitions to a new image (<code>action: "switch_image"</code>), host resources are cleanly reset to prevent cross-stage memory leakage.</li>
 </ol>
+<!-- v3: à vérifier contre l'implémentation : appel des hooks de purge lors du switch_image -->
+
 <h3 id="23-main-loop-hardening-network-resilience">2.3 Main Loop Hardening &amp; Network Resilience</h3>
 <p>To prevent silent worker failures where the background API server continues responding but the main execution loop has crashed, the agent incorporates a defensive dual-layer recovery structure:</p>
 <ol>

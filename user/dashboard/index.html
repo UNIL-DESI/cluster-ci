@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/dashboard/">
       
       
-        <link rel="prev" href="../ci_queue/">
+        <link rel="prev" href="../parallel_execution/">
       
       
         <link rel="next" href="../configuration/">
@@ -560,6 +560,62 @@
     
   
     CI & Queue Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
   
 
     
@@ -1373,25 +1429,27 @@
 <h3 id="a-worker-diagnostics-node-view">A. Worker Diagnostics Node View</h3>
 <p>Shows the current status of all physical workers in the cluster:
 *   <strong>Worker State</strong>: Green indicators for online workers; grey for offline nodes.
-*   <strong>Hardware Telemetry</strong>: Displays the active RAM and GPU VRAM utilization.
-*   <strong>Active Allocation</strong>: Shows which job is currently assigned to the worker.</p>
+*   <strong>Hardware Telemetry</strong>: Displays the active RAM, GPU VRAM, CPU utilization, and free disk space.
+*   <strong>Active Allocation</strong>: Shows which job and pipeline node is currently assigned to the worker.</p>
 <h3 id="b-active-executions">B. Active Executions</h3>
 <p>Tracks jobs currently running on the cluster:
-*   <strong>Job Metadata</strong>: Displays the user, repository, active branch, and elapsed time (automatically calibrated to UTC timezone offsets).
+*   <strong>Job Metadata</strong>: Displays the user, repository, active branch, elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated <strong>Home Worker</strong>).
+*   <strong>Stage DAG Status</strong>: For parallel jobs (<code>PARALLEL_STAGES=true</code>), displays the execution graph state per stage (<code>pending</code>, <code>ready</code>, <code>running</code>, <code>done</code>, <code>failed</code>, <code>blocked</code>, <code>skipped</code>).
 *   <strong>Control Actions</strong>:
-    - <strong>Stop</strong>: Issues a cancellation request to terminate execution.
-    - <strong>Logs</strong>: Opens the live logging window.
+    - <strong>Stop</strong>: Issues a cancellation request to terminate execution across all active workers.
+    - <strong>Logs</strong>: Opens the live logging window streaming unified tagged logs (<code>[node@hostname]</code>).
     - <strong>DVC-Viewer</strong>: Opens the live web monitor for the running pipeline's metrics.</p>
 <h3 id="c-queue-panel-diagnosis">C. Queue Panel &amp; Diagnosis</h3>
 <p>Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled immediately, the panel displays a <strong>wait reason</strong> calculated by the scheduler:
 *   <code>branch_exclusivity</code>: Blocked because another job is already running on the same repository and branch.
-*   <code>no_free_workers</code>: All workers satisfying the job's constraints are occupied.
-*   <code>insufficient_ram</code>: No free worker has enough physical RAM available to satisfy the <code>REQUIRED_RAM</code> constraint (accounting for the 8 GB OS reserve).
+*   <code>no_free_workers</code>: All workers satisfying the job's or node's resource constraints are occupied.
+*   <code>insufficient_ram</code>: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
 *   <code>scheduling</code>: The scheduler is actively evaluating placement scores.</p>
 <hr />
 <h2 id="2-segmented-live-logs-error-highlighting">2. Segmented Live Logs &amp; Error Highlighting</h2>
 <p>Clicking the <strong>Logs</strong> button opens an interactive modal:</p>
 <ul>
+<li><strong>Multi-Node Log Streaming</strong>: In parallel mode, logs from multiple worker nodes are multiplexed in real time with <code>[stage@worker]</code> prefixes (e.g. <code>[train@HEC45801] Epoch 1/10</code>).</li>
 <li><strong>Stage-by-Stage Segmentation</strong>: The dashboard parses the log stream and separates it into distinct tabs based on execution phases (e.g. Setup, DVC stages like <code>preprocess</code> or <code>training</code>, and Git Synchronization/GC).</li>
 <li><strong>Live Status Indicator</strong>: Active tabs display a loading spinner. If the run fails, a skull emoji <code>☠️</code> appears along with the shell exit code.</li>
 <li><strong>"Last Error" Button</strong>: If a stage fails, this button highlights the last line containing the error trace. Clicking it automatically opens the failing stage's tab and scrolls directly to the error line.</li>

@@ -738,6 +738,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../dashboard/" class="md-nav__link">
         
   
@@ -1406,11 +1462,12 @@
 <p>Before running your first job, you need to set up two files at the root of your repository:</p>
 <h3 id="cluster-ci-hardware-runtime-settings"><code>.cluster-ci</code> — Hardware &amp; Runtime Settings</h3>
 <p>This file was created automatically by the install script. It controls how much RAM, VRAM, and time your job can use. Open it and adjust the values to match your needs:</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">10GB</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">4</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Optional: PARALLEL_STAGES=true</span>
 </span></code></pre></div>
-<p>→ See the <strong><a href="../configuration/">Configuration Reference</a></strong> for a complete list of all available parameters.</p>
+<p>→ See the <strong><a href="../configuration/">Configuration Reference</a></strong> and <strong><a href="../stage_resources/">Per-Stage Resources Guide</a></strong> for complete details on resource settings.</p>
 <h3 id="dvcyaml-experiment-pipeline"><code>dvc.yaml</code> — Experiment Pipeline</h3>
 <p>Define the steps of your experiment in a <code>dvc.yaml</code> file. The cluster executes these steps automatically:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">stages</span><span class="p">:</span>

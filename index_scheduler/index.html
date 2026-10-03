@@ -575,6 +575,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../user/stage_resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-Stage Resources (meta.cluster)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../user/parallel_execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../user/dashboard/" class="md-nav__link">
         
   
@@ -1080,7 +1136,7 @@
 
 
 <h1 id="index-de-documentation-scheduler">Index de Documentation - Scheduler</h1>
-<p>Cet index regroupe l'ensemble des notes techniques, guides d'architecture, et documentations relatives au scheduler et au système d'ordonnancement de <strong>Cluster-CI</strong>.</p>
+<p>Cet index regroupe l'ensemble des notes techniques, guides d'architecture, et documentations relatives au scheduler et au système d'ordonnancement de <strong>Cluster-CI v3</strong>.</p>
 <table>
 <thead>
 <tr>
@@ -1091,6 +1147,30 @@
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><a href="../user/ci_queue/">CI Pipeline &amp; Queue Scheduling</a></td>
+<td>Ordonnancement multi-machines, machine prioritaire (home worker), équité fair-share aux frontières de nœuds et règles d'admission physique.</td>
+<td>2026-10-03</td>
+<td><code>v3</code></td>
+</tr>
+<tr>
+<td><a href="../user/stage_resources/">Ressources par étape (<code>meta.cluster</code>)</a></td>
+<td>Spécification granulaire des ressources (CPU, RAM, VRAM, stockage, image, workers) dans <code>dvc.yaml</code>.</td>
+<td>2026-10-03</td>
+<td><code>v3</code></td>
+</tr>
+<tr>
+<td><a href="../user/parallel_execution/">Exécution Parallèle du DAG</a></td>
+<td>Ordonnancement distribué des branches DAG, exécuteur de branche, volumes dédiés par image et pilote de fusion <code>dvc.lock</code>.</td>
+<td>2026-10-03</td>
+<td><code>v3</code></td>
+</tr>
+<tr>
+<td><a href="../concurrency_management/">Gestion de la Concurrence</a></td>
+<td>Modèle de concurrence dual-mode (draft vs non-draft), propagation des signaux d'annulation et isolation multi-workers.</td>
+<td>2026-10-03</td>
+<td><code>v3</code></td>
+</tr>
 <tr>
 <td><a href="../scheduler/resilience_and_chaos_testing/">Résilience et Chaos Testing</a></td>
 <td>Analyse des blocages historiques (SQLite deadlocks, Broken Pipes) et guide d'exécution du framework de stress-test.</td>

@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/ci_queue/">
+        <link rel="canonical" href="https://UNIL-DESI.github.io/cluster-ci/user/parallel_execution/">
       
       
-        <link rel="prev" href="../containers/">
+        <link rel="prev" href="../stage_resources/">
       
       
-        <link rel="next" href="../stage_resources/">
+        <link rel="next" href="../dashboard/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>CI & Queue Scheduler - Cluster-CI</title>
+        <title>Parallel DAG Execution - Cluster-CI</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ci-pipeline-queue-scheduling-guide" class="md-skip">
+        <a href="#parallel-dag-execution" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              CI & Queue Scheduler
+              Parallel DAG Execution
             
           </span>
         </div>
@@ -549,37 +549,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CI & Queue Scheduler
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../ci_queue/" class="md-nav__link">
         
   
   
@@ -595,215 +568,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-job-lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Job Lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-resource-admission-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Resource Admission Rules
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Resource Admission Rules">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#default-resource-allocation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default Resource Allocation
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-scheduling-models-classic-vs-parallel-dag" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Scheduling Models: Classic vs Parallel DAG
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Scheduling Models: Classic vs Parallel DAG">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#a-classic-mode-parallel_stagesfalse-or-omitted" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A. Classic Mode (PARALLEL_STAGES=false or omitted)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b-parallel-dag-mode-parallel_stagestrue" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B. Parallel DAG Mode (PARALLEL_STAGES=true)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-multi-machine-fair-share-scheduling-v3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Multi-Machine Fair-Share Scheduling (v3)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Multi-Machine Fair-Share Scheduling (v3)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#home-worker-guaranteed-machine" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Home Worker (Guaranteed Machine)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#additional-workers-opportunistic-bursting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Additional Workers (Opportunistic Bursting)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fair-share-rebalancing-at-node-boundaries" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fair-Share Rebalancing at Node Boundaries
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-worker-selection-data-locality" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Worker Selection &amp; Data Locality
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-runtime-limits-auto-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Runtime Limits &amp; Auto-Cancellation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="6. Runtime Limits &amp; Auto-Cancellation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#timeout-watchdog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Timeout Watchdog
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dashboard-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dashboard Cancellation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#auto-cancellation-on-new-submissions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Auto-Cancellation on New Submissions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -841,10 +605,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../parallel_execution/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel DAG Execution
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -860,6 +651,198 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-enabling-parallel-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Enabling Parallel Execution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-pipeline-analysis-and-stale-node-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Pipeline Analysis and Stale Node Detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-branch-executor-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Branch Executor Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Branch Executor Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#persistent-containers-image-switching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistent Containers &amp; Image Switching
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-multi-node-packing-machine-sharing-a11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Multi-Node Packing &amp; Machine Sharing (A11)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-headnode-as-worker-of-last-resort-a13a14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Headnode as Worker of Last Resort (A13/A14)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-active-memory-ceilings-isolation-flags-a12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Active Memory Ceilings &amp; Isolation Flags (A12)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Active Memory Ceilings &amp; Isolation Flags (A12)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#diagnosing-and-resolving-oomkilled-exit-code-137" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diagnosing and Resolving OOMKilled (Exit Code 137)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-git-synchronization-and-merge-driver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Git Synchronization and Merge Driver
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-heavy-artifact-handling-no-centralization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Heavy Artifact Handling (No Centralization)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Heavy Artifact Handling (No Centralization)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-locality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Locality
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#peer-to-peer-artifact-fetching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Peer-to-Peer Artifact Fetching
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resilient-recovery-on-purged-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resilient Recovery on Purged Artifacts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-aggregated-real-time-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Aggregated Real-Time Logging
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1353,10 +1336,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-job-lifecycle" class="md-nav__link">
+  <a href="#1-enabling-parallel-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Job Lifecycle
+        1. Enabling Parallel Execution
       
     </span>
   </a>
@@ -1364,22 +1347,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-resource-admission-rules" class="md-nav__link">
+  <a href="#2-pipeline-analysis-and-stale-node-detection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Resource Admission Rules
+        2. Pipeline Analysis and Stale Node Detection
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Resource Admission Rules">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-branch-executor-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Branch Executor Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Branch Executor Lifecycle">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#default-resource-allocation" class="md-nav__link">
+  <a href="#persistent-containers-image-switching" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Default Resource Allocation
+        Persistent Containers &amp; Image Switching
       
     </span>
   </a>
@@ -1392,33 +1386,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-scheduling-models-classic-vs-parallel-dag" class="md-nav__link">
+  <a href="#4-multi-node-packing-machine-sharing-a11" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Scheduling Models: Classic vs Parallel DAG
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Scheduling Models: Classic vs Parallel DAG">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#a-classic-mode-parallel_stagesfalse-or-omitted" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        A. Classic Mode (PARALLEL_STAGES=false or omitted)
+        4. Multi-Node Packing &amp; Machine Sharing (A11)
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#b-parallel-dag-mode-parallel_stagestrue" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#5-headnode-as-worker-of-last-resort-a13a14" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B. Parallel DAG Mode (PARALLEL_STAGES=true)
+        5. Headnode as Worker of Last Resort (A13/A14)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-active-memory-ceilings-isolation-flags-a12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Active Memory Ceilings &amp; Isolation Flags (A12)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Active Memory Ceilings &amp; Isolation Flags (A12)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#diagnosing-and-resolving-oomkilled-exit-code-137" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diagnosing and Resolving OOMKilled (Exit Code 137)
       
     </span>
   </a>
@@ -1431,22 +1436,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-multi-machine-fair-share-scheduling-v3" class="md-nav__link">
+  <a href="#7-git-synchronization-and-merge-driver" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Multi-Machine Fair-Share Scheduling (v3)
+        7. Git Synchronization and Merge Driver
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Multi-Machine Fair-Share Scheduling (v3)">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-heavy-artifact-handling-no-centralization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Heavy Artifact Handling (No Centralization)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Heavy Artifact Handling (No Centralization)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#home-worker-guaranteed-machine" class="md-nav__link">
+  <a href="#data-locality" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Home Worker (Guaranteed Machine)
+        Data Locality
       
     </span>
   </a>
@@ -1454,10 +1470,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#additional-workers-opportunistic-bursting" class="md-nav__link">
+  <a href="#peer-to-peer-artifact-fetching" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Additional Workers (Opportunistic Bursting)
+        Peer-to-Peer Artifact Fetching
       
     </span>
   </a>
@@ -1465,10 +1481,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#fair-share-rebalancing-at-node-boundaries" class="md-nav__link">
+  <a href="#resilient-recovery-on-purged-artifacts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fair-Share Rebalancing at Node Boundaries
+        Resilient Recovery on Purged Artifacts
       
     </span>
   </a>
@@ -1481,63 +1497,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-worker-selection-data-locality" class="md-nav__link">
+  <a href="#9-aggregated-real-time-logging" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Worker Selection &amp; Data Locality
+        9. Aggregated Real-Time Logging
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-runtime-limits-auto-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Runtime Limits &amp; Auto-Cancellation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="6. Runtime Limits &amp; Auto-Cancellation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#timeout-watchdog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Timeout Watchdog
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dashboard-cancellation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dashboard Cancellation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#auto-cancellation-on-new-submissions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Auto-Cancellation on New Submissions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1558,141 +1524,177 @@
 
 
 
-<h1 id="ci-pipeline-queue-scheduling-guide">CI Pipeline &amp; Queue Scheduling Guide</h1>
-<p>When you run <code>cluster-run</code>, your job enters a queue and is automatically assigned to available GPU and CPU workers. This guide explains how jobs and DAG stages are scheduled, how multi-machine fairness is enforced, and what hardware admission rules apply.</p>
+<h1 id="parallel-dag-execution">Parallel DAG Execution</h1>
+<p>Cluster-CI v3 enables distributed, parallel stage execution across multiple cluster workers directly from your DVC pipeline DAG. Instead of running an entire pipeline sequentially on a single node, independent branches execute concurrently across available cluster machines.</p>
 <hr />
-<h2 id="1-job-lifecycle">1. Job Lifecycle</h2>
-<p>When you trigger a run using <code>cluster-run</code>, your job proceeds through the following lifecycle:</p>
+<h2 id="1-enabling-parallel-execution">1. Enabling Parallel Execution</h2>
+<p>Parallel stage execution is opt-in and controlled via your <code>.cluster-ci</code> configuration file.</p>
+<p>To enable parallel DAG scheduling, add the following flag to <code>.cluster-ci</code>:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Enable parallel DAG scheduling across workers</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
+</span></code></pre></div>
+<p>When <code>PARALLEL_STAGES=true</code> is set:
+* The submission engine parses your <code>dvc.yaml</code> pipeline and builds an execution graph.
+* Multiple branch executors across the cluster can claim independent ready stages concurrently.
+* If omitted or set to <code>false</code>, Cluster-CI runs in legacy sequential mode (one machine per job, running <code>dvc repro</code>).</p>
+<hr />
+<h2 id="2-pipeline-analysis-and-stale-node-detection">2. Pipeline Analysis and Stale Node Detection</h2>
+<p>Before dispatching tasks, the Cluster-CI v3 planner determines which nodes must be executed:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[Repository Push] 
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>       │
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>       ▼
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>[Planner: Git Analysis] 
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>       │
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>       ├─► Read dvc.yaml &amp; resolve foreach stages
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>       ├─► Inspect dvc.lock, code diffs, parameters
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>       └─► Flag 'stale' nodes (code, param, or upstream changed)
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>       │
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>       ▼
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>[Headnode: DAG State Engine]
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>       └─► Ready queue populated (nodes whose parents are done/skipped)
+</span></code></pre></div>
 <ol>
-<li><strong>Submission</strong>: Your code is pushed to GitHub, which notifies the headnode orchestrator.</li>
-<li><strong>Queue &amp; Graph Analysis</strong>: <ul>
-<li>In classic mode, the job enters a FIFO queue.</li>
-<li>In parallel mode (<code>PARALLEL_STAGES=true</code>), the scheduler analyzes <code>dvc.yaml</code> and Git history to determine ready vs skipped nodes.</li>
-</ul>
-</li>
-<li><strong>Scheduling</strong>: Every 5 seconds, the scheduler evaluates pending jobs/nodes against active worker capacities.</li>
-<li><strong>Execution</strong>: Assigned workers boot execution containers, mount repository worktrees, pull required dependencies, and run either the full pipeline (<code>dvc repro</code>) or targeted stages (<code>dvc repro -s &lt;node&gt;</code>).</li>
-<li><strong>Results &amp; Sync</strong>: Metrics, plots, and <code>dvc.lock</code> updates are committed back to your branch, and heavy artifacts remain cached across workers.</li>
+<li><strong>Pure Git Analysis</strong>: The planner evaluates changed stage code, parameter files, and <code>dvc.lock</code> hashes <strong>strictly from Git history</strong>. No heavy datasets or DVC cache downloads are required on the headnode.</li>
+<li><strong>Dynamic Pruning</strong>: Up-to-date stages with matching dependency hashes are marked as <code>skipped</code> at submission time.</li>
+<li><strong>DAG Dependency Tracking</strong>: As soon as all parent stages of a node reach <code>done</code> or <code>skipped</code>, the child node automatically transitions to <code>ready</code>.</li>
 </ol>
 <hr />
-<h2 id="2-resource-admission-rules">2. Resource Admission Rules</h2>
-<p>Each worker node automatically reports its hardware telemetry to the headnode upon startup (CPU cores, RAM, VRAM per GPU, unified memory flag, architecture, and free disk space).</p>
-<p>When scheduling a job or individual stage, the scheduler compares requested resources against worker specifications:</p>
+<h2 id="3-branch-executor-lifecycle">3. Branch Executor Lifecycle</h2>
+<p>Each participating worker runs a dedicated <strong>Branch Executor</strong> managing the containerized execution environment.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>flowchart TD
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    A["Boot: POST /api/jobs/{id}/next_node"] --&gt; B{Action ?}
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    B --&gt;|"run"| D["Execute Node"]
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    B --&gt;|"switch_image"| C["Stop old container&lt;br/&gt;Launch new container with image-specific /home/user volume"]
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    C --&gt; D
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    B --&gt;|"wait"| W["Sleep 5s -&gt; poll next_node"] --&gt; A
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    B --&gt;|"yield / finish"| Z["Stop container &amp; release worker"]
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    subgraph Node_Execution ["Node Execution Step"]
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        D --&gt; E["1. git pull --rebase"]
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        E --&gt; F["2. Check &amp; transfer missing dep_paths"]
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        F --&gt; G["3. dvc repro -s {node}"]
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        G --&gt; H["4. Commit &amp; push results (dvc.lock merge driver)"]
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        H --&gt; I["5. POST next_node(status=done)"]
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    end
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    I --&gt; B
+</span></code></pre></div>
+<h3 id="persistent-containers-image-switching">Persistent Containers &amp; Image Switching</h3>
+<ul>
+<li><strong>Long-Lived Container</strong>: On each assigned worker, the container remains active between consecutive stages to avoid container startup and teardown latency.</li>
+<li><strong>Automatic Docker Image Pulling</strong>: When a stage requires a Docker image (<code>meta.cluster.image</code>) not present locally on the worker, the branch executor automatically invokes <code>docker pull</code> before container instantiation.</li>
+<li><strong>Dynamic Image Switching</strong>: When the next assigned node requires a different Docker image, the executor stops the previous container and starts the new one.</li>
+<li><strong>Isolated Per-Image Home Volumes</strong>: Docker named volumes are isolated per image and repository (<code>cluster-ci-home-${REPO_SLUG}-${IMAGE_SLUG}</code>) and mounted onto <code>/home/user</code>. This preserves package caches (<code>uv</code>, wheels, huggingface caches) while preventing binary ABI incompatibilities between different Linux distributions or Python versions.</li>
+</ul>
+<hr />
+<h2 id="4-multi-node-packing-machine-sharing-a11">4. Multi-Node Packing &amp; Machine Sharing (A11)</h2>
+<p>When hardware resources permit (<code>ALLOW_PACKING = True</code>), multiple branch executors can execute concurrently on the same physical machine:</p>
+<ul>
+<li><strong>Independent Workspaces</strong>: Each executor operates inside an isolated workspace directory (<code>repositories/{repo_slug}__runner_{slot}</code>) or Git worktree, preventing Git lock collisions and working tree conflicts between parallel stages.</li>
+<li><strong>Shared DVC Cache</strong>: Executors on the same machine share the local DVC cache (<code>~/.cache/dvc</code>), eliminating redundant downloads of model weights and dataset shards across parallel stages.</li>
+<li><strong>Distinct Container Isolation</strong>: Each executor runs inside a separate Docker container with strictly enforced per-container resource boundaries.</li>
+</ul>
+<hr />
+<h2 id="5-headnode-as-worker-of-last-resort-a13a14">5. Headnode as Worker of Last Resort (A13/A14)</h2>
+<p>The Headnode functions primarily as the cluster API, database host, and DAG scheduler. To safeguard core cluster services:</p>
+<ul>
+<li><strong>Placement Priority</strong>: The scheduler uses priority-based worker ordering. Dedicated workers share standard priority <code>50</code> (<code>DEFAULT_PLACEMENT_PRIORITY</code>), whereas the Headnode has priority <code>0</code> (<code>HEADNODE_PLACEMENT_PRIORITY</code>). The Headnode is strictly the worker of <strong>last resort</strong>, selected only when no dedicated worker is eligible or available.</li>
+<li><strong>Strict Host Resource Reserves</strong>: The Headnode reserves <code>16.0 GB</code> RAM, <code>2</code> CPU cores, and <code>20.0 GB</code> disk space (<code>DEFAULT_HEADNODE_RAM_RESERVE_GB</code>, <code>DEFAULT_HEADNODE_CPU_RESERVE</code>, <code>DEFAULT_HEADNODE_DISK_RESERVE_GB</code>) strictly for system and scheduler operations.</li>
+<li><strong>Parent Cgroup Ceilings</strong>: All job containers running on the Headnode are placed under <code>--cgroup-parent=/cluster-jobs</code>, bounding aggregate memory consumption across all packing containers so they cannot starve the operating system.</li>
+</ul>
+<hr />
+<h2 id="6-active-memory-ceilings-isolation-flags-a12">6. Active Memory Ceilings &amp; Isolation Flags (A12)</h2>
+<p>To prevent unconstrained processes from causing host kernel panics or physical server freezes, strict resource isolation flags are unconditionally applied on all machines:</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: left;">Worker Architecture</th>
-<th style="text-align: left;">Memory Admission Rule</th>
-<th style="text-align: left;">GPU Allocation</th>
+<th style="text-align: left;">Docker Flag</th>
+<th style="text-align: left;">Value / Setting</th>
+<th style="text-align: left;">Purpose</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;"><strong>Unified Memory</strong><br><em>(e.g. Grace Blackwell GB10, 128 GB)</em></td>
-<td style="text-align: left;"><code>ram_gb + vram_gb &lt;= total_ram_gb - 8.0 GB</code><br><em>(Shared pool minus 8 GB OS reserve)</em></td>
-<td style="text-align: left;">Native unified GPU access</td>
+<td style="text-align: left;"><code>--memory</code></td>
+<td style="text-align: left;"><code>ram_gb</code> (discrete) or <code>ram_gb + vram_gb</code> (unified)</td>
+<td style="text-align: left;">Hard physical memory ceiling for the container.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Discrete GPU &amp; RAM</strong><br><em>(e.g. isipol09, 2× RTX 3090)</em></td>
-<td style="text-align: left;"><code>ram_gb &lt;= available_ram_gb - 8.0 GB</code><br><strong>and</strong> <code>vram_gb &lt;= sum(available_vram[gpu_ids])</code></td>
-<td style="text-align: left;">Specific GPUs isolated via <code>CUDA_VISIBLE_DEVICES</code></td>
+<td style="text-align: left;"><code>--memory-swap</code></td>
+<td style="text-align: left;">Equal to <code>--memory</code> value</td>
+<td style="text-align: left;">Disables swap entirely, ensuring deterministic memory limits.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>All Workers</strong></td>
-<td style="text-align: left;"><code>cpus &lt;= available_cpus</code><br><code>storage_gb &lt;= available_disk_gb</code><br>Docker image matches worker architecture</td>
-<td style="text-align: left;">—</td>
+<td style="text-align: left;"><code>--memory-swappiness</code></td>
+<td style="text-align: left;"><code>0</code></td>
+<td style="text-align: left;">Disables kernel page swapping for the container.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--oom-score-adj</code></td>
+<td style="text-align: left;"><code>500</code></td>
+<td style="text-align: left;">Ensures the Linux kernel OOM Killer kills the job container before any host daemon or systemd service.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--cpus</code></td>
+<td style="text-align: left;"><code>cpus</code> (from <code>meta.cluster.cpus</code>)</td>
+<td style="text-align: left;">Hard limit on CPU core utilization.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--pids-limit</code></td>
+<td style="text-align: left;"><code>4096</code></td>
+<td style="text-align: left;">Anti-fork bomb guard preventing process/thread exhaustion.</td>
 </tr>
 </tbody>
 </table>
-<!-- v3: à vérifier contre l'implémentation : variables d'environnement CUDA_VISIBLE_DEVICES et formule exacte de réserve OS -->
-
-<h3 id="default-resource-allocation">Default Resource Allocation</h3>
-<p>If resources are not explicitly specified in <code>meta.cluster</code> or <code>.cluster-ci</code>:
-* <strong>RAM</strong>: Defaults to <strong>10 GB</strong> (workers reserve 8 GB for OS operations).
-* <strong>VRAM</strong>: Defaults to <strong>0 GB</strong> (runs on CPU or GPU nodes).
-* <strong>CPU</strong>: Defaults to <strong>4 cores</strong>.
-* <strong>Storage</strong>: Defaults to <strong>0 GB</strong> (no disk enforcement).</p>
-<hr />
-<h2 id="3-scheduling-models-classic-vs-parallel-dag">3. Scheduling Models: Classic vs Parallel DAG</h2>
-<p>Cluster-CI supports two scheduling modes depending on the <code>PARALLEL_STAGES</code> configuration in <code>.cluster-ci</code>:</p>
-<h3 id="a-classic-mode-parallel_stagesfalse-or-omitted">A. Classic Mode (<code>PARALLEL_STAGES=false</code> or omitted)</h3>
-<ul>
-<li><strong>Single-Worker Assignment</strong>: One job occupies at most one machine.</li>
-<li><strong>Sequential Repro</strong>: The assigned worker runs <code>dvc repro</code> from start to finish.</li>
-<li><strong>Queue Discipline</strong>: Strict FIFO with branch exclusivity.</li>
-</ul>
-<h3 id="b-parallel-dag-mode-parallel_stagestrue">B. Parallel DAG Mode (<code>PARALLEL_STAGES=true</code>)</h3>
-<ul>
-<li><strong>Multi-Worker Scaling</strong>: A single job can scale across multiple machines (up to 8 workers) to run independent DAG branches concurrently.</li>
-<li><strong>Granular Stage Scheduling</strong>: Stages are assigned individually as soon as their parents complete.</li>
-<li>See the <a href="../parallel_execution/">Parallel DAG Execution Guide</a> for architecture details.</li>
-</ul>
-<hr />
-<h2 id="4-multi-machine-fair-share-scheduling-v3">4. Multi-Machine Fair-Share Scheduling (v3)</h2>
-<p>In parallel mode, Cluster-CI enforces an equitable resource-sharing algorithm across researchers.</p>
-<h3 id="home-worker-guaranteed-machine">Home Worker (Guaranteed Machine)</h3>
-<ul>
-<li>When a parallel job starts, the scheduler assigns it a <strong>Home Worker</strong> (primary machine) in FIFO arrival order.</li>
-<li><strong>Strict Invariant</strong>: The home worker is <strong>never revoked</strong> while the job has active or pending work.</li>
-<li>If all current stages are blocked waiting for inputs, the home worker waits (<code>action: "wait"</code>) and keeps its container ready.</li>
-</ul>
-<h3 id="additional-workers-opportunistic-bursting">Additional Workers (Opportunistic Bursting)</h3>
-<ul>
-<li>If additional workers are idle and a job has multiple ready stages in its DAG, the job can acquire extra workers.</li>
-<li>Up to 8 workers can execute stages for the same job simultaneously.</li>
-</ul>
-<h3 id="fair-share-rebalancing-at-node-boundaries">Fair-Share Rebalancing at Node Boundaries</h3>
-<p>To prevent one large pipeline from monopolizing the entire cluster, machines are dynamically rebalanced at stage completion boundaries:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>flowchart TD
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    A["Stage finishes on Additional Worker"] --&gt; B["Commit &amp; Push stage outputs"]
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    B --&gt; C{"Competing job needs a worker?"}
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    C --&gt;|"No"| D["Pick next ready stage of current job"]
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    C --&gt;|"Yes"| E{"Anti-Ping-Pong Check (Rule A1):&lt;br/&gt;machines(competitor) + 1 &lt; machines(current)&lt;br/&gt;AND no idle worker available?"}
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    E --&gt;|"Yes"| F["Yield Worker to competitor&lt;br/&gt;(action: 'yield')"]
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    E --&gt;|"No"| D
+<h3 id="diagnosing-and-resolving-oomkilled-exit-code-137">Diagnosing and Resolving <code>OOMKilled</code> (Exit Code 137)</h3>
+<p>When a stage exceeds its allocated physical memory, the Linux kernel terminates the container immediately. Cluster-CI catches this event and emits the following actionable error message:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>OOMKilled: Stage '&lt;stage_name&gt;' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)
 </span></code></pre></div>
+<p><strong>Cause</strong>: The execution process in <code>&lt;stage_name&gt;</code> allocated more memory than declared in <code>meta.cluster.ram_gb</code> (or <code>vram_gb</code> on Grace Blackwell GB10 unified memory).</p>
+<p><strong>Remedy</strong>:
+1. Increase <code>ram_gb</code> (or <code>vram_gb</code> on GB10) for the failing stage under <code>stages.&lt;stage_name&gt;.meta.cluster</code> in <code>dvc.yaml</code>.
+2. If <code>meta.cluster</code> is not used, increase <code>REQUIRED_RAM</code> in <code>.cluster-ci</code>.
+3. Check your Python script for memory leaks or reduce DataLoader batch sizes.</p>
+<hr />
+<h2 id="7-git-synchronization-and-merge-driver">7. Git Synchronization and Merge Driver</h2>
+<p>Because multiple workers execute nodes of the same branch simultaneously, Git synchronization is automated to avoid lock file collisions.</p>
 <ol>
-<li><strong>Anti-Ping-Pong Rule (Rule A1)</strong>:
-   An additional worker is yielded to a competing job only if:</li>
-<li>The competitor has an admissible ready node;</li>
-<li><code>machines(competitor) + 1 &lt; machines(current)</code> (i.e. <code>machines(competitor) &lt; machines(current) - 1</code>);</li>
-<li>No other idle worker in the cluster can accommodate the competitor.</li>
-</ol>
-<p><em>Example</em>: If Job A holds 2 machines and Job B holds 1 machine, Job A does <strong>not</strong> yield (because 1 + 1 is not &lt; 2). If Job A holds 2 machines and Job B holds 0 machines, Job A yields its additional machine to Job B.</p>
-<ol>
-<li>
-<p><strong>Classic Job Priority (Rule A2)</strong>:
-   A classic sequential job waiting in the queue counts as a competitor with 0 machines requesting 1 machine. Additional workers from parallel jobs are yielded to classic jobs at stage boundaries.</p>
-</li>
-<li>
-<p><strong>No Ready Node Behavior (Rule A3)</strong>:</p>
-</li>
-<li><strong>Home Worker</strong>: If no node is ready, it waits (<code>action: "wait"</code>).</li>
-<li>
-<p><strong>Additional Worker</strong>: If no node is ready, it yields immediately (<code>action: "yield"</code>), ensuring no idle workers are hoarded.</p>
-</li>
-<li>
-<p><strong>Zero Preemption</strong>:
-   <strong>No running stage is ever interrupted or killed</strong> to yield resources. Rebalancing occurs strictly when a stage completes and its outputs are committed.</p>
-</li>
+<li><strong>Pre-Execution Pull</strong>: Before running a stage, the executor performs a <code>git pull --rebase origin {branch}</code> to pull upstream changes committed by parallel workers.</li>
+<li><strong>Single-Stage Repro</strong>: The worker executes only the designated stage:
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>dvc<span class="w"> </span>repro<span class="w"> </span>-s<span class="w"> </span>&lt;stage_name&gt;
+</span></code></pre></div></li>
+<li><strong>Atomic Commit &amp; Resilient Push</strong>: Stage metrics, plots, and updated stage sections in <code>dvc.lock</code> are committed with retry mechanisms:</li>
+<li>If a concurrent worker pushed in the meantime, the executor rebases with exponential backoff.</li>
+<li><strong>Automated <code>dvc.lock</code> Merge Driver</strong>: Cluster-CI registers a specialized merge driver in <code>.git/info/attributes</code> for <code>dvc.lock</code>. When two branches or nodes finish simultaneously, stage outputs in <code>dvc.lock</code> are unioned cleanly per stage without generating merge conflicts.</li>
 </ol>
 <hr />
-<h2 id="5-worker-selection-data-locality">5. Worker Selection &amp; Data Locality</h2>
-<p>When multiple eligible workers can execute a ready stage, the scheduler selects the worker with highest priority:
-1. <strong>Continuation Priority</strong>: Prefers assigning a child stage to the worker that just finished its parent (reusing the warm container and local cache).
-2. <strong>Data Locality Score</strong>: Ranks workers based on existing local DVC cached files (<code>dep_paths</code>).
-3. <strong>Cluster Topology Penalty</strong>: Applies a slight penalty (-1) to the headnode to reserve it for scheduling and lightweight management.</p>
-<hr />
-<h2 id="6-runtime-limits-auto-cancellation">6. Runtime Limits &amp; Auto-Cancellation</h2>
-<h3 id="timeout-watchdog">Timeout Watchdog</h3>
-<p>Every job must specify <code>MAX_RUNTIME_HOURS</code> in its <code>.cluster-ci</code> file (maximum: 24 hours). If your job exceeds this limit, it is automatically terminated.</p>
-<h3 id="dashboard-cancellation">Dashboard Cancellation</h3>
-<p>You can cancel an active job from the <a href="../dashboard/">Dashboard</a> by clicking <strong>Stop</strong>. All assigned workers release their containers and reclaim GPU memory within seconds.</p>
-<h3 id="auto-cancellation-on-new-submissions">Auto-Cancellation on New Submissions</h3>
+<h2 id="8-heavy-artifact-handling-no-centralization">8. Heavy Artifact Handling (No Centralization)</h2>
+<p>Heavy model weights and datasets tracked by DVC are <strong>never centralized</strong> onto the headnode or pushed to intermediate Git commits.</p>
+<h3 id="data-locality">Data Locality</h3>
 <ul>
-<li><strong>Draft Branches (<code>cluster-draft/*</code>)</strong>: Only one active run per researcher. Pushing a new run cancels earlier pending or running executions.</li>
-<li><strong>Standard Branches (<code>main</code>, <code>feature/*</code>)</strong>: Pushing a new commit cancels older <strong>pending</strong> jobs on that branch, while running jobs are allowed to complete.</li>
+<li>When scheduling a ready node, the scheduler evaluates data locality: it prefers placing the node on a worker that already has the required <code>dep_paths</code> locally cached from previous stages or past runs.</li>
 </ul>
+<h3 id="peer-to-peer-artifact-fetching">Peer-to-Peer Artifact Fetching</h3>
+<ul>
+<li>If a node is scheduled on a worker missing certain dependency files, the worker fetches them directly from the peer worker that produced them (<code>/fetch_artifact</code> P2P transfer).</li>
+</ul>
+<h3 id="resilient-recovery-on-purged-artifacts">Resilient Recovery on Purged Artifacts</h3>
+<ul>
+<li>If an input artifact was purged by the local garbage collector on all machines, the worker reports:
+  <div class="language-json highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing_deps"</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_paths"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"data/features.parquet"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+</span></code></pre></div></li>
+<li><strong>Automatic Producer Rerun</strong>: The headnode automatically resets the producer node back to <code>ready</code> with reason <code>outputs_missing</code>. The downstream node returns to <code>pending</code> until the producer re-generates the output.</li>
+<li><strong>Safety Guard</strong>: Cluster-CI allows at most 1 forced replay per producer node per job to prevent infinite rerun loops.</li>
+</ul>
+<hr />
+<h2 id="9-aggregated-real-time-logging">9. Aggregated Real-Time Logging</h2>
+<p>When multiple stages run across distinct machines in parallel, their logs are unified and multiplexed.</p>
+<p>Every log line emitted by an executor container is tagged with its stage name and worker hostname:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>[preprocess@HEC45801] Processing batch 1/50...
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>[eval_baseline@HEC45803] Loaded checkpoint models/baseline.pt
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>[preprocess@HEC45801] Processing batch 2/50...
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>[eval_baseline@HEC45803] Test accuracy: 0.942
+</span></code></pre></div>
+<p>Both the local CLI (<code>cluster-run</code>) and the <a href="../dashboard/">Web Dashboard</a> stream these tagged logs in real time, with the ability to filter logs by stage or worker.</p>
 
 
 
