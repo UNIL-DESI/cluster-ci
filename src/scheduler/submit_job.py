@@ -21,20 +21,13 @@ except ImportError:
 
 
 def get_planner_module_name():
-    """Détecte ou retourne le nom du module planificateur fourni par W1."""
+    """Retourne le module du planificateur W1 (src.planner.stage_plan).
+
+    Aucun repli vers un autre module : erreur explicite si introuvable.
+    """
     env_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE")
     if env_mod:
         return env_mod
-    candidates = [
-        ("src.planner.stage_plan", "src/planner/stage_plan.py"),
-        ("src.scheduler.planner", "src/scheduler/planner.py"),
-        ("scheduler.planner", "scheduler/planner.py"),
-    ]
-    for mod_name, file_rel in candidates:
-        if os.path.exists(file_rel) or os.path.exists(
-            os.path.join(os.path.dirname(__file__), "..", "..", file_rel)
-        ):
-            return mod_name
     return "src.planner.stage_plan"
 
 
@@ -143,6 +136,7 @@ def format_nodes_status_summary(nodes):
         "ready": 0,
         "failed": 0,
         "blocked": 0,
+        "missing_deps": 0,
         "pending": 0,
         "skipped": 0,
     }
@@ -169,6 +163,9 @@ def format_nodes_status_summary(nodes):
         elif st == "blocked":
             counts["blocked"] += 1
             blocked_nodes.append(name)
+        elif st in ("missing_deps", "missing-deps"):
+            counts["missing_deps"] += 1
+            blocked_nodes.append(f"{name} (missing_deps)")
         elif st == "skipped":
             counts["skipped"] += 1
         else:
@@ -178,6 +175,8 @@ def format_nodes_status_summary(nodes):
         f"📊 [Nœuds] done={counts['done']}, running={counts['running']}, "
         f"ready={counts['ready']}, failed={counts['failed']}, blocked={counts['blocked']}"
     )
+    if counts["missing_deps"]:
+        summary_line += f", missing_deps={counts['missing_deps']}"
     if counts["skipped"]:
         summary_line += f", skipped={counts['skipped']}"
     if counts["pending"]:
@@ -564,11 +563,16 @@ def wait_for_job(headnode_url, job_id, branch=None):
     last_status = None
     last_queue_diagnostic = None
     last_nodes_summary = None
+    consecutive_log_errors = 0
+    max_log_errors = 10
+    consecutive_status_errors = 0
+    max_status_errors = 10
 
     while True:
         try:
             resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
+            consecutive_status_errors = 0
             job = resp.json()
             status = job['status']
             worker_url = job.get('worker_service_url')
@@ -751,31 +755,41 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
-                except Exception:
-                    pass
+                except requests.exceptions.RequestException as e:
+                    consecutive_log_errors += 1
+                    sys.stderr.write(f"\n⚠️ [Réseau] Échec temporaire de récupération des logs depuis le headnode: {e} (tentative {consecutive_log_errors}/{max_log_errors})\n")
+                    if consecutive_log_errors >= max_log_errors:
+                        sys.stderr.write(f"❌ [Réseau] Nombre maximum d'échecs réseau consécutifs atteint ({max_log_errors}).\n")
+                        raise
 
             if logs_resp is None and worker_url:
                 try:
                     logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
-                except Exception:
-                    pass
+                except requests.exceptions.RequestException as e:
+                    consecutive_log_errors += 1
+                    sys.stderr.write(f"\n⚠️ [Réseau] Échec temporaire de récupération des logs depuis le worker: {e} (tentative {consecutive_log_errors}/{max_log_errors})\n")
+                    if consecutive_log_errors >= max_log_errors:
+                        sys.stderr.write(f"❌ [Réseau] Nombre maximum d'échecs réseau consécutifs atteint ({max_log_errors}).\n")
+                        raise
 
             if logs_resp and logs_resp.status_code == 200:
+                consecutive_log_errors = 0
                 try:
                     logs_data = logs_resp.json()
-                    new_logs = logs_data.get('logs', '')
-                    if new_logs:
-                        import re
-                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
-                            oom_detected = True
-                        if not status_printed:
-                            print(f"\n\n[Streaming logs for job {job_id}]")
-                            status_printed = True
-                        sys.stdout.write(new_logs)
-                        sys.stdout.flush()
-                        log_offset = logs_data.get('offset', log_offset)
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, ValueError) as e:
+                    sys.stderr.write(f"\n⚠️ [Format] Décodage JSON impossible pour les logs: {e}\n")
+                    logs_data = {}
+                new_logs = logs_data.get('logs', '')
+                if new_logs:
+                    import re
+                    if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                        oom_detected = True
+                    if not status_printed:
+                        print(f"\n\n[Streaming logs for job {job_id}]")
+                        status_printed = True
+                    sys.stdout.write(new_logs)
+                    sys.stdout.flush()
+                    log_offset = logs_data.get('offset', log_offset)
 
             if status == 'completed':
                 print_final_dag_summary(nodes_data, job_id)
@@ -816,8 +830,13 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 sys.stdout.flush()
                 last_status = status
 
-        except Exception as e:
-            print(f"\n⚠️ Error checking status: {e}")
+        except requests.exceptions.RequestException as e:
+            if consecutive_log_errors >= max_log_errors:
+                raise
+            consecutive_status_errors += 1
+            sys.stderr.write(f"\n⚠️ Error checking status: {e} ({consecutive_status_errors}/{max_status_errors})\n")
+            if consecutive_status_errors >= max_status_errors:
+                raise
 
         time.sleep(2)
 

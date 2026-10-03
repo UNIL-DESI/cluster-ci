@@ -7,6 +7,12 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 import pytest
+import io
+import shutil
+import threading
+import zipfile
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import requests
 import yaml
 
 from src.config.defaults import DEFAULT_RESOURCES
@@ -20,7 +26,12 @@ from src.scheduler.submit_job import (
     submit_job,
     wait_for_job,
 )
-from src.cluster.cluster_run import parse_cluster_ci_config
+from src.cluster.cluster_run import (
+    parse_cluster_ci_config,
+    fetch_local_results,
+    stream_local_job_logs_and_wait,
+    _headnode_stop_job,
+)
 
 
 class TestV3W8Submission(unittest.TestCase):
@@ -132,7 +143,7 @@ class TestV3W8Submission(unittest.TestCase):
                 f.write("stages:\n  step1:\n    cmd: echo 1\n")
 
             fake_plan = {
-                "version": 1,
+                "version": "3.0",
                 "defaults": DEFAULT_RESOURCES,
                 "nodes": [
                     {
@@ -312,6 +323,201 @@ class TestV3W8Submission(unittest.TestCase):
         run_script = uv_step.get("run", "")
         self.assertIn("PARALLEL_STAGES", run_script)
         self.assertIn("uv", run_script)
+
+    def test_fetch_local_results_with_shutil_and_real_http_server(self):
+        """(Correction 1) Vérifie que fetch_local_results utilise shutil.copyfileobj sans NameError via vrai serveur HTTP."""
+        server = HTTPServer(("127.0.0.1", 0), MockHeadnodeHandler)
+        server.endpoints_called = []
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            headnode_url = f"http://127.0.0.1:{port}"
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                old_cwd = os.getcwd()
+                os.chdir(tmp_dir)
+                try:
+                    success = fetch_local_results("test-shutil-job", headnode_url)
+                    self.assertTrue(success)
+                    # Vérifier que le fichier archivé a été extrait avec succès
+                    self.assertTrue(os.path.isfile(os.path.join(tmp_dir, "metrics.json")))
+                    with open(os.path.join(tmp_dir, "metrics.json"), "r") as f:
+                        data = json.load(f)
+                    self.assertEqual(data.get("accuracy"), 0.95)
+                finally:
+                    os.chdir(old_cwd)
+        finally:
+            server.shutdown()
+
+    def test_stream_local_job_logs_parallel_mode_real_http_server(self):
+        """(Correction 2a) Vérifie que stream_local_job_logs_and_wait en mode parallèle interroge /job_logs et affiche le résumé nœuds."""
+        server = HTTPServer(("127.0.0.1", 0), MockHeadnodeHandler)
+        server.endpoints_called = []
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            headnode_url = f"http://127.0.0.1:{port}"
+            with patch("time.sleep", return_value=None):
+                code = stream_local_job_logs_and_wait("test-parallel-job", headnode_url, is_parallel=True)
+            self.assertEqual(code, 0)
+            self.assertIn("job_logs", server.endpoints_called)
+            self.assertIn("job_status", server.endpoints_called)
+        finally:
+            server.shutdown()
+
+    def test_stream_local_job_logs_classic_mode_real_http_server(self):
+        """(Correction 2b) Vérifie que le mode classique interroge l'ancien /api/jobs/<id>/logs sans altération."""
+        server = HTTPServer(("127.0.0.1", 0), MockHeadnodeHandler)
+        server.endpoints_called = []
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            headnode_url = f"http://127.0.0.1:{port}"
+            with patch("time.sleep", return_value=None):
+                code = stream_local_job_logs_and_wait("test-classic-job", headnode_url, is_parallel=False)
+            self.assertEqual(code, 0)
+            self.assertIn("classic_logs", server.endpoints_called)
+        finally:
+            server.shutdown()
+
+    def test_stream_local_job_logs_ctrl_c_cancels_job_on_headnode(self):
+        """(Correction 2c) Vérifie que l'interruption Ctrl+C annule le job complet via _headnode_stop_job (POST /api/jobs/<id>/stop)."""
+        server = HTTPServer(("127.0.0.1", 0), MockHeadnodeHandler)
+        server.endpoints_called = []
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        try:
+            server.job_status = "running"
+            headnode_url = f"http://127.0.0.1:{port}"
+            with patch("time.sleep", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    stream_local_job_logs_and_wait("test-interrupt-job", headnode_url, is_parallel=True)
+            self.assertIn("stop_job", server.endpoints_called)
+        finally:
+            server.shutdown()
+
+    def test_planner_module_strict_w1_no_fallback(self):
+        """(Correction 3) Vérifie que le planificateur pointe strictement vers src.planner.stage_plan sans repli."""
+        mod = get_planner_module_name()
+        self.assertEqual(mod, "src.planner.stage_plan")
+
+    def test_wait_for_job_bounded_retries_on_network_errors(self):
+        """(Correction 4) Vérifie que submit_job gère les erreurs réseau par retries bornés avec message et fait remonter les autres."""
+        # 1. Erreur transitoire de connexion sur la récupération des logs
+        attempt_count = 0
+
+        def flaky_get(url, **kwargs):
+            nonlocal attempt_count
+            mock_resp = MagicMock()
+            if "/job_status/" in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"job_id": "flaky-job", "status": "completed", "exit_code": 0}
+                return mock_resp
+            elif "/job_logs/" in url or "/logs" in url:
+                attempt_count += 1
+                raise requests.exceptions.ConnectionError("Temporary network reset")
+            return MagicMock(status_code=404)
+
+        with patch("requests.get", side_effect=flaky_get):
+            with patch("time.sleep", return_value=None):
+                code = wait_for_job("http://fake:5000", "flaky-job")
+                self.assertEqual(code, 0)
+                self.assertGreater(attempt_count, 0)
+
+        # 2. Erreur persistante dépassant le seuil max_log_errors -> lève l'exception
+        persistent_count = 0
+
+        def persistent_error_get(url, **kwargs):
+            nonlocal persistent_count
+            mock_resp = MagicMock()
+            if "/job_status/" in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"job_id": "fail-job", "status": "running"}
+                return mock_resp
+            elif "/job_logs/" in url or "/logs" in url:
+                persistent_count += 1
+                raise requests.exceptions.ConnectionError("Permanent network dead")
+            return MagicMock(status_code=404)
+
+        with patch("requests.get", side_effect=persistent_error_get):
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(requests.exceptions.RequestException):
+                    wait_for_job("http://fake:5000", "fail-job")
+                self.assertGreaterEqual(persistent_count, 10)
+
+
+class MockHeadnodeHandler(BaseHTTPRequestHandler):
+    """Serveur HTTP simulant les routes du Headnode en local."""
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        parsed = self.path
+        if "/api/jobs/" in parsed and "/results" in parsed:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("metrics.json", '{"accuracy": 0.95}')
+            data = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif "/job_logs/" in parsed:
+            self.server.endpoints_called.append("job_logs")
+            data = json.dumps({"logs": "[stage1@HEC45801] test log line\n", "offset": 32}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+        elif "/api/jobs/" in parsed and "/logs" in parsed:
+            self.server.endpoints_called.append("classic_logs")
+            data = json.dumps({"logs": "classic log line\n", "offset": 17}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+        elif "/job_status/" in parsed:
+            self.server.endpoints_called.append("job_status")
+            status_val = getattr(self.server, "job_status", "completed")
+            status_data = {
+                "job_id": "test-job-id",
+                "status": status_val,
+                "exit_code": 0,
+                "nodes": [
+                    {"name": "step1", "status": "done", "worker_id": "HEC45801"},
+                    {"name": "step2", "status": "missing_deps", "worker_id": None},
+                ],
+            }
+            data = json.dumps(status_data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        parsed = self.path
+        if "/api/jobs/" in parsed and "/stop" in parsed:
+            self.server.endpoints_called.append("stop_job")
+            data = json.dumps({"status": "ok", "message": "Job stopped"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 
 if __name__ == "__main__":

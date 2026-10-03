@@ -22,6 +22,7 @@ import urllib.error
 import tarfile
 import hashlib
 import zipfile
+import shutil
 
 # Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
 try:
@@ -53,7 +54,10 @@ except ImportError:
     except ImportError:
         def run_planner_for_submission(repo_dir="."):
             import subprocess
-            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.scheduler.planner")
+            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
+            if planner_mod != "src.planner.stage_plan" and not os.environ.get("CLUSTER_CI_PLANNER_MODULE"):
+                print("❌ Error: Module du planificateur doit être 'src.planner.stage_plan'. Aucun repli autorisé.", file=sys.stderr)
+                sys.exit(1)
             cmd = (
                 ["uv", "run", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
                 if shutil.which("uv")
@@ -61,15 +65,89 @@ except ImportError:
             )
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
-                print(f"❌ Error: Échec du planificateur ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
+                print(f"❌ Error: Échec du planificateur W1 ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
                 sys.exit(proc.returncode or 1)
-            return json.loads(proc.stdout)
+            try:
+                return json.loads(proc.stdout)
+            except Exception as e:
+                print(f"❌ Error: Sortie JSON invalide du planificateur W1: {e}", file=sys.stderr)
+                sys.exit(1)
 
         def format_nodes_status_summary(nodes):
-            return None, []
+            if not nodes:
+                return None, []
+            node_list = []
+            if isinstance(nodes, dict):
+                if "nodes" in nodes and isinstance(nodes["nodes"], list):
+                    node_list = nodes["nodes"]
+                else:
+                    for k, v in nodes.items():
+                        if isinstance(v, dict):
+                            node_list.append({"name": k, **v})
+                        else:
+                            node_list.append({"name": k, "status": str(v)})
+            elif isinstance(nodes, list):
+                node_list = nodes
+            if not node_list:
+                return None, []
+            counts = {"done": 0, "running": 0, "ready": 0, "failed": 0, "blocked": 0, "missing_deps": 0, "pending": 0, "skipped": 0}
+            running_nodes, failed_nodes, blocked_nodes = [], [], []
+            for n in node_list:
+                name = n.get("name") or n.get("node_name") or "unknown"
+                st = (n.get("status") or "pending").lower()
+                worker = n.get("worker_id") or n.get("worker")
+                if st in ("done", "completed"):
+                    counts["done"] += 1
+                elif st == "running":
+                    counts["running"] += 1
+                    running_nodes.append(f"{name}@{worker}" if worker else name)
+                elif st == "ready":
+                    counts["ready"] += 1
+                elif st == "failed":
+                    counts["failed"] += 1
+                    failed_nodes.append(name)
+                elif st == "blocked":
+                    counts["blocked"] += 1
+                    blocked_nodes.append(name)
+                elif st in ("missing_deps", "missing-deps"):
+                    counts["missing_deps"] += 1
+                    blocked_nodes.append(f"{name} (missing_deps)")
+                elif st == "skipped":
+                    counts["skipped"] += 1
+                else:
+                    counts["pending"] += 1
+            summary_line = (
+                f"📊 [Nœuds] done={counts['done']}, running={counts['running']}, "
+                f"ready={counts['ready']}, failed={counts['failed']}, blocked={counts['blocked']}"
+            )
+            if counts["missing_deps"]:
+                summary_line += f", missing_deps={counts['missing_deps']}"
+            if counts["skipped"]:
+                summary_line += f", skipped={counts['skipped']}"
+            if counts["pending"]:
+                summary_line += f", pending={counts['pending']}"
+            details = []
+            if running_nodes:
+                details.append(f"▶️  En cours: {', '.join(running_nodes)}")
+            if failed_nodes:
+                details.append(f"❌ Échoués: {', '.join(failed_nodes)}")
+            if blocked_nodes:
+                details.append(f"⛔ Bloqués: {', '.join(blocked_nodes)}")
+            return summary_line, details
 
         def print_final_dag_summary(nodes, job_id):
-            pass
+            if not nodes:
+                return
+            summary_line, details = format_nodes_status_summary(nodes)
+            if not summary_line:
+                return
+            print("\n" + "=" * 60)
+            print(f"📊 RÉSUMÉ D'EXÉCUTION DES NŒUDS (Job: {job_id})")
+            print(f"   {summary_line}")
+            if details:
+                for d in details:
+                    print(f"   {d}")
+            print("=" * 60)
 
 
 # Global variables for cleanup
@@ -1629,8 +1707,27 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
     return False
 
 
-def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
-    """Poll job status and stream live logs directly from headnode API for a local run."""
+def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None, is_parallel=False):
+    """Poll job status and stream live logs directly from headnode API for a local run.
+    
+    En mode parallèle (job soumis avec plan), utilise GET /job_logs/<job_id>?offset=
+    (logs agrégés [nœud@machine], offset sans perte ni doublon) et résumé par nœud.
+    En mode classique, utilise l'ancien endpoint /api/jobs/<job_id>/logs?offset=.
+    Ctrl+C annule immédiatement le job complet via POST /api/jobs/<job_id>/stop.
+    """
+    try:
+        return _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token, is_parallel)
+    except KeyboardInterrupt:
+        global USER_INTERRUPTED
+        USER_INTERRUPTED = True
+        print(f"\n🛑 Interruption utilisateur (Ctrl+C). Annulation du job complet {job_id} sur le cluster...")
+        _headnode_stop_job(job_id, headnode_url, cluster_token)
+        close_log_redirection()
+        raise
+
+
+def _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token=None, is_parallel=False):
+    """Implémentation du suivi et streaming des logs."""
     init_log_redirection()
     offset = 0
     last_status_msg = ""
@@ -1639,21 +1736,40 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     while True:
         # 1. Fetch latest logs from Headnode API
         try:
-            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
+            if is_parallel:
+                logs_url = f"{headnode_url}/job_logs/{job_id}?offset={offset}"
+            else:
+                logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
             req = urllib.request.Request(logs_url)
             if cluster_token:
                 req.add_header("Authorization", f"Bearer {cluster_token}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    log_resp = json.loads(resp.read().decode("utf-8"))
-                    new_logs = log_resp.get("logs", "")
-                    offset = log_resp.get("offset", offset)
-                    if new_logs and isinstance(new_logs, str):
-                        for line in new_logs.splitlines():
-                            print_line(line)
-        except Exception:
-            # Silently continue on temporary network glitches while polling logs
-            pass
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        log_resp = json.loads(resp.read().decode("utf-8"))
+                        new_logs = log_resp.get("logs", "")
+                        offset = log_resp.get("offset", offset)
+                        if new_logs and isinstance(new_logs, str):
+                            for line in new_logs.splitlines():
+                                print_line(line)
+            except urllib.error.HTTPError as he:
+                if he.code == 404 and is_parallel:
+                    fallback_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
+                    req_fb = urllib.request.Request(fallback_url)
+                    if cluster_token:
+                        req_fb.add_header("Authorization", f"Bearer {cluster_token}")
+                    with urllib.request.urlopen(req_fb, timeout=5) as resp:
+                        if resp.status == 200:
+                            log_resp = json.loads(resp.read().decode("utf-8"))
+                            new_logs = log_resp.get("logs", "")
+                            offset = log_resp.get("offset", offset)
+                            if new_logs and isinstance(new_logs, str):
+                                for line in new_logs.splitlines():
+                                    print_line(line)
+                else:
+                    raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            sys.stderr.write(f"\n⚠️ [Réseau] Échec temporaire de récupération des logs ({e})\n")
 
         # 2. Check job status
         try:
@@ -1670,6 +1786,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     # Suivi en direct des nœuds (v3 multi-nœuds)
                     nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
                     if nodes_data:
+                        is_parallel = True
                         summary_line, details = format_nodes_status_summary(nodes_data)
                         if summary_line and summary_line != last_nodes_summary:
                             print_line(summary_line)
@@ -1686,8 +1803,12 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     elif status in ("completed", "failed"):
                         # Drain any remaining logs one final time
                         try:
-                            logs_url = f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
-                            req = urllib.request.Request(logs_url)
+                            final_logs_url = (
+                                f"{headnode_url}/job_logs/{job_id}?offset={offset}"
+                                if is_parallel
+                                else f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}"
+                            )
+                            req = urllib.request.Request(final_logs_url)
                             if cluster_token:
                                 req.add_header("Authorization", f"Bearer {cluster_token}")
                             with urllib.request.urlopen(req, timeout=5) as r2:
@@ -1711,12 +1832,11 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                             print(f"\n✅ Cluster-CI local run completed successfully! (Exit code: {ret_code})")
                             return int(ret_code)
                         else:
-                            ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit()) else 1
+                            ret_code = exit_code if (exit_code is not None and str(exit_code).lstrip("-").isdigit() and int(exit_code) != 0) else 1
                             print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})")
                             return int(ret_code)
-        except Exception:
-            # Status check temporary error
-            pass
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            sys.stderr.write(f"\n⚠️ [Réseau] Échec temporaire de vérification du statut ({e})\n")
 
         time.sleep(2)
 
@@ -1831,7 +1951,7 @@ def local_run():
     print(f"📺 Polling status & streaming logs for local job {job_id[:12]}... (Ctrl+C to cancel)")
 
     try:
-        ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token)
+        ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token, is_parallel=(plan is not None))
         clear_run_state()
         _CLEANUP_DONE = True
         if ret_code != 0:
