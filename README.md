@@ -61,7 +61,6 @@ La commande `cluster-run` est **100% compatible avec Windows (PowerShell/CMD), L
 |---|---|
 | `cluster-run` | Soumet un job et streame en temps réel et en direct les logs d'exécution ligne par ligne dans votre terminal d'origine sans perte |
 | `cluster-run --local` | Exécution directe sur Headnode pour données sensibles/confidentielles (zéro push GitHub, ingestion locale, validation HTTP 400) |
-| `cluster-run --background` | Soumet un job sans bloquer le terminal |
 | `cluster-run list` | Liste les runs récents |
 | `cluster-run view [run_id]` | Affiche les logs d'un run (dernier par défaut) |
 | `cluster-run cancel [run_id]` | Annule un run et nettoie la branche |

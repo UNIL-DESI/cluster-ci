@@ -34,6 +34,7 @@ stages:
         image_arm64: nvcr.io/nvidia/nemo-automodel:26.04
         image_amd64: nvcr.io/nvidia/nemo-automodel:26.04-x86
         cpus: 8
+        gpus: 1
         ram_gb: 40
         vram_gb: 40
         storage_gb: 50
@@ -44,37 +45,62 @@ stages:
 
 All fields under `meta.cluster` are **optional**. If a field is omitted, Cluster-CI falls back to repository-level configuration or cluster defaults.
 
-### The 6 Resource Fields
+### All 9 Resource Fields
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `image` | `string` | `nvcr.io/nvidia/pytorch:26.05-py3` | Docker base image used to execute the stage. Architecture-specific overrides can be provided using `image_arm64` and `image_amd64`. |
-| `cpus` | `integer` | `4` | Number of CPU cores allocated for the stage. |
-| `ram_gb` | `float` | `10.0` | Minimum physical host RAM in GB required for the stage. |
-| `vram_gb` | `float` | `0.0` | Minimum GPU VRAM in GB required. When set to `0`, the stage can execute on CPU-only nodes. |
-| `storage_gb` | `float` | `0.0` | Minimum free disk space in GB required on the worker. A value of `0` disables disk space checks. |
-| `workers` | `list[string]` | All workers | Whitelist of worker hostnames eligible to execute this stage. |
+| `image` | `string` | `nvcr.io/nvidia/pytorch:26.05-py3` | Default Docker base image for the stage. |
+| `image_arm64` | `string` | `null` | Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to `image`. |
+| `image_amd64` | `string` | `null` | Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to `image`. |
+| `cpus` | `integer` | `2` | Number of CPU cores allocated for the stage (`>= 1`). |
+| `gpus` | `integer` | `0` | Number of physical GPUs allocated for the stage (`>= 0`). |
+| `ram_gb` | `float` | `10.0` | Minimum physical host RAM in GB required (`>= 0.0`). |
+| `vram_gb` | `float` | `0.0` | Minimum GPU VRAM in GB required (`>= 0.0`). When `0.0`, stage runs on CPU-only nodes. |
+| `storage_gb` | `float` | `0.0` | Minimum free disk space in GB required on worker (`>= 0.0`). Set `0.0` to disable disk check. |
+| `workers` | `list[string]` | `null` (All workers) | Whitelist of worker hostnames eligible to execute this stage (e.g. `['HEC45801']`). |
 
-!!! danger "Strict Validation (Fail-Fast)"
-    Any unrecognized key under `meta.cluster` causes **immediate job rejection** at submission time (HTTP 400). Cluster-CI strictly rejects typos (e.g. `gpu_gb` or `cpu` instead of `vram_gb` or `cpus`) rather than silently ignoring them.
+!!! danger "Strict Validation & Consistency Rules (Fail-Fast)"
+    * **Schema Validation**: Any unrecognized key under `meta.cluster` causes **immediate job rejection** at submission time (HTTP 400). Valid allowed keys are: `image`, `image_arm64`, `image_amd64`, `cpus`, `gpus`, `ram_gb`, `vram_gb`, `storage_gb`, `workers`.
+    * **Type Validation**: Types are strictly enforced: `cpus` must be an integer `>= 1`, `gpus` an integer `>= 0`, `ram_gb`/`vram_gb`/`storage_gb` numbers `>= 0`, and `workers` a list of strings.
+    * **GPU Consistency Rule (A16/A17)**: Declaring `vram_gb > 0` strictly requires `gpus >= 1`. If `vram_gb > 0` while `gpus == 0`, Cluster-CI raises an immediate actionable error:
+      ```text
+      Fichier dvc.yaml, stage '<stage>' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
+      Cause : vram_gb exige gpus >= 1 (la mémoire vidéo ne peut être allouée sans GPU).
+      Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
+      ```
+
+---
+
+## Unified Memory (GB10) vs. Discrete GPUs
+
+Cluster-CI v3 transparently schedules workloads across both unified memory nodes and discrete GPU nodes:
+
+| Memory Architecture | Hardware Example | Scheduler Admission Check | Docker Container Enforcement |
+| :--- | :--- | :--- | :--- |
+| **Unified Memory** | NVIDIA Grace Blackwell (GB10) | `(ram_gb + vram_gb) <= total_ram_gb - 8.0`<br>*(8 GB OS headroom reserve)* | `--memory` is set to `ram_gb + vram_gb` combined, covering the unified NVLink-C2C pool. |
+| **Discrete GPU** | Headnode (2× RTX 3090) / x86 nodes | `ram_gb <= available_ram_gb - 4.0`<br>`vram_gb <= available_vram_per_gpu` | `--memory` is set strictly to `ram_gb`. GPUs are allocated by index and isolated via `CUDA_VISIBLE_DEVICES`. |
 
 ---
 
 ## Priority Order (Precedence Rules)
 
-When both stage-level `meta.cluster` in `dvc.yaml` and repository-level parameters in `.cluster-ci` are defined, Cluster-CI applies the following precedence order:
+When both stage-level `meta.cluster` in `dvc.yaml` and repository-level parameters in `.cluster-ci` are defined, Cluster-CI applies the following strict precedence order:
 
 | Parameter | Precedence Resolution |
 | :--- | :--- |
 | **Docker Image** | `meta.cluster.image_<arch>` > `meta.cluster.image` > `DOCKER_IMAGE_<ARCH>` (`.cluster-ci`) > `DOCKER_IMAGE` (`.cluster-ci`) > Default (`nvcr.io/nvidia/pytorch:26.05-py3`) |
-| **RAM** | `meta.cluster.ram_gb` > `REQUIRED_RAM` (`.cluster-ci`) > Default (`10.0` GB) |
+| **CPUs** | `meta.cluster.cpus` > `REQUIRED_CPUS` (`.cluster-ci`) > Default (`2` cores) |
+| **GPUs** | `meta.cluster.gpus` > `REQUIRED_GPUS` (`.cluster-ci`) > Default (`0` GPUs) |
+| **RAM** | `meta.cluster.ram_gb` > `REQUIRED_RAM` or `--ram` (`.cluster-ci`) > Default (`10.0` GB) |
 | **VRAM** | `meta.cluster.vram_gb` > `REQUIRED_VRAM` (`.cluster-ci`) > Default (`0.0` GB) |
-| **CPUs** | `meta.cluster.cpus` > Default (`4` cores) |
-| **Storage** | `meta.cluster.storage_gb` > Default (`0.0` GB — no check) |
+| **Storage** | `meta.cluster.storage_gb` > `REQUIRED_STORAGE` or `REQUIRED_DISK` (`.cluster-ci`) > Default (`0.0` GB) |
 | **Workers** | `meta.cluster.workers` > `ALLOWED_WORKERS` (`.cluster-ci`) > All admissible workers |
 
+!!! info "Automatic GPU Defaulting from `.cluster-ci`"
+    If you specify `REQUIRED_VRAM > 0` in `.cluster-ci` without setting `REQUIRED_GPUS`, Cluster-CI automatically defaults `gpus` to `1` so the GPU consistency check passes seamlessly.
+
 !!! info "Backward Compatibility"
-    If your `dvc.yaml` does not contain any `meta.cluster` blocks, the global values in your `.cluster-ci` file (such as `REQUIRED_RAM`, `REQUIRED_VRAM`, and `DOCKER_IMAGE`) continue to apply to every stage in the pipeline.
+    If your `dvc.yaml` does not contain any `meta.cluster` blocks, the global values in your `.cluster-ci` file continue to apply to every stage in the pipeline.
 
 ---
 
@@ -121,6 +147,7 @@ stages:
           ram_gb: ${item.ram}
           vram_gb: ${item.vram}
           cpus: 8
+          gpus: 1
 
   evaluate:
     cmd: python src/evaluate.py
@@ -142,4 +169,3 @@ In this example:
 2. `train_variant@small` (16 GB VRAM) can run on discrete GPU workers (such as RTX 3090) or Grace Blackwell workers.
 3. `train_variant@large` (80 GB VRAM) is scheduled on Grace Blackwell unified-memory nodes (GB10).
 4. `evaluate` runs on any node once both training variants finish.
-<!-- v3: à vérifier contre l'implémentation : syntaxe d'interpolation item dans meta.cluster dvc.yaml -->

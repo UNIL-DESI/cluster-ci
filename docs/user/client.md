@@ -55,18 +55,36 @@ Your local working tree and branch status remain **completely untouched** throug
 
 ---
 
-## 3. Real-Time Log Streaming
+## 3. Real-Time Log Streaming & Multi-Machine Multiplexing
 
 Cluster-CI streams logs from the executing container back to your terminal in real-time.
 
 *   **Primary channel**: Low-latency streaming via `ppng.io`.
-*   **Fallback**: If `ppng.io` is unreachable, the client polls the GitHub Actions API (`gh run view --log`).
+*   **Fallback**: If `ppng.io` is unreachable, the client polls the GitHub Actions API (`gh run view --log`) or Headnode `/job_logs/{job_id}`.
 *   **Progress bars**: `tqdm` progress bars update in-place without generating log spam.
 *   **Local copies**: Logs are saved to `.cluster-ci-logs/` (last 5 runs kept automatically).
+*   **Multi-machine prefixing**: In distributed DAG runs, log lines are prefixed with their originating stage and host:
+    ```text
+    [train_model@HEC45801] Epoch 1/10 - loss: 0.421
+    [evaluate@HEC45803] Running validation suite...
+    ```
+    *(Note : L'affichage consolidé multi-machines en direct avec multiplexage interactif `[node@machine]` dans la console CLI est à venir / en cours de consolidation finale chez W1).*
 
 ---
 
-## 4. Command Reference
+## 4. Command Reference & CLI Syntax
+
+The `cluster-run` CLI accepts the following arguments according to its command-line specification:
+
+```text
+cluster-run [command] [run_id] [--local]
+```
+
+| Argument / Flag | Type / Values | Description |
+| :--- | :--- | :--- |
+| `command` | `list`, `view`, `cancel`, `sync` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
+| `run_id` | `string` *(optional)* | Target GitHub Actions run ID or local job ID for `view` or `cancel`. |
+| `--local` | flag | Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits. |
 
 ### `cluster-run` (Default Execution)
 Triggers a shadow run of your workspace via GitHub Actions.
@@ -98,17 +116,17 @@ cluster-run list
 ### `cluster-run view`
 View logs for a run.
 ```bash
-cluster-run view <run_id>
+cluster-run view [run_id]
 ```
-*   If `<run_id>` is omitted, it targets your last triggered run.
+*   If `run_id` is omitted, it targets your last triggered run.
 
 ### `cluster-run cancel`
 Terminate a running job.
 ```bash
-cluster-run cancel <run_id>
+cluster-run cancel [run_id]
 ```
-*   If `<run_id>` is omitted, it targets your latest active run.
-*   Sends a cancellation request to the cluster and cleans up local tracking files.
+*   If `run_id` is omitted, it targets your latest active run.
+*   Sends a cancellation request (`POST /api/jobs/{id}/stop`) to the cluster and cleans up local tracking files.
 
 ### `cluster-run sync`
 Manually synchronize remote results.
@@ -117,6 +135,9 @@ cluster-run sync
 ```
 *   Fetches the latest metrics, plots, and `dvc.lock` from the remote branch and applies them to your local directory.
 *   Useful if log streaming was interrupted or if you want to pull results from an older run.
+
+### Graceful Interruption (`Ctrl+C`)
+When running `cluster-run` (or `cluster-run --local`), pressing `Ctrl+C` sends an interrupt signal (`SIGINT`). The client traps this signal, immediately calls `POST /api/jobs/{id}/stop` on the Headnode to stop all assigned workers and running containers cleanly, clears the local run state, and exits with code `130`.
 
 ---
 

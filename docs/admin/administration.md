@@ -171,6 +171,44 @@ else:
     )
 ```
 
-<!-- v3: à vérifier contre l'implémentation : structure exacte du payload register_worker et nom des colonnes SQLite -->
 For stages scheduled on discrete multi-GPU machines, the scheduler dynamically assigns specific GPU indices and injects `CUDA_VISIBLE_DEVICES` into the container environment.
+
+---
+
+## 9. SQLite Database Retention & Pathological Growth Guard (A15)
+
+Cluster-CI v3 manages its central job state in SQLite (`cluster.db`). Because provenance tracking and audit trails are essential for research reproducibility, data is preserved by default:
+
+### Retention Policy Rules (Amendement A15)
+
+* **Indefinite History Preservation**: Under normal operation (~15 MB for 3,000+ jobs), the database is **never purged**. Complete job history and stage metrics are retained indefinitely.
+* **Pathological Threshold (> 1 GB)**: Automated retention triggers **strictly and exclusively** if the SQLite database file grows pathologically beyond **1 GB** (`DB_RETENTION_PATHOLOGICAL_THRESHOLD_BYTES = 1024 * 1024 * 1024`).
+* **365-Day Window for Terminal Jobs**: If the 1 GB threshold is exceeded, only terminal jobs (`completed`, `failed`, `cancelled`, `stopped`) older than **365 days** (`DB_RETENTION_PATHOLOGICAL_DAYS = 365`) are eligible for deletion.
+* **Active Jobs Immunity**: Active jobs (`pending`, `running`, `assigned`, `queued`) are strictly immune and never purged under any circumstances.
+* **Non-Blocking Incremental Vacuum**: To prevent scheduler lockups, the system uses short transaction batches (100 jobs per batch) and `PRAGMA incremental_vacuum(1000)`. Blocking `VACUUM FULL` operations are strictly avoided.
+* **Full Job Log Preservation**: Job log files on disk (`job_logs/{job_id}.log`) are **never deleted or truncated**, ensuring historical diagnostic output remains accessible.
+
+---
+
+## 10. Tiered Disk Garbage Collection (W9 / A15)
+
+Under intensive deep learning workloads, cluster worker disks accumulate large Docker layers, DVC datasets, and wheels. The local garbage collector (`src/runner/gc_orchestrator.py`) regulates disk usage safely without interrupting running jobs:
+
+### Trigger Thresholds
+
+* **Standard GC Threshold**: Triggered only when free disk space falls below **100 GB** (`FREE_SPACE_THRESHOLD_GB = 100`).
+* **Panic Threshold**: Escalates if free disk space drops below **50 GB** (`PANIC_THRESHOLD_GB = 50`).
+* **Protection Window**: Any project with an active container or executed within the last **6 hours** (`GC_PROTECT_HOURS = 6.0`) is strictly immune from eviction.
+
+### Tiered Eviction Hierarchy
+
+The garbage collector operates in 5 progressive tiers, stopping immediately once the target free space threshold is restored:
+
+| Tier | Target Cleaned | Eviction Rules & Safety Guards |
+| :--- | :--- | :--- |
+| **Tier 1** | **Regenerable Caches & Temp Files** | Runs `docker system prune`, prunes DVC commit history (`dvc gc --rev HEAD --rev HEAD~1`), and cleans whitelisted caches (`__pycache__`, `.pytest_cache`, `.cache/uv`, `.cache/pip`, `.cache/huggingface`, `.cache/torch`). Git-tracked files and `.venv` are never touched. |
+| **Tier 2** | **Inactive Docker Home Volumes** | Prunes `/home/user` named volumes (`cluster-ci-home-*`) of inactive repositories. |
+| **Tier 3** | **Inactive Shared DVC Cache (LRU)** | Purges local DVC cache files for the oldest inactive repositories by LRU (Least Recently Used). |
+| **Tier 4** | **Unused Docker Images (LRU)** | Removes unreferenced Docker images sorted by LRU. Images referenced by any existing container (running or stopped) are strictly protected. |
+| **Tier 5** | **Inactive Workspaces (LRU)** | Completely deletes inactive repository checkouts under `repositories/` in oldest LRU order as a last resort. |
 

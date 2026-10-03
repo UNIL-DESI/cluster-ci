@@ -72,12 +72,63 @@ flowchart TD
 
 ### Persistent Containers & Image Switching
 * **Long-Lived Container**: On each assigned worker, the container remains active between consecutive stages to avoid container startup and teardown latency.
-* **Dynamic Image Switching**: When the next assigned node requires a different Docker image (`meta.cluster.image`), the executor stops the previous container and starts the new one.
+* **Automatic Docker Image Pulling**: When a stage requires a Docker image (`meta.cluster.image`) not present locally on the worker, the branch executor automatically invokes `docker pull` before container instantiation.
+* **Dynamic Image Switching**: When the next assigned node requires a different Docker image, the executor stops the previous container and starts the new one.
 * **Isolated Per-Image Home Volumes**: Docker named volumes are isolated per image and repository (`cluster-ci-home-${REPO_SLUG}-${IMAGE_SLUG}`) and mounted onto `/home/user`. This preserves package caches (`uv`, wheels, huggingface caches) while preventing binary ABI incompatibilities between different Linux distributions or Python versions.
 
 ---
 
-## 4. Git Synchronization and Merge Driver
+## 4. Multi-Node Packing & Machine Sharing (A11)
+
+When hardware resources permit (`ALLOW_PACKING = True`), multiple branch executors can execute concurrently on the same physical machine:
+
+* **Independent Workspaces**: Each executor operates inside an isolated workspace directory (`repositories/{repo_slug}__runner_{slot}`) or Git worktree, preventing Git lock collisions and working tree conflicts between parallel stages.
+* **Shared DVC Cache**: Executors on the same machine share the local DVC cache (`~/.cache/dvc`), eliminating redundant downloads of model weights and dataset shards across parallel stages.
+* **Distinct Container Isolation**: Each executor runs inside a separate Docker container with strictly enforced per-container resource boundaries.
+
+---
+
+## 5. Headnode as Worker of Last Resort (A13/A14)
+
+The Headnode functions primarily as the cluster API, database host, and DAG scheduler. To safeguard core cluster services:
+
+* **Placement Priority**: The scheduler uses priority-based worker ordering. Dedicated workers share standard priority `50` (`DEFAULT_PLACEMENT_PRIORITY`), whereas the Headnode has priority `0` (`HEADNODE_PLACEMENT_PRIORITY`). The Headnode is strictly the worker of **last resort**, selected only when no dedicated worker is eligible or available.
+* **Strict Host Resource Reserves**: The Headnode reserves `16.0 GB` RAM, `2` CPU cores, and `20.0 GB` disk space (`DEFAULT_HEADNODE_RAM_RESERVE_GB`, `DEFAULT_HEADNODE_CPU_RESERVE`, `DEFAULT_HEADNODE_DISK_RESERVE_GB`) strictly for system and scheduler operations.
+* **Parent Cgroup Ceilings**: All job containers running on the Headnode are placed under `--cgroup-parent=/cluster-jobs`, bounding aggregate memory consumption across all packing containers so they cannot starve the operating system.
+
+---
+
+## 6. Active Memory Ceilings & Isolation Flags (A12)
+
+To prevent unconstrained processes from causing host kernel panics or physical server freezes, strict resource isolation flags are unconditionally applied on all machines:
+
+| Docker Flag | Value / Setting | Purpose |
+| :--- | :--- | :--- |
+| `--memory` | `ram_gb` (discrete) or `ram_gb + vram_gb` (unified) | Hard physical memory ceiling for the container. |
+| `--memory-swap` | Equal to `--memory` value | Disables swap entirely, ensuring deterministic memory limits. |
+| `--memory-swappiness` | `0` | Disables kernel page swapping for the container. |
+| `--oom-score-adj` | `500` | Ensures the Linux kernel OOM Killer kills the job container before any host daemon or systemd service. |
+| `--cpus` | `cpus` (from `meta.cluster.cpus`) | Hard limit on CPU core utilization. |
+| `--pids-limit` | `4096` | Anti-fork bomb guard preventing process/thread exhaustion. |
+
+### Diagnosing and Resolving `OOMKilled` (Exit Code 137)
+
+When a stage exceeds its allocated physical memory, the Linux kernel terminates the container immediately. Cluster-CI catches this event and emits the following actionable error message:
+
+```text
+OOMKilled: Stage '<stage_name>' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)
+```
+
+**Cause**: The execution process in `<stage_name>` allocated more memory than declared in `meta.cluster.ram_gb` (or `vram_gb` on Grace Blackwell GB10 unified memory).
+
+**Remedy**:
+1. Increase `ram_gb` (or `vram_gb` on GB10) for the failing stage under `stages.<stage_name>.meta.cluster` in `dvc.yaml`.
+2. If `meta.cluster` is not used, increase `REQUIRED_RAM` in `.cluster-ci`.
+3. Check your Python script for memory leaks or reduce DataLoader batch sizes.
+
+---
+
+## 7. Git Synchronization and Merge Driver
 
 Because multiple workers execute nodes of the same branch simultaneously, Git synchronization is automated to avoid lock file collisions.
 
@@ -87,13 +138,12 @@ Because multiple workers execute nodes of the same branch simultaneously, Git sy
    dvc repro -s <stage_name>
    ```
 3. **Atomic Commit & Resilient Push**: Stage metrics, plots, and updated stage sections in `dvc.lock` are committed with retry mechanisms:
-   <!-- v3: à vérifier contre l'implémentation : module dvc_git_helper et drapeaux de retry -->
    * If a concurrent worker pushed in the meantime, the executor rebases with exponential backoff.
 4. **Automated `dvc.lock` Merge Driver**: Cluster-CI registers a specialized merge driver in `.git/info/attributes` for `dvc.lock`. When two branches or nodes finish simultaneously, stage outputs in `dvc.lock` are unioned cleanly per stage without generating merge conflicts.
 
 ---
 
-## 5. Heavy Artifact Handling (No Centralization)
+## 8. Heavy Artifact Handling (No Centralization)
 
 Heavy model weights and datasets tracked by DVC are **never centralized** onto the headnode or pushed to intermediate Git commits.
 
@@ -105,7 +155,6 @@ Heavy model weights and datasets tracked by DVC are **never centralized** onto t
 
 ### Resilient Recovery on Purged Artifacts
 * If an input artifact was purged by the local garbage collector on all machines, the worker reports:
-  <!-- v3: à vérifier contre l'implémentation : structure exacte du statut missing_deps -->
   ```json
   { "status": "missing_deps", "missing_paths": ["data/features.parquet"] }
   ```
@@ -114,7 +163,7 @@ Heavy model weights and datasets tracked by DVC are **never centralized** onto t
 
 ---
 
-## 6. Aggregated Real-Time Logging
+## 9. Aggregated Real-Time Logging
 
 When multiple stages run across distinct machines in parallel, their logs are unified and multiplexed.
 
