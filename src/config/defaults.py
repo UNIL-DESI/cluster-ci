@@ -157,3 +157,20 @@ def validate_and_resolve_resources(
             resolved[key] = def_val
 
     return resolved
+
+
+# Policy: Enforce container memory limit per node
+# Default: Strictly enforced on headnode to protect master services from OOM.
+# On dedicated workers (GB10, single executor per host under Amendement A6), disabled by default
+# to avoid killing jobs (e.g. ECIR) that under-declare ram_gb while host RAM is abundant.
+ENFORCE_NODE_MEMORY_LIMIT: Dict[str, bool] = {
+    "headnode": True,
+    "worker": False,
+}
+
+
+def should_enforce_node_memory_limit(role: str) -> bool:
+    """Check if container memory limits should be enforced for a given role."""
+    role_normalized = str(role or "worker").strip().lower()
+    return ENFORCE_NODE_MEMORY_LIMIT.get(role_normalized, False)
+
