@@ -75,6 +75,29 @@ class TestIterativeRepro(unittest.TestCase):
         ])
         self.assertFalse(Path(runner.ITERATIVE_STATUS_FILE).exists())
 
+    def test_single_node_disables_ancestor_resolution(self):
+        dot_output = (
+            'strict digraph {\n'
+            '  "prep" -> "train";\n'
+            '  "train" -> "eval";\n'
+            '}\n'
+        )
+        with patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=dot_output)):
+            # With single_node=False, targets=["eval"] includes all ancestors: prep, train, eval
+            full_stages = runner.get_dvc_dag(["eval"], single_node=False)
+            self.assertEqual(full_stages, ["prep", "train", "eval"])
+
+            # With single_node=True, only eval is returned (no ancestors)
+            single_stages = runner.get_dvc_dag(["eval"], single_node=True)
+            self.assertEqual(single_stages, ["eval"])
+
+    def test_single_node_cli_parsing(self):
+        with patch.object(sys, "argv", ["runner", "--single-node", "eval"]), \
+                patch.object(runner, "get_dvc_dag", return_value=["eval"]) as mock_dag, \
+                patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            runner.main()
+            mock_dag.assert_called_once_with(["eval"], single_node=True)
+
 
 if __name__ == "__main__":
     unittest.main()

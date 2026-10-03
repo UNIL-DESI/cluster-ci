@@ -754,6 +754,34 @@ docker_exec_bootstrap "uv tool upgrade dvc-viewer || uv tool install git+https:/
 
 log_info "Reading DVC parameters from .cluster-ci..."
 
+if [ "$CLUSTER_CI_PARALLEL_MODE" = "1" ]; then
+    log_info "=========================================================================="
+    log_info "🚀 CLUSTER-CI v3: Delegating to Branch Executor (parallel_mode=1)..."
+    log_info "   Runner ID: ${CLUSTER_CI_RUNNER_ID:-runner-${SAFE_JOB_ID}-$$}"
+    log_info "   Job ID   : ${CLUSTER_CI_JOB_ID:-$JOB_ID}"
+    log_info "   Headnode : $HEADNODE_URL"
+    log_info "=========================================================================="
+
+    set +e
+    python3 -u "$BASE_DIR/src/runner/branch_executor.py" \
+        --headnode-url "$HEADNODE_URL" \
+        --job-id "${CLUSTER_CI_JOB_ID:-$JOB_ID}" \
+        --runner-id "${CLUSTER_CI_RUNNER_ID:-runner-${SAFE_JOB_ID}-$$}" \
+        --worker-id "${WORKER_ID:-$(hostname)}" \
+        --repo-dir "$(pwd)" \
+        --target-repo "$TARGET_REPO" \
+        --target-branch "$TARGET_BRANCH" \
+        --current-container "${MAIN_CONTAINER_NAME}" \
+        --current-image "${DOCKER_IMAGE}" \
+        --cluster-token "$CLUSTER_TOKEN" \
+        --ram-limit "${RAM_LIMIT:-10}" \
+        --vram-limit "${VRAM_LIMIT:-0}"
+    EXEC_RET=$?
+    set -e
+    log_info "Branch Executor finished with exit code $EXEC_RET."
+    exit $EXEC_RET
+fi
+
 # Check if STAGES is defined in .cluster-ci
 if grep -q "^STAGES=" .cluster-ci; then
     STAGES_RAW_VAL=$(grep "^STAGES=" .cluster-ci | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)

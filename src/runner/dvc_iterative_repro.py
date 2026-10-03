@@ -32,10 +32,11 @@ def clear_status():
     except OSError:
         pass
 
-def get_dvc_dag(targets):
+def get_dvc_dag(targets, single_node=False):
     """
     Run 'dvc dag --dot' to get the full DAG.
     If targets are specified, filter the DAG to only include ancestors of targets.
+    If single_node is True, do not traverse ancestors (only keep targets themselves).
     Returns topological sort of the (filtered) stages.
     """
     cmd = ["dvc", "dag", "--dot"]
@@ -80,7 +81,7 @@ def get_dvc_dag(targets):
     if not nodes:
         return []
 
-    # If targets are specified, we only want the targets and all their ancestors
+    # If targets are specified, we only want the targets and all their ancestors (or only targets if single_node)
     if targets:
         # Validate targets
         valid_targets = []
@@ -91,14 +92,17 @@ def get_dvc_dag(targets):
                 print(f"⚠️ Warning: Target '{t}' not found in DAG.")
                 valid_targets.append(t) # Keep it anyway, DVC will handle the error
         
-        needed_nodes = set()
-        queue = deque(valid_targets)
-        while queue:
-            curr = queue.popleft()
-            if curr not in needed_nodes:
-                needed_nodes.add(curr)
-                for parent in rev_edges[curr]:
-                    queue.append(parent)
+        if single_node:
+            needed_nodes = set(valid_targets)
+        else:
+            needed_nodes = set()
+            queue = deque(valid_targets)
+            while queue:
+                curr = queue.popleft()
+                if curr not in needed_nodes:
+                    needed_nodes.add(curr)
+                    for parent in rev_edges[curr]:
+                        queue.append(parent)
                     
         # Filter nodes, edges, in_degree
         nodes = needed_nodes
@@ -140,13 +144,27 @@ def main():
     
     flags = []
     targets = []
-    for arg in dvc_args:
-        if arg.startswith('-'):
+    single_node = False
+    i = 0
+    while i < len(dvc_args):
+        arg = dvc_args[i]
+        if arg == "--single-node":
+            single_node = True
+            if i + 1 < len(dvc_args) and not dvc_args[i + 1].startswith("-"):
+                targets.append(dvc_args[i + 1])
+                i += 1
+        elif arg.startswith("--single-node="):
+            single_node = True
+            val = arg.split("=", 1)[1]
+            if val:
+                targets.append(val)
+        elif arg.startswith("-"):
             flags.append(arg)
         else:
             targets.append(arg)
+        i += 1
             
-    stages = get_dvc_dag(targets)
+    stages = get_dvc_dag(targets, single_node=single_node)
     if not stages:
         print("✅ No stages found in the pipeline.")
         return
