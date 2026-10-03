@@ -1136,56 +1136,56 @@
 
 
 <h1 id="index-de-documentation-scheduler">Index de Documentation - Scheduler</h1>
-<p>Cet index regroupe l'ensemble des notes techniques, guides d'architecture, et documentations relatives au scheduler et au système d'ordonnancement de <strong>Cluster-CI v3</strong>.</p>
+<p>This index gathers all technical notes, architecture guides, and documentation regarding the scheduler and dispatch system of <strong>Cluster-CI v3</strong>.</p>
 <table>
 <thead>
 <tr>
-<th>Titre de la note</th>
-<th>Courte Description</th>
-<th>Dernière modif</th>
+<th>Note Title</th>
+<th>Short Description</th>
+<th>Last modified</th>
 <th>Tag</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><a href="../user/ci_queue/">CI Pipeline &amp; Queue Scheduling</a></td>
-<td>Ordonnancement multi-machines, machine prioritaire (home worker), équité fair-share aux frontières de nœuds et règles d'admission physique.</td>
+<td>Multi-machine scheduling, home worker priority, fair-share equity at node boundaries, and physical admission rules.</td>
 <td>2026-10-03</td>
 <td><code>v3</code></td>
 </tr>
 <tr>
-<td><a href="../user/stage_resources/">Ressources par étape (<code>meta.cluster</code>)</a></td>
-<td>Spécification granulaire des ressources (CPU, RAM, VRAM, stockage, image, workers) dans <code>dvc.yaml</code>.</td>
+<td><a href="../user/stage_resources/">Per-Stage Resources (<code>meta.cluster</code>)</a></td>
+<td>Granular resource specifications (CPU, RAM, VRAM, storage, image, workers) in <code>dvc.yaml</code>.</td>
 <td>2026-10-03</td>
 <td><code>v3</code></td>
 </tr>
 <tr>
-<td><a href="../user/parallel_execution/">Exécution Parallèle du DAG</a></td>
-<td>Ordonnancement distribué des branches DAG, exécuteur de branche, volumes dédiés par image et pilote de fusion <code>dvc.lock</code>.</td>
+<td><a href="../user/parallel_execution/">Parallel DAG Execution</a></td>
+<td>Distributed scheduling of DAG branches, branch executor, dedicated per-image volumes, and <code>dvc.lock</code> merge driver.</td>
 <td>2026-10-03</td>
 <td><code>v3</code></td>
 </tr>
 <tr>
-<td><a href="../concurrency_management/">Gestion de la Concurrence</a></td>
-<td>Modèle de concurrence dual-mode (draft vs non-draft), propagation des signaux d'annulation et isolation multi-workers.</td>
+<td><a href="../concurrency_management/">Concurrency Management</a></td>
+<td>Dual-mode concurrency model (draft vs non-draft), cancellation signal propagation, and multi-worker isolation.</td>
 <td>2026-10-03</td>
 <td><code>v3</code></td>
 </tr>
 <tr>
-<td><a href="../scheduler/resilience_and_chaos_testing/">Résilience et Chaos Testing</a></td>
-<td>Analyse des blocages historiques (SQLite deadlocks, Broken Pipes) et guide d'exécution du framework de stress-test.</td>
+<td><a href="../scheduler/resilience_and_chaos_testing/">Resilience and Chaos Testing</a></td>
+<td>Historical stall analysis (SQLite deadlocks, Broken Pipes) and stress-test framework execution guide.</td>
 <td>2026-05-24</td>
 <td><code>Up to date</code></td>
 </tr>
 <tr>
-<td><a href="../scheduler/physical_resource_reconciliation/">Réconciliation des ressources physiques et purge de la VRAM Ollama</a></td>
-<td>Détails de la propagation réactive des annulations et de la purge active de la VRAM d'Ollama sur le host pour libérer le GPU en &lt;5s.</td>
+<td><a href="../scheduler/physical_resource_reconciliation/">Physical Resource Reconciliation and Ollama VRAM Purge</a></td>
+<td>Details on reactive cancellation propagation and active Ollama VRAM purge on host to free GPU in &lt;5s.</td>
 <td>2026-05-25</td>
 <td><code>Up to date</code></td>
 </tr>
 <tr>
-<td><a href="../scheduler/deployment_and_reconciliation_protocol/">Protocole de Déploiement et de Mise à jour du Cluster</a></td>
-<td>Protocole opérationnel de déploiement manuel sécurisé et d'évaluation des risques pour mettre à jour à chaud le cluster via le script update_cluster.sh.</td>
+<td><a href="../scheduler/deployment_and_reconciliation_protocol/">Cluster Deployment and Update Protocol</a></td>
+<td>Operational protocol for secure manual deployment and risk assessment when hot-updating cluster via update_cluster.sh.</td>
 <td>2026-06-01</td>
 <td><code>Up to date</code></td>
 </tr>

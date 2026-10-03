@@ -1467,9 +1467,9 @@
 <li><strong>Schema Validation</strong>: Any unrecognized key under <code>meta.cluster</code> causes <strong>immediate job rejection</strong> at submission time (HTTP 400). Valid allowed keys are: <code>image</code>, <code>image_arm64</code>, <code>image_amd64</code>, <code>cpus</code>, <code>gpus</code>, <code>ram_gb</code>, <code>vram_gb</code>, <code>storage_gb</code>, <code>workers</code>.</li>
 <li><strong>Type Validation</strong>: Types are strictly enforced: <code>cpus</code> must be an integer <code>&gt;= 1</code>, <code>gpus</code> an integer <code>&gt;= 0</code>, <code>ram_gb</code>/<code>vram_gb</code>/<code>storage_gb</code> numbers <code>&gt;= 0</code>, and <code>workers</code> a list of strings.</li>
 <li><strong>GPU Consistency Rule (A16/A17)</strong>: Declaring <code>vram_gb &gt; 0</code> strictly requires <code>gpus &gt;= 1</code>. If <code>vram_gb &gt; 0</code> while <code>gpus == 0</code>, Cluster-CI raises an immediate actionable error:
-  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Fichier dvc.yaml, stage '&lt;stage&gt;' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Cause : vram_gb exige gpus &gt;= 1 (la mémoire vidéo ne peut être allouée sans GPU).
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
+  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>File dvc.yaml, stage '&lt;stage&gt;': resource inconsistency between 'meta.cluster.vram_gb' (X GB) and 'meta.cluster.gpus' (0).
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Cause: vram_gb requires gpus &gt;= 1 (video memory cannot be allocated without a GPU).
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Remedy: declare 'gpus: 1' (or more) under meta.cluster in dvc.yaml (or REQUIRED_GPUS in .cluster-ci), or set vram_gb to 0.
 </span></code></pre></div></li>
 </ul>
 </div>
