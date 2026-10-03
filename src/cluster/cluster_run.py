@@ -21,8 +21,55 @@ import urllib.request
 import urllib.error
 import tarfile
 import hashlib
-import shutil
 import zipfile
+
+# Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
+try:
+    from src.config.defaults import DEFAULT_RESOURCES
+    DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+except ImportError:
+    try:
+        from config.defaults import DEFAULT_RESOURCES
+        DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+    except ImportError:
+        try:
+            from scheduler.defaults import DEFAULT_RAM_GB
+        except ImportError:
+            DEFAULT_RAM_GB = 10.0
+
+try:
+    from src.scheduler.submit_job import (
+        run_planner_for_submission,
+        format_nodes_status_summary,
+        print_final_dag_summary,
+    )
+except ImportError:
+    try:
+        from submit_job import (
+            run_planner_for_submission,
+            format_nodes_status_summary,
+            print_final_dag_summary,
+        )
+    except ImportError:
+        def run_planner_for_submission(repo_dir="."):
+            import subprocess
+            planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.scheduler.planner")
+            cmd = (
+                ["uv", "run", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
+                if shutil.which("uv")
+                else [sys.executable, "-m", planner_mod, "--repo", repo_dir, "--json"]
+            )
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if proc.returncode != 0:
+                print(f"❌ Error: Échec du planificateur ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
+                sys.exit(proc.returncode or 1)
+            return json.loads(proc.stdout)
+
+        def format_nodes_status_summary(nodes):
+            return None, []
+
+        def print_final_dag_summary(nodes, job_id):
+            pass
 
 
 # Global variables for cleanup
@@ -710,6 +757,7 @@ def stream_logs(run_id, commit_sha, branch=None):
         last_sync_time = time.time()
         last_synced_sha = commit_sha
         last_gha_poll_time = 0
+        last_nodes_summary = None
 
         while True:
             # Periodic intermediate synchronization (every 10s) once live stream is active
@@ -777,6 +825,17 @@ def stream_logs(run_id, commit_sha, branch=None):
                                 status_val = job_data.get("status")
                                 job_active = status_val in ("running", "assigned", "pending")
                                 job_finished_normally = status_val in ("completed", "failed")
+
+                                # Suivi en direct de l'état des nœuds DAG (v3 multi-nœuds)
+                                nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
+                                if nodes_data:
+                                    summary_line, details = format_nodes_status_summary(nodes_data)
+                                    if summary_line and summary_line != last_nodes_summary:
+                                        print_line(summary_line, force=True)
+                                        for d in details:
+                                            print_line(f"   {d}", force=True)
+                                        last_nodes_summary = summary_line
+
                                 if job_finished_normally:
                                     drain_deadline = time.time() + 5
                                     while time.time() < drain_deadline:
@@ -791,6 +850,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                                         try: proc.terminate()
                                         except: pass
 
+                                    print_final_dag_summary(nodes_data, job_id)
                                     exit_code = job_data.get("exit_code")
                                     if status_val == "completed" or exit_code == 0:
                                         print("\n✅ Cluster-CI run completed successfully!")
@@ -1441,7 +1501,7 @@ def parse_cluster_ci_config(project_dir="."):
             print(f"⚠️  Could not read .cluster-ci file: {e}", file=sys.stderr)
 
     # Parse RAM
-    ram_req = 2.0
+    ram_req = DEFAULT_RAM_GB
     match_env = re.search(r'REQUIRED_RAM\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
     if match_env:
         ram_req = float(match_env.group(1))
@@ -1485,6 +1545,12 @@ def parse_cluster_ci_config(project_dir="."):
     if aw_match:
         allowed_workers = [h.strip() for h in aw_match.group(1).split(',') if h.strip()]
 
+    # Parse PARALLEL_STAGES
+    parallel_stages = False
+    ps_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
+    if ps_match:
+        parallel_stages = True
+
     return {
         "ram_required_gb": ram_req,
         "vram_required_gb": vram_req,
@@ -1492,6 +1558,7 @@ def parse_cluster_ci_config(project_dir="."):
         "exposed_port": exposed_port,
         "custom_web_app": custom_web_app,
         "allowed_workers": allowed_workers,
+        "parallel_stages": parallel_stages,
     }
 
 
@@ -1567,6 +1634,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     init_log_redirection()
     offset = 0
     last_status_msg = ""
+    last_nodes_summary = None
 
     while True:
         # 1. Fetch latest logs from Headnode API
@@ -1599,6 +1667,16 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     status = job_data.get("status")
                     exit_code = job_data.get("exit_code")
 
+                    # Suivi en direct des nœuds (v3 multi-nœuds)
+                    nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
+                    if nodes_data:
+                        summary_line, details = format_nodes_status_summary(nodes_data)
+                        if summary_line and summary_line != last_nodes_summary:
+                            print_line(summary_line)
+                            for d in details:
+                                print_line(f"   {d}")
+                            last_nodes_summary = summary_line
+
                     if status in ("pending", "assigned"):
                         msg = f"⏳ Job status: {status}..."
                         if msg != last_status_msg:
@@ -1624,6 +1702,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
 
                         # Fetch metrics & results from headnode
                         fetch_local_results(job_id, headnode_url, cluster_token)
+                        print_final_dag_summary(nodes_data, job_id)
                         close_log_redirection()
                         print_log_summary()
 
@@ -1692,6 +1771,14 @@ def local_run():
         if os.path.exists(archive_path):
             os.remove(archive_path)
 
+    plan = None
+    if config.get("parallel_stages") and os.path.isfile("dvc.yaml"):
+        print("🧩 PARALLEL_STAGES activé et dvc.yaml détecté : génération du plan via le planificateur W1...")
+        plan = run_planner_for_submission(".")
+        print(f"✅ Plan généré avec succès ({len(plan.get('nodes', []))} nœud(s)).")
+    elif config.get("parallel_stages") and not os.path.isfile("dvc.yaml"):
+        print("⚠️ PARALLEL_STAGES=true spécifié mais dvc.yaml introuvable. Soumission sans plan.")
+
     payload = {
         "repo": repo,
         "branch": BRANCH,
@@ -1706,6 +1793,8 @@ def local_run():
         "is_local": True,
         "source_transfer_id": source_transfer_id,
     }
+    if plan is not None:
+        payload["plan"] = plan
 
     submit_url = f"{headnode_url}/submit_job"
     data_bytes = json.dumps(payload).encode("utf-8")

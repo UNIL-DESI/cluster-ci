@@ -39,6 +39,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup uv for Parallel Planner
+        run: |
+          if [ -f .cluster-ci ] && grep -qi "PARALLEL_STAGES\s*=\s*true" .cluster-ci; then
+            if ! command -v uv >/dev/null 2>&1; then
+              echo "Installing uv for parallel stage planning..."
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+              echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            else
+              echo "uv is already available on runner."
+            fi
+          fi
+
       - name: Run Orchestrator
         env:
           ALL_GITHUB_SECRETS: ${{ toJSON(secrets) }}
