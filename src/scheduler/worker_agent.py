@@ -2,6 +2,7 @@ import time
 import hmac
 import requests
 import os
+import re
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -1318,6 +1319,90 @@ def fetch_artifact(file_path):
     """
     logger.info(f"Worker received request for artifact: {file_path}")
     return send_from_directory(REPOS_DIR, file_path)
+
+def find_cas_file_in_repos(md5_hash):
+    """
+    Locates a CAS object by MD5 hash within any DVC repository cache under REPOS_DIR.
+    Guarantees that the resolved path is strictly confined within REPOS_DIR.
+    """
+    clean_md5 = md5_hash.strip().lower()
+    prefix = clean_md5[:2]
+    suffix = clean_md5[2:]
+    rel_cache = os.path.join(".dvc", "cache", "files", "md5", prefix, suffix)
+
+    real_repos_dir = os.path.realpath(REPOS_DIR)
+
+    def is_safe_and_file(target_path):
+        if os.path.isfile(target_path):
+            real_path = os.path.realpath(target_path)
+            try:
+                if os.path.commonpath([real_repos_dir, real_path]) == real_repos_dir:
+                    return real_path
+            except ValueError:
+                return None
+        return None
+
+    # Check directly at root of REPOS_DIR if configured as a DVC root
+    direct = is_safe_and_file(os.path.join(real_repos_dir, rel_cache))
+    if direct:
+        return direct
+
+    # Scan up to 3 directory levels (repo, owner/repo, _local/owner/repo)
+    try:
+        for entry in os.scandir(real_repos_dir):
+            if not entry.is_dir() or entry.name in {'.git'}:
+                continue
+            hit = is_safe_and_file(os.path.join(entry.path, rel_cache))
+            if hit:
+                return hit
+            try:
+                for sub in os.scandir(entry.path):
+                    if not sub.is_dir() or sub.name in {'.git', '.dvc'}:
+                        continue
+                    hit = is_safe_and_file(os.path.join(sub.path, rel_cache))
+                    if hit:
+                        return hit
+                    try:
+                        for sub2 in os.scandir(sub.path):
+                            if not sub2.is_dir() or sub2.name in {'.git', '.dvc'}:
+                                continue
+                            hit = is_safe_and_file(os.path.join(sub2.path, rel_cache))
+                            if hit:
+                                return hit
+                    except (OSError, PermissionError):
+                        continue
+            except (OSError, PermissionError):
+                continue
+    except (OSError, PermissionError):
+        pass
+
+    return None
+
+@app.route('/fetch_cas/<md5>', methods=['GET'])
+@app.route('/fetch_cas/<path:md5>', methods=['GET'])
+def fetch_cas_object(md5):
+    """
+    Sert un objet CAS DVC par MD5 à travers les caches de dépôts sous REPOS_DIR (recommandation W6).
+    Supporte les objets standards (32 caractères hexadécimaux) et les manifestes de répertoires (.dir).
+    Sécurisé par validation regex stricte et confinement anti-traversal sous REPOS_DIR.
+    """
+    if not md5:
+        return jsonify({"error": "Missing MD5"}), 400
+
+    clean_md5 = md5.strip().lower()
+    # Validation stricte MD5 : exactement 32 caractères hexadécimaux, optionnellement terminés par .dir
+    if not re.match(r"^[0-9a-f]{32}(\.dir)?$", clean_md5):
+        return jsonify({"error": "Invalid MD5 format"}), 400
+
+    if ".." in clean_md5 or "/" in clean_md5 or "\\" in clean_md5:
+        return jsonify({"error": "Path traversal characters forbidden"}), 400
+
+    cas_file = find_cas_file_in_repos(clean_md5)
+    if not cas_file:
+        return jsonify({"error": f"CAS object '{clean_md5}' not found"}), 404
+
+    logger.info(f"Serving CAS object {clean_md5} from {cas_file}")
+    return send_file(cas_file, mimetype='application/octet-stream')
 
 @app.route('/check_cache', methods=['POST'])
 def check_cache():

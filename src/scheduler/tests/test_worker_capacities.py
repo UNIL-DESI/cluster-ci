@@ -300,3 +300,82 @@ class TestWorkerCapacities(unittest.TestCase):
             mock_run.return_value = MagicMock(returncode=0, stdout="")
             resp = self.app.post("/cancel/nonexistent-job")
             self.assertEqual(resp.status_code, 404)
+
+    def test_fetch_cas_standard_md5_success(self):
+        """Verify GET /fetch_cas/<md5> serves standard 32-hex CAS object in DVC cache."""
+        repo_dir = os.path.join(self.test_dir, "my_repo")
+        cache_dir = os.path.join(repo_dir, ".dvc", "cache", "files", "md5", "3a")
+        os.makedirs(cache_dir, exist_ok=True)
+        cas_file = os.path.join(cache_dir, "4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d")
+        payload = b"dvc-cas-payload-binary-1234"
+        with open(cas_file, "wb") as f:
+            f.write(payload)
+
+        # 1. Lowercase hash
+        resp = self.app.get("/fetch_cas/3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, payload)
+
+        # 2. Uppercase hash (case-insensitivity)
+        resp_upper = self.app.get("/fetch_cas/3A4B5C6D7E8F9A0B1C2D3E4F5A6B7C8D")
+        self.assertEqual(resp_upper.status_code, 200)
+        self.assertEqual(resp_upper.data, payload)
+
+    def test_fetch_cas_dir_manifest_success(self):
+        """Verify GET /fetch_cas/<md5>.dir serves directory manifest."""
+        nested_repo = os.path.join(self.test_dir, "owner", "repo")
+        cache_dir = os.path.join(nested_repo, ".dvc", "cache", "files", "md5", "1f")
+        os.makedirs(cache_dir, exist_ok=True)
+        dir_file = os.path.join(cache_dir, "af98845f913f29a6961f9c7b472cca.dir")
+        manifest_payload = b'[{"md5": "abc1234567890abc1234567890abcdef", "relpath": "file1.txt"}]'
+        with open(dir_file, "wb") as f:
+            f.write(manifest_payload)
+
+        resp = self.app.get("/fetch_cas/1faf98845f913f29a6961f9c7b472cca.dir")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, manifest_payload)
+
+    def test_fetch_cas_invalid_format_and_traversal_rejected(self):
+        """Verify GET /fetch_cas with invalid format or traversal attempts returns 400."""
+        # Non-hex characters
+        resp = self.app.get("/fetch_cas/not-a-valid-hex-md5-hash-1234567")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("invalid md5 format", resp.get_json()["error"].lower())
+
+        # Too short
+        resp = self.app.get("/fetch_cas/1234")
+        self.assertEqual(resp.status_code, 400)
+
+        # Invalid extension (not .dir)
+        resp = self.app.get("/fetch_cas/3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d.txt")
+        self.assertEqual(resp.status_code, 400)
+
+        # Subdirectory traversal
+        resp = self.app.get("/fetch_cas/subdir/secret.txt")
+        self.assertEqual(resp.status_code, 400)
+
+        # Path traversal characters
+        resp = self.app.get("/fetch_cas/..%2fsecret")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_fetch_cas_not_found_returns_404(self):
+        """Verify GET /fetch_cas for valid hash absent from any DVC cache returns 404."""
+        resp = self.app.get("/fetch_cas/00000000000000000000000000000000")
+        self.assertEqual(resp.status_code, 404)
+        data = resp.get_json()
+        self.assertIn("not found", data["error"].lower())
+
+    def test_fetch_cas_local_workspace_resolution(self):
+        """Verify GET /fetch_cas finds objects in _local workspaces up to 3 directory levels."""
+        local_repo = os.path.join(self.test_dir, "_local", "org", "project")
+        cache_dir = os.path.join(local_repo, ".dvc", "cache", "files", "md5", "77")
+        os.makedirs(cache_dir, exist_ok=True)
+        cas_file = os.path.join(cache_dir, "8899aabbccddeeff00112233445566")
+        payload = b"local-workspace-cas-object"
+        with open(cas_file, "wb") as f:
+            f.write(payload)
+
+        resp = self.app.get("/fetch_cas/778899aabbccddeeff00112233445566")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, payload)
+
