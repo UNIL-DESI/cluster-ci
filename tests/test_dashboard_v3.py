@@ -25,7 +25,8 @@ def load_fixtures():
 
 def create_test_app():
     fixtures = load_fixtures()
-    app = Flask(__name__)
+    static_dir = BASE_DIR / "src" / "scheduler" / "static"
+    app = Flask(__name__, static_folder=str(static_dir), static_url_path="/static")
 
     @app.route("/")
     def index():
@@ -47,20 +48,21 @@ def create_test_app():
                 "id": "org/classic-pipeline",
                 "repo": "org/classic-pipeline",
                 "name": "classic-pipeline",
-                "active_runs": [],
+                "active_runs": [fixtures["classic_job_concurrent"]],
                 "last_run": fixtures["classic_job"]
             }
         ])
 
     @app.route("/api/runs/active")
     def api_runs_active():
-        return jsonify([fixtures["v3_job"]])
+        # Returns both v3 DAG job and concurrent classic job (testing A11 multi-executor packing on beta)
+        return jsonify([fixtures["v3_job"], fixtures["classic_job_concurrent"]])
 
     @app.route("/api/runs/history")
     def api_runs_history():
         return jsonify({
-            "items": [fixtures["v3_job"], fixtures["classic_job"]],
-            "total": 2,
+            "items": [fixtures["v3_job"], fixtures["classic_job_concurrent"], fixtures["classic_job"]],
+            "total": 3,
             "page": 1,
             "per_page": 20
         })
@@ -72,7 +74,7 @@ def create_test_app():
             "workers": {w["id"]: w for w in workers},
             "active_workers": workers,
             "queue_count": 0,
-            "running_count": 1,
+            "running_count": 2,
             "cluster_utilization": fixtures["scheduler_status"]["cluster_utilization"]
         })
 
@@ -84,6 +86,8 @@ def create_test_app():
     def job_status(job_id):
         if "v3" in job_id or job_id == fixtures["v3_job"]["id"]:
             return jsonify(fixtures["v3_job"])
+        elif "concurrent" in job_id or job_id == fixtures["classic_job_concurrent"]["id"]:
+            return jsonify(fixtures["classic_job_concurrent"])
         return jsonify(fixtures["classic_job"])
 
     @app.route("/api/jobs/<job_id>/logs")
@@ -117,7 +121,7 @@ def create_test_app():
     def api_project_runs(project_name):
         if "latent" in project_name or "v3" in project_name:
             return jsonify([fixtures["v3_job"]])
-        return jsonify([fixtures["classic_job"]])
+        return jsonify([fixtures["classic_job_concurrent"], fixtures["classic_job"]])
 
     @app.route("/api/queue")
     def api_queue():
@@ -147,6 +151,12 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertIn("v3DagModal", resp.text)
         self.assertIn("v3-log-filter-container", resp.text)
 
+    def test_local_mermaid_static_serving(self):
+        resp = self.client.get("/static/mermaid.min.js")
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreater(len(resp.data), 1_000_000)
+        resp.close()
+
     def test_job_status_v3_structure(self):
         fixtures = load_fixtures()
         resp = self.client.get(f"/job_status/{fixtures['v3_job']['id']}")
@@ -155,6 +165,14 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertEqual(data["parallel_mode"], 1)
         self.assertEqual(data["home_worker"], "alpha")
         self.assertIn("train_model", [n["name"] for n in data["nodes"]])
+
+    def test_a11_a13_fixture_structure(self):
+        fixtures = load_fixtures()
+        workers = fixtures["scheduler_status"]["active_workers"]
+        beta = next(w for w in workers if w["id"] == "beta")
+        self.assertEqual(beta["unified_memory"], 1)
+        self.assertIn("docker_images", beta)
+        self.assertIn("pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime", beta["docker_images"])
 
     def test_logs_endpoint_with_v3_prefixes(self):
         fixtures = load_fixtures()
