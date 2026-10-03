@@ -3,16 +3,19 @@ Artifact Registry for Cluster-CI v3.
 
 Tracks DVC artifacts / CAS objects produced by job nodes across cluster workers.
 Provides:
-  - Idempotent schema management (node_artifacts table)
-  - Recording node outputs from dvc.lock (hash, size, directory flag, worker location)
+  - Idempotent schema management (node_artifacts table with path & parent_dir_hash)
+  - Recording node outputs from dvc.lock (hash, size, directory flag, worker location, sub-paths)
   - Data affinity calculation (total bytes of dependencies already present on a worker)
   - Multi-source routing (mapping dependency hashes to available online worker URLs)
+  - Recursive directory manifest (.dir) inspection and parent-child dependency resolution
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
 import sqlite3
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -24,7 +27,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     Idempotently creates the node_artifacts table and associated indexes.
     
     Schema:
-      node_artifacts(job_id, node_name, md5, is_dir, size_bytes, worker_id, created_at)
+      node_artifacts(job_id, node_name, md5, is_dir, size_bytes, worker_id, created_at, path, parent_dir_hash)
     """
     cursor = conn.cursor()
     cursor.execute("""
@@ -36,18 +39,25 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             size_bytes INTEGER DEFAULT 0,
             worker_id TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            path TEXT DEFAULT NULL,
+            parent_dir_hash TEXT DEFAULT NULL,
             PRIMARY KEY (job_id, node_name, md5, worker_id)
         )
     """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_node_artifacts_md5 ON node_artifacts(md5)
-    """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_node_artifacts_worker ON node_artifacts(worker_id)
-    """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_node_artifacts_job ON node_artifacts(job_id)
-    """)
+    # Additive migrations
+    try:
+        cursor.execute("ALTER TABLE node_artifacts ADD COLUMN path TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE node_artifacts ADD COLUMN parent_dir_hash TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_node_artifacts_md5 ON node_artifacts(md5)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_node_artifacts_worker ON node_artifacts(worker_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_node_artifacts_job ON node_artifacts(job_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_node_artifacts_parent ON node_artifacts(parent_dir_hash)")
     conn.commit()
 
 
@@ -69,7 +79,7 @@ def record_node_outputs(
     Records output artifacts produced by a node on a specific worker.
     
     Can accept:
-      - list of dicts: [{"md5": "...", "size_bytes": 1024, "is_dir": False, ...}, ...]
+      - list of dicts: [{"md5": "...", "size_bytes": 1024, "is_dir": False, "path": "...", "parent_dir_hash": "..."}, ...]
         or [{"hash": "...", "size": 1024}, ...] (as found in dvc.lock `outs`)
       - dict: {md5: size} or {md5: {"size_bytes": ..., "is_dir": ...}}
       - list of str: ["hash1", "hash2.dir", ...]
@@ -81,7 +91,7 @@ def record_node_outputs(
 
     ensure_schema(conn)
 
-    parsed_rows: list[tuple[str, str, str, int, int, str]] = []
+    parsed_rows: list[tuple[str, str, str, int, int, str, str | None, str | None]] = []
 
     if isinstance(outputs, Mapping):
         # Format {md5: size} or {md5: {"size_bytes": ..., "is_dir": ...}}
@@ -91,13 +101,17 @@ def record_node_outputs(
                 continue
             is_dir = 1 if md5.endswith(".dir") else 0
             size_bytes = 0
+            path_val = None
+            parent_hash = None
             if isinstance(val, (int, float)):
                 size_bytes = int(val)
             elif isinstance(val, Mapping):
                 size_bytes = int(val.get("size_bytes", val.get("size", 0)) or 0)
                 if "is_dir" in val:
                     is_dir = 1 if val["is_dir"] else 0
-            parsed_rows.append((job_id, node, md5, is_dir, max(0, size_bytes), worker_id))
+                path_val = val.get("path")
+                parent_hash = normalize_hash(val.get("parent_dir_hash")) or None
+            parsed_rows.append((job_id, node, md5, is_dir, max(0, size_bytes), worker_id, path_val, parent_hash))
 
     elif isinstance(outputs, (list, tuple, set)):
         for item in outputs:
@@ -106,7 +120,7 @@ def record_node_outputs(
                 if not md5:
                     continue
                 is_dir = 1 if md5.endswith(".dir") else 0
-                parsed_rows.append((job_id, node, md5, is_dir, 0, worker_id))
+                parsed_rows.append((job_id, node, md5, is_dir, 0, worker_id, None, None))
             elif isinstance(item, Mapping):
                 raw_hash = item.get("md5") or item.get("hash")
                 md5 = normalize_hash(raw_hash)
@@ -114,7 +128,9 @@ def record_node_outputs(
                     continue
                 is_dir = 1 if (item.get("is_dir") or md5.endswith(".dir")) else 0
                 size_bytes = int(item.get("size_bytes", item.get("size", 0)) or 0)
-                parsed_rows.append((job_id, node, md5, is_dir, max(0, size_bytes), worker_id))
+                path_val = item.get("path")
+                parent_hash = normalize_hash(item.get("parent_dir_hash")) or None
+                parsed_rows.append((job_id, node, md5, is_dir, max(0, size_bytes), worker_id, path_val, parent_hash))
 
     if not parsed_rows:
         return 0
@@ -123,8 +139,8 @@ def record_node_outputs(
     cursor.executemany(
         """
         INSERT OR REPLACE INTO node_artifacts (
-            job_id, node_name, md5, is_dir, size_bytes, worker_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            job_id, node_name, md5, is_dir, size_bytes, worker_id, created_at, path, parent_dir_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
         """,
         parsed_rows,
     )
@@ -139,7 +155,8 @@ def affinity_bytes(
 ) -> int:
     """
     Computes the total volume (in bytes) of required dependency hashes already
-    present in the CAS on `worker_id`. Includes directory manifest sizes (.dir).
+    present in the CAS on `worker_id`. Includes directory manifest sizes (.dir)
+    and resolves subfile hashes against recorded artifacts.
     
     If the same hash was recorded for multiple jobs on this worker, its size is
     counted exactly once.
@@ -156,21 +173,21 @@ def affinity_bytes(
     cursor = conn.cursor()
     total_bytes = 0
 
-    # Batch queries to avoid SQLite parameter limit
     batch_size = 500
     for i in range(0, len(clean_hashes), batch_size):
         batch = clean_hashes[i : i + batch_size]
         placeholders = ",".join("?" for _ in batch)
+        # Matches either direct artifact md5 OR where worker holds the parent .dir
         query = f"""
             SELECT COALESCE(SUM(size_bytes), 0)
             FROM (
                 SELECT md5, MAX(size_bytes) as size_bytes
                 FROM node_artifacts
-                WHERE worker_id = ? AND md5 IN ({placeholders})
+                WHERE worker_id = ? AND (md5 IN ({placeholders}) OR parent_dir_hash IN ({placeholders}))
                 GROUP BY md5
             )
         """
-        cursor.execute(query, [worker_id, *batch])
+        cursor.execute(query, [worker_id, *batch, *batch])
         row = cursor.fetchone()
         if row and row[0]:
             total_bytes += int(row[0])
@@ -210,7 +227,6 @@ def _resolve_online_workers_map(
                     result[w_id] = url or f"http://{w_id}:6000"
 
         if worker_ids_to_lookup:
-            # Try to lookup service_url from workers table if available
             cursor = conn.cursor()
             try:
                 placeholders = ",".join("?" for _ in worker_ids_to_lookup)
@@ -222,7 +238,6 @@ def _resolve_online_workers_map(
                     w_id, s_url = row[0], row[1]
                     result[w_id] = s_url or f"http://{w_id}:6000"
             except sqlite3.OperationalError:
-                # workers table doesn't exist in standalone/test database
                 pass
 
             for w_id in worker_ids_to_lookup:
@@ -239,11 +254,11 @@ def sources_for(
 ) -> dict[str, list[str]]:
     """
     Maps each dependency MD5 hash to the list of URLs of online workers currently
-    holding that artifact.
+    holding that artifact (including resolving subfiles via parent .dir outputs).
     
     Args:
       conn: SQLite database connection
-      dep_hashes: Collection of requested MD5 hashes (including .dir)
+      dep_hashes: Collection of requested MD5 hashes (including .dir and subfiles)
       online_workers: Dict mapping worker_id -> service_url, or list of worker objects/IDs.
       
     Returns:
@@ -266,27 +281,55 @@ def sources_for(
     online_ids = list(worker_url_map.keys())
     cursor = conn.cursor()
 
-    # Query matching artifacts on online workers
-    # Sort by created_at DESC so the most recent source comes first
     batch_size = 300
     for i in range(0, len(clean_hashes), batch_size):
         h_batch = clean_hashes[i : i + batch_size]
         h_placeholders = ",".join("?" for _ in h_batch)
         w_placeholders = ",".join("?" for _ in online_ids)
 
+        # 1. Query artifacts matching directly by md5 OR where worker holds the parent .dir
         query = f"""
-            SELECT md5, worker_id, MAX(created_at) as latest_created
+            SELECT md5, worker_id, parent_dir_hash, MAX(created_at) as latest_created
             FROM node_artifacts
-            WHERE md5 IN ({h_placeholders}) AND worker_id IN ({w_placeholders})
+            WHERE worker_id IN ({w_placeholders})
+              AND (md5 IN ({h_placeholders}) OR parent_dir_hash IN ({h_placeholders}))
             GROUP BY md5, worker_id
             ORDER BY latest_created DESC
         """
-        cursor.execute(query, [*h_batch, *online_ids])
+        cursor.execute(query, [*online_ids, *h_batch, *h_batch])
         for row in cursor.fetchall():
-            md5_val, w_id = row[0], row[1]
+            md5_val, w_id, parent_dir_hash = row[0], row[1], row[2]
             url = worker_url_map.get(w_id)
-            if url and url not in sources_map[md5_val]:
+            if not url:
+                continue
+
+            # Direct match
+            if md5_val in sources_map and url not in sources_map[md5_val]:
                 sources_map[md5_val].append(url)
+
+            # If this artifact's parent_dir_hash was requested, worker holding the file also holds parent
+            if parent_dir_hash and parent_dir_hash in sources_map and url not in sources_map[parent_dir_hash]:
+                sources_map[parent_dir_hash].append(url)
+
+        # 2. Also check if requested hash is a subfile whose parent .dir is held by an online worker
+        query_parent = f"""
+            SELECT sub.md5, parent.worker_id, MAX(parent.created_at) as latest_created
+            FROM node_artifacts sub
+            JOIN node_artifacts parent ON sub.parent_dir_hash = parent.md5
+            WHERE sub.md5 IN ({h_placeholders})
+              AND parent.worker_id IN ({w_placeholders})
+            GROUP BY sub.md5, parent.worker_id
+            ORDER BY latest_created DESC
+        """
+        try:
+            cursor.execute(query_parent, [*h_batch, *online_ids])
+            for row in cursor.fetchall():
+                sub_md5, w_id = row[0], row[1]
+                url = worker_url_map.get(w_id)
+                if url and sub_md5 in sources_map and url not in sources_map[sub_md5]:
+                    sources_map[sub_md5].append(url)
+        except sqlite3.OperationalError:
+            pass
 
     return sources_map
 
@@ -294,24 +337,29 @@ def sources_for(
 def extract_node_outputs_from_dvc_lock(
     dvc_lock_data: str | Mapping[str, Any],
     node_name: str,
+    repo_dir: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """
     Utility for W2/W3 to extract output definitions directly from dvc.lock
-    (either YAML string, path, or parsed dictionary) for a given stage/node.
+    for a given stage/node.
+    
+    If an output is a directory (.dir), inspects the local manifest file
+    (if present in repo_dir or relative to dvc.lock) and also yields all
+    nested files with their parent_dir_hash.
     
     Returns list of dicts:
-      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool}]
+      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool, "parent_dir_hash": ...}]
     """
+    lock_file_path = None
     if isinstance(dvc_lock_data, str):
-        # Could be path or raw YAML content
         try:
             import yaml  # type: ignore
         except ImportError:
             import json as yaml  # type: ignore
 
         if "\n" not in dvc_lock_data and (dvc_lock_data.endswith(".lock") or dvc_lock_data.endswith(".yaml")):
-            import os
             if os.path.isfile(dvc_lock_data):
+                lock_file_path = dvc_lock_data
                 with open(dvc_lock_data, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
             else:
@@ -328,6 +376,13 @@ def extract_node_outputs_from_dvc_lock(
     stage = stages.get(node_name, {})
     outs = stage.get("outs", [])
 
+    # Determine base directory to find .dvc cache for manifest parsing
+    base_repo: Path | None = None
+    if repo_dir:
+        base_repo = Path(repo_dir)
+    elif lock_file_path:
+        base_repo = Path(lock_file_path).parent
+
     results = []
     for out in outs:
         if not isinstance(out, Mapping):
@@ -338,12 +393,39 @@ def extract_node_outputs_from_dvc_lock(
         md5 = normalize_hash(raw_hash)
         is_dir = bool(out.get("is_dir") or md5.endswith(".dir"))
         size_bytes = int(out.get("size_bytes", out.get("size", 0)) or 0)
+        out_path = str(out.get("path", "")).replace("\\", "/")
+
         results.append({
-            "path": out.get("path", ""),
+            "path": out_path,
             "md5": md5,
             "size_bytes": max(0, size_bytes),
             "is_dir": is_dir,
+            "parent_dir_hash": None,
         })
+
+        # If it's a directory, parse manifest to index all nested files
+        if is_dir and base_repo:
+            manifest_file = base_repo / ".dvc" / "cache" / "files" / "md5" / md5[:2] / md5[2:]
+            if manifest_file.is_file():
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as mf:
+                        manifest_data = json.load(mf)
+                    if isinstance(manifest_data, list):
+                        for entry in manifest_data:
+                            sub_md5 = normalize_hash(entry.get("md5"))
+                            rel = str(entry.get("relpath", "")).replace("\\", "/")
+                            sub_size = int(entry.get("size", 0) or 0)
+                            if sub_md5:
+                                results.append({
+                                    "path": f"{out_path}/{rel}",
+                                    "md5": sub_md5,
+                                    "size_bytes": max(0, sub_size),
+                                    "is_dir": False,
+                                    "parent_dir_hash": md5,
+                                })
+                except Exception as e:
+                    logger.debug("Failed to inspect .dir manifest %s: %s", manifest_file, e)
+
     return results
 
 
@@ -355,8 +437,11 @@ def extract_node_deps_from_dvc_lock(
     Utility for W2/W3 to extract dependency definitions directly from dvc.lock
     for a given stage/node.
     
+    Automatically resolves sub-paths belonging to upstream directory outputs (.dir)
+    and attaches parent_dir_hash so that the parent .dir manifest can be retrieved.
+    
     Returns list of dicts:
-      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool}]
+      [{"path": "...", "md5": "...", "size_bytes": 1234, "is_dir": bool, "parent_dir_hash": ...}]
     """
     if isinstance(dvc_lock_data, str):
         try:
@@ -365,7 +450,6 @@ def extract_node_deps_from_dvc_lock(
             import json as yaml  # type: ignore
 
         if "\n" not in dvc_lock_data and (dvc_lock_data.endswith(".lock") or dvc_lock_data.endswith(".yaml")):
-            import os
             if os.path.isfile(dvc_lock_data):
                 with open(dvc_lock_data, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
@@ -380,10 +464,24 @@ def extract_node_deps_from_dvc_lock(
         return []
 
     stages = data.get("stages", {})
+
+    # Collect all upstream directory outputs across all stages in this lockfile
+    dir_outputs: dict[str, str] = {}  # {dir_path: dir_md5}
+    for st_name, st_val in stages.items():
+        if isinstance(st_val, Mapping):
+            for out in st_val.get("outs", []):
+                if isinstance(out, Mapping):
+                    out_md5 = normalize_hash(out.get("md5") or out.get("hash"))
+                    out_path = str(out.get("path", "")).replace("\\", "/")
+                    if out_md5.endswith(".dir"):
+                        dir_outputs[out_path] = out_md5
+
     stage = stages.get(node_name, {})
     deps = stage.get("deps", [])
 
     results = []
+    parent_dirs_to_add: dict[str, str] = {}  # {parent_md5: dir_path}
+
     for dep in deps:
         if not isinstance(dep, Mapping):
             continue
@@ -393,10 +491,34 @@ def extract_node_deps_from_dvc_lock(
         md5 = normalize_hash(raw_hash)
         is_dir = bool(dep.get("is_dir") or md5.endswith(".dir"))
         size_bytes = int(dep.get("size_bytes", dep.get("size", 0)) or 0)
+        dep_path = str(dep.get("path", "")).replace("\\", "/")
+
+        parent_dir_hash = None
+        for dir_path, dir_md5 in dir_outputs.items():
+            if dep_path.startswith(f"{dir_path}/"):
+                parent_dir_hash = dir_md5
+                parent_dirs_to_add[dir_md5] = dir_path
+                break
+
         results.append({
-            "path": dep.get("path", ""),
+            "path": dep_path,
             "md5": md5,
             "size_bytes": max(0, size_bytes),
             "is_dir": is_dir,
+            "parent_dir_hash": parent_dir_hash,
         })
+
+    # Ensure parent .dir manifests are also declared so DVC checkout can unpack subfiles
+    existing_hashes = {r["md5"] for r in results}
+    for p_md5, p_path in parent_dirs_to_add.items():
+        if p_md5 not in existing_hashes:
+            results.append({
+                "path": p_path,
+                "md5": p_md5,
+                "size_bytes": 0,
+                "is_dir": True,
+                "parent_dir_hash": None,
+            })
+            existing_hashes.add(p_md5)
+
     return results
