@@ -1,0 +1,18 @@
+schema: '2.0'
+stages:
+  pack_light_1:
+    cmd: python3 simulate_research.py pack_light_1
+    deps:
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/pack_light_1.bin
+      hash: md5
+      md5: 59a3b7bc05565aa8f3329e636629a97d
+      size: 10485760
+    - path: metrics/pack_light_1.json
+      hash: md5
+      md5: 863d5fcc6883363b582f561f26134070
+      size: 138
