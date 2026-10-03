@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional
 
 # A15 - Rétention pathologique de la base de données SQLite (Cluster-CI v3)
 # La base n'est purgée qu'en cas de croissance pathologique (> 1 Go).
-DB_RETENTION_PATHOLOGICAL_THRESHOLD_BYTES = 1024 * 1024 * 1024  # 1 Go
-DB_RETENTION_PATHOLOGICAL_DAYS = 365  # 365 jours
+DB_RETENTION_PATHOLOGICAL_THRESHOLD_BYTES: int = 1024 * 1024 * 1024  # 1 Go
+DB_RETENTION_PATHOLOGICAL_DAYS: int = 365  # 365 jours
 
 # Default resource requirements for a stage if unspecified (amendments A16)
 DEFAULT_RESOURCES: Dict[str, Any] = {
@@ -33,6 +33,38 @@ ALLOWED_CLUSTER_KEYS = {
     "storage_gb",
     "workers",
 }
+
+# Derived alias constants for scheduler convenience
+DEFAULT_DOCKER_IMAGE: str = DEFAULT_RESOURCES["image"]
+DEFAULT_CPUS: int = DEFAULT_RESOURCES["cpus"]
+DEFAULT_GPUS: int = DEFAULT_RESOURCES["gpus"]
+DEFAULT_RAM_GB: float = float(DEFAULT_RESOURCES["ram_gb"])
+DEFAULT_VRAM_GB: float = float(DEFAULT_RESOURCES["vram_gb"])
+DEFAULT_STORAGE_GB: float = float(DEFAULT_RESOURCES["storage_gb"])
+ALLOWED_RESOURCE_KEYS = ALLOWED_CLUSTER_KEYS
+
+# Constantes opérationnelles propres à l'ordonnanceur Cluster-CI v3
+ALLOW_PACKING: bool = True
+OS_HEADROOM_GB: float = 8.0
+RUNNER_HEARTBEAT_TIMEOUT_S: float = 60.0
+RUNNER_HEARTBEAT_INTERVAL_S: float = 15.0
+MAX_WORKERS_PER_JOB: int = 8
+
+# Scheduling: Worker placement priority defaults (Amendement A13/A14)
+# Convention: Higher value = preferred first.
+# Default: All non-headnode machines share standard priority (50).
+# Headnode is strictly the worker of last resort (0).
+DEFAULT_PLACEMENT_PRIORITY: int = 50
+HEADNODE_PLACEMENT_PRIORITY: int = 0
+
+# Headnode Resource Reservation & Packing Ceilings (Amendement A11/A12/A14)
+DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
+DEFAULT_HEADNODE_CPU_RESERVE: int = 2
+DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
+DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
+
+HEADNODE_RAM_RESERVE_GB: float = DEFAULT_HEADNODE_RAM_RESERVE_GB
+HEADNODE_CPU_RESERVE: int = DEFAULT_HEADNODE_CPU_RESERVE
 
 
 def parse_project_cluster_ci(repo_path: str) -> Dict[str, Any]:
@@ -220,19 +252,3 @@ def validate_and_resolve_resources(
         )
 
     return resolved
-
-
-# Scheduling: Worker placement priority defaults (Amendement A13/A14)
-# Convention: Higher value = preferred first.
-# Default: All non-headnode machines share standard priority (50).
-# Headnode is strictly the worker of last resort (0).
-DEFAULT_PLACEMENT_PRIORITY: int = 50
-HEADNODE_PLACEMENT_PRIORITY: int = 0
-
-# Headnode Resource Reservation & Packing Ceilings (Amendement A11/A12/A14)
-DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
-DEFAULT_HEADNODE_CPU_RESERVE: int = 2
-DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
-DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
-
-
