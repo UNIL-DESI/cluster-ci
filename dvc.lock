@@ -1,0 +1,98 @@
+schema: '2.0'
+stages:
+  prep:
+    cmd: python3 simulate_research.py prep
+    deps:
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/prep.txt
+      hash: md5
+      md5: 8254a2c1b7b38ee4e4b616932e1c1915
+      size: 71
+    - path: metrics/prep.json
+      hash: md5
+      md5: 5dfe98176107eff41b56e3d9d7c6c1c5
+      size: 79
+  branch_a_step1@1:
+    cmd: python3 simulate_research.py branch_a_step1 --item 1
+    deps:
+    - path: artifacts/prep.txt
+      hash: md5
+      md5: 8254a2c1b7b38ee4e4b616932e1c1915
+      size: 71
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/branch_a1_1.bin
+      hash: md5
+      md5: 9d621fa413999b74ce41dae96574ea1a
+      size: 52428800
+    - path: metrics/branch_a1_1.json
+      hash: md5
+      md5: 2002153dfc55f0ed0c441ee61b940a88
+      size: 157
+  branch_a_step1@2:
+    cmd: python3 simulate_research.py branch_a_step1 --item 2
+    deps:
+    - path: artifacts/prep.txt
+      hash: md5
+      md5: 86d61df63941a78a48ad0f818e19e490
+      size: 71
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/branch_a1_2.bin
+      hash: md5
+      md5: e43d442be0f9d6ee914d42c7d6ab9bbf
+      size: 52428800
+    - path: metrics/branch_a1_2.json
+      hash: md5
+      md5: 448ec6195e0c6a06d7c7267cf512331d
+      size: 157
+  branch_a_step2@1:
+    cmd: python3 simulate_research.py branch_a_step2 --item 1
+    deps:
+    - path: artifacts/branch_a1_1.bin
+      hash: md5
+      md5: 9d621fa413999b74ce41dae96574ea1a
+      size: 52428800
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/branch_a2_1.bin
+      hash: md5
+      md5: d9ea490137e1bec669d52ab01e42ebcc
+      size: 52428800
+    - path: metrics/branch_a2_1.json
+      hash: md5
+      md5: 1fdce665ed0fa431be5e9c3eb023a216
+      size: 157
+  branch_a_step2@2:
+    cmd: python3 simulate_research.py branch_a_step2 --item 2
+    deps:
+    - path: artifacts/branch_a1_2.bin
+      hash: md5
+      md5: e43d442be0f9d6ee914d42c7d6ab9bbf
+      size: 52428800
+    - path: simulate_research.py
+      hash: md5
+      md5: 5185c327c11a4bb4629826064cc34374
+      size: 13448
+    outs:
+    - path: artifacts/branch_a2_2.bin
+      hash: md5
+      md5: d364b78d65514cb4a964ca0eb2b5e398
+      size: 52428800
+    - path: metrics/branch_a2_2.json
+      hash: md5
+      md5: 40d756fab6c25ccd54af471c1040977e
+      size: 157
