@@ -78,13 +78,20 @@ except ImportError:
 
         def run_planner_for_submission(repo_dir="."):
             import subprocess
+            cluster_ci_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            target_repo = os.path.abspath(repo_dir)
             planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
             cmd = (
-                ["uv", "run", "--no-project", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
+                ["uv", "run", "--no-project", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", target_repo, "--json"]
                 if shutil.which("uv")
-                else [sys.executable, "-m", planner_mod, "--repo", repo_dir, "--json"]
+                else [sys.executable, "-m", planner_mod, "--repo", target_repo, "--json"]
             )
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            env = os.environ.copy()
+            pythonpath = env.get("PYTHONPATH", "")
+            existing_paths = [p for p in pythonpath.split(os.pathsep) if p]
+            all_paths = [cluster_ci_root, target_repo] + [p for p in existing_paths if p not in (cluster_ci_root, target_repo)]
+            env["PYTHONPATH"] = os.pathsep.join(all_paths)
+            proc = subprocess.run(cmd, cwd=target_repo, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
                 print(f"❌ Error: Planner failed ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
                 sys.exit(proc.returncode or 1)

@@ -80,14 +80,12 @@ def run_planner_for_submission(repo_dir="."):
     else:
         cmd = [sys.executable, "-m", planner_mod, "--repo", target_repo, "--json"]
 
+    cluster_ci_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH", "")
-    paths = [
-        target_repo,
-        os.path.dirname(os.path.abspath(__file__)),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
-    ]
-    env["PYTHONPATH"] = os.pathsep.join(paths + ([pythonpath] if pythonpath else []))
+    existing_paths = [p for p in pythonpath.split(os.pathsep) if p]
+    all_paths = [cluster_ci_root, target_repo] + [p for p in existing_paths if p not in (cluster_ci_root, target_repo)]
+    env["PYTHONPATH"] = os.pathsep.join(all_paths)
 
     try:
         proc = subprocess.run(

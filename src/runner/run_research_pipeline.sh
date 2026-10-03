@@ -420,7 +420,7 @@ log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 # --memory-swap equal to --memory disables swap (prevents silent degradation).
 # Cluster-CI v3 (W11) - Utilisation dynamique de host_guard pour tous les conteneurs
 HOST_RAM_TOTAL=$(free -m 2>/dev/null | awk '/Mem:/{print $2/1024}' || echo "64.0")
-DOCKER_RESOURCE_FLAGS=$(python3 -m src.runner.host_guard \
+DOCKER_RESOURCE_FLAGS=$(PYTHONPATH="${BASE_DIR}:${PYTHONPATH}" python3 -m src.runner.host_guard \
     --host-profile "{\"hostname\":\"$(hostname)\",\"role\":\"${CLUSTER_CI_ROLE:-worker}\",\"total_ram_gb\":$HOST_RAM_TOTAL}" \
     --ram-gb "$RAM_LIMIT" \
     --vram-gb "$VRAM_LIMIT" \
