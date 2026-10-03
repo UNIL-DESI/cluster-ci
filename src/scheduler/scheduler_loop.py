@@ -8,16 +8,30 @@ import sys
 import shutil
 import datetime as dt
 from datetime import datetime
-from persistence import (
-    get_db_conn, init_db, update_dag_ready_states, mark_node_status,
-    handle_missing_deps, record_runner_heartbeat, check_runner_heartbeat_timeouts,
-    get_job_node, get_all_job_nodes, get_aggregated_job_status
-)
-from defaults import (
-    DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
-    DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
-    RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
-)
+try:
+    from persistence import (
+        get_db_conn, init_db, update_dag_ready_states, mark_node_status,
+        handle_missing_deps, record_runner_heartbeat, check_runner_heartbeat_timeouts,
+        get_job_node, get_all_job_nodes, get_aggregated_job_status
+    )
+    from defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+    )
+    from artifact_registry import affinity_bytes, sources_for, record_node_outputs
+except ImportError:
+    from src.scheduler.persistence import (
+        get_db_conn, init_db, update_dag_ready_states, mark_node_status,
+        handle_missing_deps, record_runner_heartbeat, check_runner_heartbeat_timeouts,
+        get_job_node, get_all_job_nodes, get_aggregated_job_status
+    )
+    from src.scheduler.defaults import (
+        DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
+        DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+    )
+    from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -298,8 +312,9 @@ def allocate_gpus(worker, node_resources):
 def get_data_affinity_score(job, worker):
     """
     Amendement A5 : Calcule le score d'affinité des données sur ce worker.
-    Nombre de dep_paths déjà présents sur cette machine car produits par ce worker.
+    Utilise affinity_bytes d'artifact_registry complété par les out_paths de job_nodes.
     """
+    total_score = 0
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -310,10 +325,28 @@ def get_data_affinity_score(job, worker):
         if not ready_nodes:
             return 0
 
+        all_dep_hashes = []
+        for r in ready_nodes:
+            dp_raw = r["dep_paths"]
+            if dp_raw:
+                try:
+                    parsed = json.loads(dp_raw)
+                    if isinstance(parsed, list):
+                        all_dep_hashes.extend(parsed)
+                except Exception:
+                    pass
+
+        if all_dep_hashes:
+            try:
+                bytes_aff = affinity_bytes(conn, all_dep_hashes, worker.get("worker_id"))
+                total_score += bytes_aff
+            except Exception as e:
+                logger.debug(f"affinity_bytes check failed: {e}")
+
         cursor.execute('''
             SELECT out_paths FROM job_nodes
             WHERE job_id = ? AND status = 'done' AND worker_id = ?
-        ''', (job["job_id"], worker["worker_id"]))
+        ''', (job["job_id"], worker.get("worker_id")))
         done_nodes = cursor.fetchall()
 
     done_paths = set()
@@ -327,17 +360,11 @@ def get_data_affinity_score(job, worker):
             except Exception:
                 pass
 
-    score = 0
-    for row in ready_nodes:
-        raw = row["dep_paths"]
-        if raw:
-            try:
-                for dp in json.loads(raw):
-                    if dp in done_paths:
-                        score += 1
-            except Exception:
-                pass
-    return score
+    for dp in all_dep_hashes:
+        if dp in done_paths:
+            total_score += 1
+
+    return total_score
 
 def get_oldest_ready_node_time(job):
     """Renvoie l'horodatage ou l'identifiant pour départager les nœuds prêts les plus anciens."""
@@ -454,6 +481,13 @@ def handle_next_node(req):
     if node_name:
         if status == "done":
             mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0)
+            outputs_to_record = req.get("outputs") or req.get("out_paths")
+            if outputs_to_record:
+                try:
+                    with get_db_conn() as conn:
+                        record_node_outputs(conn, job_id, node_name, worker_id, outputs_to_record)
+                except Exception as e:
+                    logger.debug(f"Failed to record node outputs in artifact registry: {e}")
         elif status == "failed":
             mark_node_status(job_id, node_name, "failed", duration_s=duration_s,
                              exit_code=exit_code or 1, error_message=error_message)
@@ -625,12 +659,33 @@ def handle_next_node(req):
     if runner_id:
         record_runner_heartbeat(job_id, runner_id, worker_id, next_node["node_name"])
 
+    dep_paths_list = []
+    raw_deps = next_node.get("dep_paths")
+    if raw_deps:
+        try:
+            dep_paths_list = json.loads(raw_deps) if isinstance(raw_deps, str) else list(raw_deps)
+        except Exception:
+            dep_paths_list = []
+
+    dep_sources_map = {}
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT worker_id, service_url FROM workers WHERE status = 'online'")
+            online_workers_map = {r[0]: r[1] for r in cursor.fetchall()}
+            dep_sources_map = sources_for(conn, dep_paths_list, online_workers_map)
+    except Exception as e:
+        logger.debug(f"Failed to query artifact sources: {e}")
+
     return {
         "action": action,
         "node": next_node["node_name"],
         "image": next_image,
         "resources": next_res,
-        "gpu_ids": gpu_ids
+        "gpu_ids": gpu_ids,
+        "dep_paths": dep_paths_list,
+        "dep_sources": dep_sources_map,
+        "sources": dep_sources_map
     }
 
 def schedule_iteration():
@@ -898,7 +953,7 @@ def schedule_iteration():
         if winner_score < len(required_hashes) and len(worker_scores) > 1:
             peers = [ws for ws in worker_scores if ws[0]['worker_id'] != assigned_worker['worker_id']]
             if peers and peers[0][1] > 0 and peers[0][0].get('service_url'):
-                p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact"
+                p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact".replace("1300.223.169.200", "130.223.169.200")
 
         with get_db_conn() as conn:
             cursor = conn.cursor()

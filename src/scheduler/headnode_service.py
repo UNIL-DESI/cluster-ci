@@ -1001,7 +1001,30 @@ def job_status(job_id):
                 FROM job_nodes WHERE job_id = ?
                 ORDER BY priority DESC, node_name ASC
             ''', (job_id,))
-            job_dict["nodes"] = [dict(r) for r in cursor.fetchall()]
+            raw_nodes = cursor.fetchall()
+            nodes_list = []
+            for r in raw_nodes:
+                nd = dict(r)
+                nd["name"] = nd["node_name"]
+                nd["machine"] = nd["worker_id"]
+                nd["duration"] = nd["duration_s"]
+                nodes_list.append(nd)
+            job_dict["nodes"] = nodes_list
+            job_dict["nodes_summary"] = [
+                {
+                    "name": n["name"],
+                    "status": n["status"],
+                    "machine": n["machine"],
+                    "duration": n["duration"]
+                }
+                for n in nodes_list
+            ]
+            try:
+                headnode_base = request.host_url.rstrip('/') if request else ""
+                if headnode_base:
+                    job_dict["worker_service_url"] = headnode_base
+            except Exception:
+                pass
 
         return jsonify(job_dict)
 
@@ -1620,9 +1643,83 @@ def api_list_runs(repo):
 
     return jsonify(runs)
     
+HEADNODE_LOGS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "job_logs"
+)
+os.makedirs(HEADNODE_LOGS_DIR, exist_ok=True)
+_job_logs_lock = threading.Lock()
+
+def _append_job_logs(job_id: str, new_content: str) -> int:
+    """Append log lines thread-safely to headnode's job log file, returning the new end offset."""
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if not new_content:
+        return os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    with _job_logs_lock:
+        with open(log_path, 'a', encoding='utf-8', errors='replace', newline='') as f:
+            f.write(new_content)
+            f.flush()
+            return f.tell()
+
+def _read_job_logs(job_id: str, offset: int = 0) -> tuple[str, int]:
+    """Read logs starting at offset from headnode's local job log file."""
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if not os.path.exists(log_path):
+        return "", offset
+    with _job_logs_lock:
+        with open(log_path, 'r', encoding='utf-8', errors='replace', newline='') as f:
+            f.seek(offset)
+            content = f.read()
+            new_offset = f.tell()
+            return content, new_offset
+
+@app.route('/api/jobs/<job_id>/logs', methods=['POST'])
+@app.route('/job_logs/<job_id>', methods=['POST'])
+def ingest_job_logs(job_id):
+    """
+    Ingestion d'une ou plusieurs lignes de log depuis les exécuteurs du job.
+    Supporte JSON: {"logs": str}, {"lines": list[str]}, {"content": str}, {"text": str}
+    ou corps texte brut.
+    """
+    new_content = ""
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        if "logs" in data:
+            new_content = data["logs"] or ""
+        elif "lines" in data:
+            lines = data["lines"]
+            if isinstance(lines, list):
+                new_content = "\n".join(str(l) for l in lines) + ("\n" if lines else "")
+            else:
+                new_content = str(lines)
+        elif "content" in data:
+            new_content = data["content"] or ""
+        elif "text" in data:
+            new_content = data["text"] or ""
+    else:
+        new_content = request.get_data(as_text=True)
+
+    new_offset = _append_job_logs(job_id, new_content)
+    return jsonify({"status": "ok", "offset": new_offset})
+
 @app.route('/api/jobs/<job_id>/logs', methods=['GET'])
+@app.route('/job_logs/<job_id>', methods=['GET'])
 def api_get_run_logs(job_id):
-    offset = request.args.get('offset', 0)
+    """
+    Flux UNIQUE, ordonné et sans perte des lignes de logs pour un job.
+    - Si des logs ont été collectés localement sur le headnode : lecture avec offset monotone.
+    - Sinon, pour un job classique, proxy transparent vers le worker unique assigné.
+    """
+    try:
+        offset = int(request.args.get('offset', 0))
+    except (ValueError, TypeError):
+        offset = 0
+
+    log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")
+    if os.path.exists(log_path):
+        content, new_offset = _read_job_logs(job_id, offset)
+        return jsonify({"logs": content, "offset": new_offset})
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -1632,10 +1729,10 @@ def api_get_run_logs(job_id):
             WHERE j.job_id = ?
         ''', (job_id,))
         job = cursor.fetchone()
-        
+
     if not job or not job['service_url']:
-        return jsonify({"logs": "Log source not found (worker might be offline or job not assigned)", "offset": offset})
-        
+        return jsonify({"logs": "", "offset": offset})
+
     worker_url = f"{job['service_url']}/job_logs/{job_id}?offset={offset}"
     try:
         resp = requests.get(worker_url, timeout=5)

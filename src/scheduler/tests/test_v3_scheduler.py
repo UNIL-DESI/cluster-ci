@@ -550,3 +550,131 @@ def test_job_cancellation_cascade(client):
     assert nodes["n_done"] == "done"
     assert nodes["n_running"] == "blocked"
     assert nodes["n_pending"] == "blocked"
+
+def test_aggregated_multi_executor_logs_and_offset_recovery(isolated_db, client):
+    """
+    Test exigé par le contrat §6 et compléments W3 :
+    2 exécuteurs simulés envoyant des lignes entrelacées :
+    - flux unique, ordonné et sans perte
+    - offsets strictement monotones
+    - reprise correcte à un offset donné
+    """
+    job_id = f"job-multi-logs-{uuid.uuid4().hex[:8]}"
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO jobs (job_id, repo, status, parallel_mode, created_at)
+            VALUES (?, 'owner/repo', 'running', 1, CURRENT_TIMESTAMP)
+        ''', (job_id,))
+        conn.commit()
+
+    # 1. Simulateur Exécuteur 1 (node_A sur worker-1) et Exécuteur 2 (node_B sur worker-2)
+    # Lignes entrelacées avec préfixe standard [node@machine]
+    l1 = "[node_A@worker-1] Starting task A...\n"
+    r1 = client.post(f"/api/jobs/{job_id}/logs", json={"logs": l1})
+    assert r1.status_code == 200
+    off1 = r1.get_json()["offset"]
+    assert off1 == len(l1.encode("utf-8"))
+
+    l2 = "[node_B@worker-2] Starting task B concurrently...\n"
+    r2 = client.post(f"/job_logs/{job_id}", json={"logs": l2})
+    assert r2.status_code == 200
+    off2 = r2.get_json()["offset"]
+    assert off2 == off1 + len(l2.encode("utf-8"))
+
+    l3 = "[node_A@worker-1] Progress A: 50% complete\n"
+    r3 = client.post(f"/api/jobs/{job_id}/logs", json={"lines": [l3.strip()]})
+    assert r3.status_code == 200
+    off3 = r3.get_json()["offset"]
+    assert off3 > off2
+
+    l4 = "[node_B@worker-2] Task B finished successfully.\n"
+    r4 = client.post(f"/job_logs/{job_id}", json={"logs": l4})
+    assert r4.status_code == 200
+    off4 = r4.get_json()["offset"]
+    assert off4 > off3
+
+    # 2. Lecture complète depuis offset=0 via GET /job_logs/<job_id>
+    get_all = client.get(f"/job_logs/{job_id}?offset=0")
+    assert get_all.status_code == 200
+    data_all = get_all.get_json()
+    assert data_all["offset"] == off4
+    full_text = data_all["logs"]
+    assert "[node_A@worker-1] Starting task A" in full_text
+    assert "[node_B@worker-2] Starting task B concurrently" in full_text
+    assert "[node_A@worker-1] Progress A" in full_text
+    assert "[node_B@worker-2] Task B finished" in full_text
+
+    # 3. Reprise à un offset intermédiaire (après l2, à off2)
+    get_mid = client.get(f"/api/jobs/{job_id}/logs?offset={off2}")
+    assert get_mid.status_code == 200
+    data_mid = get_mid.get_json()
+    assert data_mid["offset"] == off4
+    mid_text = data_mid["logs"]
+    assert "Starting task A" not in mid_text
+    assert "Starting task B" not in mid_text
+    assert "[node_A@worker-1] Progress A: 50% complete" in mid_text
+    assert "[node_B@worker-2] Task B finished successfully" in mid_text
+
+def test_job_status_node_summary_and_classic_job_unchanged(isolated_db, client, monkeypatch):
+    """
+    Test du résumé par nœud dans /job_status et préservation du chemin classique sans logs locaux.
+    """
+    # 1. Job parallèle avec résumé par nœud
+    job_p = "job-status-summary-p"
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO jobs (job_id, repo, status, parallel_mode, created_at)
+            VALUES (?, 'owner/repo', 'running', 1, CURRENT_TIMESTAMP)
+        ''', (job_p,))
+        cursor.execute('''
+            INSERT INTO job_nodes (job_id, node_name, status, worker_id, duration_s, priority)
+            VALUES (?, 'node1', 'done', 'worker-gpu-1', 42.5, 10.0),
+                   (?, 'node2', 'running', 'worker-gpu-2', 12.0, 5.0)
+        ''', (job_p, job_p))
+        conn.commit()
+
+    res_p = client.get(f"/job_status/{job_p}").get_json()
+    assert res_p["status"] == "running"
+    assert "nodes" in res_p
+    assert "nodes_summary" in res_p
+    assert len(res_p["nodes_summary"]) == 2
+
+    # Vérification des champs requis : (nom, état, machine, durée)
+    n1 = next(n for n in res_p["nodes_summary"] if n["name"] == "node1")
+    assert n1["status"] == "done"
+    assert n1["machine"] == "worker-gpu-1"
+    assert n1["duration"] == 42.5
+
+    n2 = next(n for n in res_p["nodes_summary"] if n["name"] == "node2")
+    assert n2["status"] == "running"
+    assert n2["machine"] == "worker-gpu-2"
+    assert n2["duration"] == 12.0
+
+    # 2. Job classique avec proxy logs vers worker distant
+    job_c = "job-classic-proxy"
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO workers (worker_id, service_url, status)
+            VALUES ('classic-w', 'http://classic-worker:6000', 'online')
+        ''')
+        cursor.execute('''
+            INSERT INTO jobs (job_id, repo, status, parallel_mode, worker_id)
+            VALUES (?, 'owner/classic', 'running', 0, 'classic-w')
+        ''', (job_c,))
+        conn.commit()
+
+    # Mock requests.get pour le worker distant
+    class MockWorkerResp:
+        status_code = 200
+        def json(self):
+            return {"logs": "Classic worker logs line 1\n", "offset": 30}
+
+    monkeypatch.setattr("requests.get", lambda url, timeout=5: MockWorkerResp())
+
+    res_logs = client.get(f"/job_logs/{job_c}?offset=0").get_json()
+    assert res_logs["logs"] == "Classic worker logs line 1\n"
+    assert res_logs["offset"] == 30
+
