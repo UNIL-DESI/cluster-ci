@@ -226,27 +226,38 @@ done
 echo "✅ Cluster update complete!"
 
 echo "==========================================================="
-echo "🧪 Infrastructure Test: Submitting 2 test jobs..."
+echo "🧪 Infrastructure Test: Submitting test jobs..."
 echo "==========================================================="
 echo "Pausing for 10s to allow services to start..."
 sleep 10
 
-echo "🚀 Submitting Job 1..."
+if command -v python3 &>/dev/null; then
+    PY_CMD="python3"
+elif command -v python &>/dev/null; then
+    PY_CMD="python"
+else
+    PY_CMD=""
+fi
+
+TARGET_REPO_VAL="${TARGET_REPO:-UNIL-DESI/cluster-ci}"
+TARGET_BRANCH_VAL="${TARGET_BRANCH:-main}"
+
+# 1. Soumission Job 1 via le client officiel (calcule le plan v3 quand W8 est déployé)
+# Condition explicite : non-fatal si v3 non déployée sur le cluster
+if [ -n "$PY_CMD" ] && [ -f "src/scheduler/submit_job.py" ]; then
+    echo "🚀 Running Job 1 (v3 Parallel DAG via submit_job client)..."
+    $PY_CMD src/scheduler/submit_job.py "$TARGET_REPO_VAL" "$TARGET_BRANCH_VAL" --headnode "http://$HEADNODE_IP:5000" || echo "⚠️ Job 1 (v3) failed or v3 planner not yet active on cluster (non-fatal post-update check)."
+else
+    echo "ℹ️ src/scheduler/submit_job.py not found locally; skipping v3 test."
+fi
+
+# 2. Soumission Job 2 (test de non-régression classique séquentiel) après la fin du Job 1
+# pour éviter l'auto-annulation branch:replace_pending sur la même branche.
+echo "🚀 Running Job 2 (Classic Sequential Non-Regression)..."
 curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $CLUSTER_TOKEN" \
-    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
-JOB1=$!
-
-echo "🚀 Submitting Job 2..."
-curl -s -X POST "http://$HEADNODE_IP:5000/submit_job" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $CLUSTER_TOKEN" \
-    -d "{\"repo\": \"$TARGET_REPO/cluster-ci\", \"branch\": \"main\", \"ram_required_gb\": 2.0, \"max_runtime_hours\": 1}" &
-JOB2=$!
-
-wait $JOB1
-wait $JOB2
+    -d "{\"repo\": \"$TARGET_REPO_VAL\", \"branch\": \"$TARGET_BRANCH_VAL\", \"ram_required_gb\": 4.0, \"max_runtime_hours\": 1, \"parallel_mode\": 0}" || true
 
 echo ""
-echo "🎉 Cluster test complete! All nodes are operational."
+echo "🎉 Cluster test complete! All test jobs processed."
