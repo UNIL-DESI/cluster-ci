@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Bootstrap BASE_DIR in sys.path to ensure src.* packages are discoverable
@@ -40,8 +41,16 @@ try:
 except (ImportError, SystemExit):
     dvc_git_helper = None
 
-from src.runner.fetch_cas_dependencies import fetch_dependencies
-from src.scheduler.artifact_registry import extract_node_deps_from_dvc_lock
+from src.runner.fetch_cas_dependencies import (
+    compute_file_md5,
+    fetch_dependencies,
+    parse_dir_manifest,
+)
+from src.scheduler.artifact_registry import (
+    extract_node_deps_from_dvc_lock,
+    get_dag_stage_outputs,
+    is_dag_stage_output,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -187,6 +196,8 @@ class DockerRunner:
             "-v", f"{repo_dir}:/workspace",
             "-w", "/workspace",
             "-v", f"{home_volume}:/home/user",
+            "-v", "cluster-ci-uv-cache:/home/user/.cache/uv",
+            "-v", "cluster-ci-pip-cache:/home/user/.cache/pip",
             "-v", f"{base_dir}:/cluster-ci:ro",
             "-v", "/etc/passwd:/etc/passwd:ro",
             "-v", "/etc/group:/etc/group:ro",
@@ -436,42 +447,122 @@ class BranchExecutor:
         Vérifie la présence locale des dépendances requises et rapatrie les objets CAS DVC
         depuis les workers pairs via fetch_cas_dependencies (W6), multi-sources avec vérification MD5 stricte,
         SANS repli /fetch_artifact.
-        En cas d'échec, consigne une erreur explicite avec la cause et retourne les dépendances manquantes.
+        Distingue rigoureusement :
+          - Dépendance qui est une SORTIE (outs) d'un stage du DAG : artefact CAS.
+            Si présente localement avec le bon MD5 -> rien à faire.
+            Sinon -> récupération CAS depuis les pairs. Si introuvable -> échec explicite.
+          - Dépendance non-sortie (fichier suivi par git, script, config, dossier source) :
+            Vient du checkout git. Doit exister localement sur disque, sinon échec explicite.
+            Jamais de récupération CAS pour elle ; pas de vérification de MD5 contre dvc.lock.
         """
         dvc_lock_path = os.path.join(self.repo_dir, "dvc.lock")
-        deps: List[Dict[str, Any]] = []
+        exact_outs, dir_outs, pat_outs = get_dag_stage_outputs(repo_dir=self.repo_dir)
+
+        # 1. Collecter toutes les dépendances requises pour ce nœud
+        raw_paths = list(dep_paths or [])
+        node_lock_deps: List[Dict[str, Any]] = []
         if os.path.isfile(dvc_lock_path):
             try:
-                deps = extract_node_deps_from_dvc_lock(dvc_lock_path, node)
+                node_lock_deps = extract_node_deps_from_dvc_lock(dvc_lock_path, node)
             except Exception as exc:
                 logger.debug("Extraction dvc.lock impossible pour %s: %s", node, exc)
 
-            # If node has not run yet in dvc.lock, resolve dep_paths from upstream outs in dvc.lock!
-            if not deps and dep_paths:
-                try:
-                    import yaml
-                    with open(dvc_lock_path, "r", encoding="utf-8") as f:
-                        lock_data = yaml.safe_load(f) or {}
-                    stages = lock_data.get("stages", {})
-                    out_md5_map = {}
-                    for st_name, st_val in stages.items():
-                        if isinstance(st_val, dict):
-                            for out in st_val.get("outs", []):
-                                if isinstance(out, dict):
-                                    p = out.get("path")
-                                    m = out.get("md5") or out.get("hash")
-                                    if p and m:
-                                        out_md5_map[p.replace("\\", "/")] = m
-                    for p in dep_paths:
-                        norm_p = p.replace("\\", "/")
-                        if norm_p in out_md5_map:
-                            deps.append({"path": p, "md5": out_md5_map[norm_p]})
-                except Exception as exc:
-                    logger.debug("Resolution upstream outs dvc.lock impossible: %s", exc)
+        for d in node_lock_deps:
+            p = d.get("path")
+            if p and p not in raw_paths:
+                raw_paths.append(p)
 
-        cas_deps = [d for d in deps if d.get("md5")]
-        if cas_deps:
-            # Sources map: {md5: [urls]}
+        lock_hash_by_path: Dict[str, str] = {}
+        for d in node_lock_deps:
+            p = d.get("path")
+            m = d.get("md5")
+            if p and m:
+                lock_hash_by_path[p.replace("\\", "/").rstrip("/")] = m
+
+        missing_paths: List[str] = []
+        cas_deps_to_fetch: List[Dict[str, Any]] = []
+
+        # 2. Classifier et inspecter chaque dépendance
+        for dep_path in raw_paths:
+            norm_p = os.path.normpath(dep_path).replace("\\", "/").rstrip("/")
+            if not norm_p or norm_p == ".":
+                continue
+
+            local_path = os.path.join(self.repo_dir, norm_p)
+            is_stage_out, out_info = is_dag_stage_output(norm_p, exact_outs, dir_outs, pat_outs)
+
+            if not is_stage_out:
+                # -------------------------------------------------------------
+                # Branche A : Dépendance suivie par git / fichier source
+                # -------------------------------------------------------------
+                if not os.path.exists(local_path):
+                    cause = f"Git-tracked dependency '{dep_path}' was not found in the local repository checkout."
+                    remedy = f"Ensure '{dep_path}' is committed and pushed to git on branch '{self.target_branch}'."
+                    logger.error(
+                        "❌ Dependency '%s' for node %s is a git file that does not exist locally. Cause: %s Remedy: %s",
+                        dep_path,
+                        node,
+                        cause,
+                        remedy,
+                    )
+                    missing_paths.append(dep_path)
+                else:
+                    logger.info("Git-tracked dependency present locally: %s", dep_path)
+                continue
+
+            # -----------------------------------------------------------------
+            # Branche B : Dépendance qui est une SORTIE (outs) d'un autre stage
+            # -----------------------------------------------------------------
+            out_info = out_info or {}
+            expected_md5 = lock_hash_by_path.get(norm_p) or out_info.get("md5")
+            parent_dir_hash = out_info.get("parent_dir_hash")
+
+            if not expected_md5 and parent_dir_hash:
+                manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / parent_dir_hash[:2] / parent_dir_hash[2:]
+                if manifest_file.is_file():
+                    entries = parse_dir_manifest(manifest_file)
+                    parent_dir = out_info.get("parent_dir", "")
+                    rel_sub = norm_p[len(parent_dir):].lstrip("/")
+                    for ent in entries:
+                        if ent.get("relpath") == rel_sub:
+                            expected_md5 = ent.get("md5")
+                            break
+
+            already_valid = False
+            if expected_md5:
+                clean_exp = expected_md5.lower().strip()
+                if clean_exp.endswith(".dir"):
+                    if os.path.isdir(local_path):
+                        manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / clean_exp[:2] / clean_exp[2:]
+                        if manifest_file.is_file():
+                            entries = parse_dir_manifest(manifest_file)
+                            if entries and all(
+                                os.path.isfile(os.path.join(local_path, e.get("relpath", "")))
+                                and compute_file_md5(os.path.join(local_path, e.get("relpath", ""))) == e.get("md5", "").strip().lower()
+                                for e in entries
+                            ):
+                                already_valid = True
+                else:
+                    if os.path.isfile(local_path) and compute_file_md5(local_path) == clean_exp:
+                        already_valid = True
+
+            if already_valid:
+                logger.info(
+                    "Stage output dependency '%s' already present locally with matching md5 (%s)",
+                    dep_path,
+                    expected_md5,
+                )
+                continue
+
+            cas_deps_to_fetch.append({
+                "path": dep_path,
+                "md5": expected_md5 or "",
+                "parent_dir_hash": parent_dir_hash,
+                "stage": out_info.get("stage"),
+            })
+
+        # 3. Récupération CAS pour les sorties de stages manquantes ou invalides
+        if cas_deps_to_fetch:
             sources_map: Dict[str, List[str]] = {}
             dep_sources_dict = dep_sources or {}
             for k, urls in dep_sources_dict.items():
@@ -491,15 +582,33 @@ class BranchExecutor:
                             if alt_url not in all_workers:
                                 all_workers.append(alt_url)
 
-            for d in cas_deps:
+            for d in cas_deps_to_fetch:
                 md5 = d.get("md5", "")
                 if md5:
                     for w in all_workers:
                         if w not in sources_map.get(md5, []):
                             sources_map.setdefault(md5, []).append(w)
+                p_hash = d.get("parent_dir_hash")
+                if p_hash:
+                    for w in all_workers:
+                        if w not in sources_map.get(p_hash, []):
+                            sources_map.setdefault(p_hash, []).append(w)
+
+            fetch_items = list(cas_deps_to_fetch)
+            existing_hashes = {d["md5"] for d in fetch_items if d.get("md5")}
+            for d in cas_deps_to_fetch:
+                p_hash = d.get("parent_dir_hash")
+                if p_hash and p_hash not in existing_hashes:
+                    fetch_items.append({
+                        "path": "",
+                        "md5": p_hash,
+                        "is_dir": True,
+                        "parent_dir_hash": None,
+                    })
+                    existing_hashes.add(p_hash)
 
             result = fetch_dependencies(
-                dependencies=cas_deps,
+                dependencies=fetch_items,
                 sources_map=sources_map,
                 repo_dir=self.repo_dir,
                 repo_name=self.target_repo,
@@ -509,41 +618,17 @@ class BranchExecutor:
             if not result.success:
                 missing = result.missing_deps or result.missing_hashes
                 cause = result.error_message or f"status {result.status}: CAS objects not found on candidate sources or invalid md5 integrity"
+                remedy = "Ensure upstream stages completed successfully on peer workers and published CAS artifacts."
                 logger.error(
-                    "❌ Failed to fetch CAS dependencies (W6) for node %s: %s (cause: %s)",
+                    "❌ Failed to fetch CAS dependencies (W6) for node %s: %s (cause: %s, remedy: %s)",
                     node,
                     missing,
                     cause,
+                    remedy,
                 )
-                return missing
+                missing_paths.extend(missing)
 
-        # Vérification des chemins locaux sans repli /fetch_artifact (W6)
-        all_paths = list(dep_paths or [])
-        for d in deps:
-            p = d.get("path")
-            if p and p not in all_paths:
-                all_paths.append(p)
-
-        if not all_paths and not cas_deps:
-            return []
-
-        missing_paths: List[str] = []
-        for path in all_paths:
-            local_path = os.path.join(self.repo_dir, path)
-            if os.path.exists(local_path) and (
-                os.path.isdir(local_path) or os.path.getsize(local_path) > 0
-            ):
-                logger.info("Dependency already present locally: %s", path)
-                continue
-
-            logger.error(
-                "❌ Dependency %s not found locally for node %s (fallback /fetch_artifact forbidden under W6 CAS)",
-                path,
-                node,
-            )
-            missing_paths.append(path)
-
-        return missing_paths
+        return list(dict.fromkeys(missing_paths))
 
     # -----------------------------------------------------------------
     # Cycle de Vie des Conteneurs
@@ -588,6 +673,8 @@ class BranchExecutor:
             home_volume,
         )
         self.docker.create_volume(home_volume)
+        self.docker.create_volume("cluster-ci-uv-cache")
+        self.docker.create_volume("cluster-ci-pip-cache")
 
         env = {
             "HOME": "/home/user",

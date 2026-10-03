@@ -286,6 +286,8 @@ def fetch_dependencies(
             h = item.strip().lower()
             normalized_deps.append({"path": "", "md5": h, "parent_dir_hash": None})
         elif isinstance(item, Mapping):
+            if item.get("is_stage_output") is False:
+                continue
             raw_h = item.get("md5") or item.get("hash") or ""
             clean_h = str(raw_h).strip().lower()
             p_hash = str(item.get("parent_dir_hash") or "").strip().lower() or None
@@ -513,7 +515,7 @@ def main() -> int:
     deps = []
     if args.node and os.path.isfile(args.dvc_lock):
         from src.scheduler.artifact_registry import extract_node_deps_from_dvc_lock
-        deps = extract_node_deps_from_dvc_lock(args.dvc_lock, args.node)
+        deps = extract_node_deps_from_dvc_lock(args.dvc_lock, args.node, stage_outs_only=True, repo_dir=args.repo_dir)
     else:
         deps = [{"path": "", "md5": h} for h in sources_map.keys()]
 
