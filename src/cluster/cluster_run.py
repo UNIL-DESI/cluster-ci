@@ -60,6 +60,7 @@ try:
         format_nodes_status_summary,
         print_final_dag_summary,
         check_repo_remote_matches,
+        NetworkRetryTracker,
     )
 except ImportError:
     try:
@@ -68,10 +69,12 @@ except ImportError:
             format_nodes_status_summary,
             print_final_dag_summary,
             check_repo_remote_matches,
+            NetworkRetryTracker,
         )
     except ImportError:
         def check_repo_remote_matches(repo_dir, expected_repo):
             return True, None, None
+        NetworkRetryTracker = None
 
         def run_planner_for_submission(repo_dir="."):
             import subprocess
@@ -1824,44 +1827,39 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     last_status_msg = ""
     last_nodes_summary = None
     current_nodes_data = None
-    max_status_errors = 10
-    max_log_errors = 10
-    max_network_downtime_seconds = 120.0
-    consecutive_status_errors = 0
-    consecutive_log_errors = 0
-    first_status_error_time = None
-    first_log_error_time = None
+    log_retry_tracker = (
+        NetworkRetryTracker(max_retries=10, max_downtime_seconds=900.0)
+        if NetworkRetryTracker
+        else None
+    )
+    status_retry_tracker = (
+        NetworkRetryTracker(max_retries=10, max_downtime_seconds=900.0)
+        if NetworkRetryTracker
+        else None
+    )
 
     while True:
         # 1. Fetch latest logs from Headnode API (priorité /job_logs, repli /api/jobs/{id}/logs)
         try:
             new_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
             if new_logs and isinstance(new_logs, str):
-                consecutive_log_errors = 0
-                first_log_error_time = None
+                if log_retry_tracker:
+                    log_retry_tracker.record_success()
                 for line in new_logs.splitlines():
                     formatted_line = format_multi_machine_log_line(line, current_nodes_data)
                     print_line(formatted_line)
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-            consecutive_log_errors += 1
-            now = time.monotonic()
-            if first_log_error_time is None:
-                first_log_error_time = now
-            downtime = now - first_log_error_time
-            sys.stderr.write(
-                f"\n⚠️ [Network] Temporary failure retrieving logs ({e}) "
-                f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
-            )
-            if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
-                print(
-                    f"\n❌ [Network] Exceeded maximum log retries ({consecutive_log_errors}/{max_log_errors}) "
-                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
-                    f"Cause: Headnode log service unreachable ({e}).\n"
-                    f"Remedy: Check headnode at {headnode_url} and network connectivity.",
-                    file=sys.stderr,
+            if log_retry_tracker:
+                is_exhausted, err_msg = log_retry_tracker.record_error(
+                    error=e,
+                    endpoint_desc="job logs from headnode",
+                    target_url=headnode_url,
+                    job_id=job_id,
                 )
-                close_log_redirection()
-                return 1
+                sys.stderr.write(err_msg)
+                if is_exhausted:
+                    close_log_redirection()
+                    return 1
         except Exception:
             # Silently continue on temporary formatting glitches while polling logs
             pass
@@ -1874,8 +1872,8 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                 req.add_header("Authorization", f"Bearer {cluster_token}")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
-                    consecutive_status_errors = 0
-                    first_status_error_time = None
+                    if status_retry_tracker:
+                        status_retry_tracker.record_success()
                     job_data = json.loads(resp.read().decode("utf-8"))
                     status = job_data.get("status")
                     exit_code = job_data.get("exit_code")
@@ -1958,30 +1956,32 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                                     print(f"\n❌ [ERROR] Local job completed with status: {status} (Exit code: {ret_code})", file=sys.stderr)
                             return int(ret_code)
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-            consecutive_status_errors += 1
-            now = time.monotonic()
-            if first_status_error_time is None:
-                first_status_error_time = now
-            downtime = now - first_status_error_time
-            sys.stderr.write(
-                f"\n⚠️ [Network] Temporary failure checking status: {e} "
-                f"({consecutive_status_errors}/{max_status_errors}, downtime {downtime:.1f}s)\n"
-            )
-            if consecutive_status_errors >= max_status_errors or downtime >= max_network_downtime_seconds:
-                print(
-                    f"\n❌ [Network] Exceeded maximum status check retries ({consecutive_status_errors}/{max_status_errors}) "
-                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
-                    f"Cause: Headnode status endpoint unreachable ({e}).\n"
-                    f"Remedy: Ensure headnode is running at {headnode_url} and network connectivity is active.",
-                    file=sys.stderr,
+            if status_retry_tracker:
+                is_exhausted, err_msg = status_retry_tracker.record_error(
+                    error=e,
+                    endpoint_desc="job status from headnode",
+                    target_url=headnode_url,
+                    job_id=job_id,
                 )
-                close_log_redirection()
-                return 1
+                sys.stderr.write(err_msg)
+                if is_exhausted:
+                    close_log_redirection()
+                    return 1
+            else:
+                consecutive_status_errors = getattr(stream_local_job_logs_and_wait, "_status_errs", 0) + 1
+                stream_local_job_logs_and_wait._status_errs = consecutive_status_errors
+                if consecutive_status_errors >= 10:
+                    close_log_redirection()
+                    return 1
         except Exception:
             # Status check temporary error
             pass
 
-        time.sleep(2)
+        if log_retry_tracker and status_retry_tracker:
+            sleep_int = max(log_retry_tracker.get_sleep_interval(), status_retry_tracker.get_sleep_interval())
+        else:
+            sleep_int = 2
+        time.sleep(sleep_int)
 
 
 def local_run():
@@ -2154,15 +2154,15 @@ def main():
     atexit.register(cleanup)
 
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
-    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync"],
+    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync", "attach"],
                         help="Action to perform (default: submit a new shadow run or local run)")
     parser.add_argument("run_id", nargs="?", default=None,
-                        help="Target GHA run ID for 'view' or 'cancel'")
+                        help="Target GHA run ID for 'view'/'cancel' or job ID for 'attach'")
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
 
     args = parser.parse_args()
 
-    check_dependencies(require_gh=not args.local if args.command is None else True)
+    check_dependencies(require_gh=False if (args.local or args.command == "attach") else (True if args.command else not args.local))
 
     # Recover any orphaned run from a previously force-killed session
     recover_orphaned_run()
@@ -2297,6 +2297,33 @@ def main():
 
         # 3. Clear state file
         clear_run_state()
+
+    elif args.command == "attach":
+        job_id = args.run_id
+        if not job_id:
+            print("Usage: cluster-run attach <job_id>", file=sys.stderr)
+            sys.exit(1)
+        headnode_url = discover_headnode_url()
+        if not headnode_url:
+            print("❌ Error: HEADNODE_URL could not be discovered. Please set HEADNODE_URL environment variable or configure .env.", file=sys.stderr)
+            sys.exit(1)
+        cluster_token = os.environ.get("CLUSTER_TOKEN")
+        if not cluster_token and os.path.exists(".env"):
+            try:
+                with open(".env", "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if line.strip().startswith("CLUSTER_TOKEN="):
+                            cluster_token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+            except Exception:
+                pass
+        print(f"📺 Attaching to local job {job_id[:12]} on {headnode_url}... (Ctrl+C to detach)")
+        try:
+            ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token)
+            if ret_code != 0:
+                sys.exit(ret_code)
+        except KeyboardInterrupt:
+            print("\n🛑 Detached from job (job continues running on cluster).")
+            sys.exit(0)
 
     else:
         # Submit run

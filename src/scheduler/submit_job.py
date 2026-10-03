@@ -686,6 +686,85 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         print(f"❌ Failed to submit job: {e}")
         sys.exit(1)
 
+
+class NetworkRetryTracker:
+    """Suivi et bornage unifié des tentatives réseau et d'indisponibilité (15 min max, backoff <= 60s)."""
+
+    def __init__(
+        self,
+        max_retries=10,
+        max_downtime_seconds=900.0,
+        base_backoff_seconds=2.0,
+        max_backoff_seconds=60.0,
+    ):
+        self.max_retries = max_retries
+        self.max_downtime_seconds = max_downtime_seconds
+        self.base_backoff_seconds = base_backoff_seconds
+        self.max_backoff_seconds = max_backoff_seconds
+        self.consecutive_errors = 0
+        self.first_error_time = None
+
+    def record_success(self):
+        """Réinitialise les compteurs lors d'une requête réussie."""
+        self.consecutive_errors = 0
+        self.first_error_time = None
+
+    def get_sleep_interval(self):
+        """Calcule le délai d'attente avec backoff exponentiel plafonné à 60s."""
+        if self.consecutive_errors <= 0:
+            return self.base_backoff_seconds
+        backoff = self.base_backoff_seconds * (2 ** (self.consecutive_errors - 1))
+        return min(self.max_backoff_seconds, backoff)
+
+    @property
+    def is_exhausted(self):
+        """Vérifie si le seuil de retries ou de temps de panne max est atteint."""
+        if self.consecutive_errors >= self.max_retries:
+            return True
+        if self.first_error_time is not None:
+            downtime = time.monotonic() - self.first_error_time
+            if downtime >= self.max_downtime_seconds:
+                return True
+        return False
+
+    def record_error(self, error, endpoint_desc, target_url, job_id=None):
+        """Incrémente le compteur d'erreurs et vérifie les bornes.
+
+        Retourne (is_exhausted, message).
+        """
+        self.consecutive_errors += 1
+        now = time.monotonic()
+        if self.first_error_time is None:
+            self.first_error_time = now
+        downtime = now - self.first_error_time
+
+        is_exhausted = self.is_exhausted
+
+        attach_cmd = (
+            f"cluster-run attach {job_id}  (or: python -m src.scheduler.submit_job --attach {job_id} --headnode {target_url})"
+            if job_id
+            else "cluster-run view"
+        )
+
+        if is_exhausted:
+            msg = (
+                f"\n❌ [Network] Exceeded maximum network retries ({self.consecutive_errors}/{self.max_retries}) "
+                f"or downtime ({downtime:.1f}s/{self.max_downtime_seconds}s) while polling {endpoint_desc}.\n"
+                f"Cause: {endpoint_desc} at {target_url} unreachable: {error}\n"
+                f"Status: Job {job_id or ''} CONTINUES RUNNING on the cluster (not canceled).\n"
+                f"Remedy: Check headnode/network connectivity, then re-attach with:\n"
+                f"   {attach_cmd}\n"
+            )
+        else:
+            sleep_int = self.get_sleep_interval()
+            msg = (
+                f"\n⚠️ [Network] Temporary failure polling {endpoint_desc}: {error} "
+                f"(attempt {self.consecutive_errors}/{self.max_retries}, downtime {downtime:.1f}s, backoff {sleep_int:.0f}s)\n"
+            )
+
+        return is_exhausted, msg
+
+
 def wait_for_job(headnode_url, job_id, branch=None):
     """Polls the headnode for job status and streams logs from the worker."""
     if not headnode_url:
@@ -777,20 +856,14 @@ def wait_for_job(headnode_url, job_id, branch=None):
     last_status = None
     last_queue_diagnostic = None
     last_nodes_summary = None
-    consecutive_log_errors = 0
-    max_log_errors = 10
-    first_log_error_time = None
-    consecutive_status_errors = 0
-    max_status_errors = 10
-    first_status_error_time = None
-    max_network_downtime_seconds = 120.0
+    log_retry_tracker = NetworkRetryTracker(max_retries=10, max_downtime_seconds=900.0)
+    status_retry_tracker = NetworkRetryTracker(max_retries=10, max_downtime_seconds=900.0)
 
     while True:
         try:
             resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
             resp.raise_for_status()
-            consecutive_status_errors = 0
-            first_status_error_time = None
+            status_retry_tracker.record_success()
             job = resp.json()
             status = job['status']
             worker_url = job.get('worker_service_url')
@@ -980,23 +1053,14 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
                 except requests.exceptions.RequestException as e:
-                    consecutive_log_errors += 1
-                    now = time.monotonic()
-                    if first_log_error_time is None:
-                        first_log_error_time = now
-                    downtime = now - first_log_error_time
-                    sys.stderr.write(
-                        f"\n⚠️ [Network] Temporary failure retrieving logs from headnode: {e} "
-                        f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
+                    is_exhausted, err_msg = log_retry_tracker.record_error(
+                        error=e,
+                        endpoint_desc="job logs from headnode",
+                        target_url=headnode_url,
+                        job_id=job_id,
                     )
-                    if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
-                        err_msg = (
-                            f"❌ [Network] Exceeded maximum network retries ({consecutive_log_errors}/{max_log_errors}) "
-                            f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s) while polling job logs.\n"
-                            f"Cause: Headnode log service unreachable ({e}).\n"
-                            f"Remedy: Check network connection to headnode at {headnode_url} and worker service."
-                        )
-                        sys.stderr.write(f"{err_msg}\n")
+                    sys.stderr.write(err_msg)
+                    if is_exhausted:
                         raise requests.exceptions.ConnectionError(err_msg) from e
                 except Exception as unexpected_err:
                     sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs headnode: {unexpected_err}\n")
@@ -1005,30 +1069,20 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 try:
                     logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
                 except requests.exceptions.RequestException as e:
-                    consecutive_log_errors += 1
-                    now = time.monotonic()
-                    if first_log_error_time is None:
-                        first_log_error_time = now
-                    downtime = now - first_log_error_time
-                    sys.stderr.write(
-                        f"\n⚠️ [Network] Temporary failure retrieving logs from worker: {e} "
-                        f"(attempt {consecutive_log_errors}/{max_log_errors})\n"
+                    is_exhausted, err_msg = log_retry_tracker.record_error(
+                        error=e,
+                        endpoint_desc="job logs from worker",
+                        target_url=worker_url or headnode_url,
+                        job_id=job_id,
                     )
-                    if consecutive_log_errors >= max_log_errors or downtime >= max_network_downtime_seconds:
-                        err_msg = (
-                            f"❌ [Network] Exceeded maximum network retries ({consecutive_log_errors}/{max_log_errors}) "
-                            f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s) while polling worker logs.\n"
-                            f"Cause: Worker log service unreachable ({e}).\n"
-                            f"Remedy: Check worker service at {worker_url} or headnode connectivity."
-                        )
-                        sys.stderr.write(f"{err_msg}\n")
+                    sys.stderr.write(err_msg)
+                    if is_exhausted:
                         raise requests.exceptions.ConnectionError(err_msg) from e
                 except Exception as unexpected_err:
                     sys.stderr.write(f"\n⚠️ Unexpected error polling worker logs: {unexpected_err}\n")
 
             if logs_resp and logs_resp.status_code == 200:
-                consecutive_log_errors = 0
-                first_log_error_time = None
+                log_retry_tracker.record_success()
                 try:
                     logs_data = logs_resp.json()
                     new_logs = logs_data.get('logs', '')
@@ -1146,36 +1200,29 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 last_status = status
 
         except requests.exceptions.RequestException as e:
-            if consecutive_log_errors >= max_log_errors:
+            if log_retry_tracker.is_exhausted:
                 raise
-            consecutive_status_errors += 1
-            now = time.monotonic()
-            if first_status_error_time is None:
-                first_status_error_time = now
-            downtime = now - first_status_error_time
-            sys.stderr.write(
-                f"\n⚠️ [Network] Error checking status: {e} "
-                f"({consecutive_status_errors}/{max_status_errors})\n"
+            is_exhausted, err_msg = status_retry_tracker.record_error(
+                error=e,
+                endpoint_desc="job status from headnode",
+                target_url=headnode_url,
+                job_id=job_id,
             )
-            if consecutive_status_errors >= max_status_errors or downtime >= max_network_downtime_seconds:
-                err_msg = (
-                    f"❌ [Network] Exceeded maximum status check retries ({consecutive_status_errors}/{max_status_errors}) "
-                    f"or downtime ({downtime:.1f}s/{max_network_downtime_seconds}s).\n"
-                    f"Cause: Headnode status endpoint unreachable ({e}).\n"
-                    f"Remedy: Check that headnode is running at {headnode_url} and network is functional."
-                )
-                sys.stderr.write(f"{err_msg}\n")
+            sys.stderr.write(err_msg)
+            if is_exhausted:
                 raise requests.exceptions.ConnectionError(err_msg) from e
         except Exception as e:
             sys.stderr.write(f"\n⚠️ Unexpected error checking status: {e}\n")
             raise
 
-        time.sleep(2)
+        sleep_int = max(log_retry_tracker.get_sleep_interval(), status_retry_tracker.get_sleep_interval())
+        time.sleep(sleep_int)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Submit a job to Cluster-CI Scheduler")
-    parser.add_argument("repo", help="Target repository (owner/repo)")
-    parser.add_argument("branch", help="Target branch")
+    parser.add_argument("repo", nargs="?", default=None, help="Target repository (owner/repo)")
+    parser.add_argument("branch", nargs="?", default=None, help="Target branch")
+    parser.add_argument("--attach", default=None, help="Re-attach to an existing job ID and stream its logs")
     parser.add_argument("--headnode", default=os.environ.get("HEADNODE_URL"), help="Headnode URL")
     parser.add_argument("--gh-token", default=None, help="GitHub token for cloning private repos")
     parser.add_argument("--local", action="store_true", help="Submit local directory without git clone")
@@ -1189,6 +1236,13 @@ if __name__ == '__main__':
         print("Error: HEADNODE_URL environment variable is missing and no --headnode argument was provided.")
         print("   Please set the HEADNODE_URL environment variable or provide the --headnode parameter.")
         sys.exit(1)
+
+    if args.attach:
+        exit_code = wait_for_job(args.headnode, args.attach, branch=args.branch)
+        sys.exit(exit_code)
+
+    if not args.repo or not args.branch:
+        parser.error("the following arguments are required: repo, branch (or provide --attach <job_id>)")
 
     env_vars = {}
     

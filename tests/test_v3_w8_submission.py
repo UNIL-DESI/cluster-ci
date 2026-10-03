@@ -20,6 +20,7 @@ from src.scheduler.submit_job import (
     print_final_dag_summary,
     submit_job,
     wait_for_job,
+    NetworkRetryTracker,
 )
 from src.cluster.cluster_run import parse_cluster_ci_config
 
@@ -718,6 +719,52 @@ class TestV3W8Submission(unittest.TestCase):
                 with self.assertRaises(requests.exceptions.RequestException):
                     wait_for_job("http://fake:5000", "fail-job")
                 self.assertGreaterEqual(status_error_count, 10)
+
+    def test_network_retry_tracker_backoff_and_bounds(self):
+        """Vérifie le tracker factorisé : 10 retries, max downtime 900s (15 min), backoff exponentiel plafonné à 60s."""
+        tracker = NetworkRetryTracker(max_retries=10, max_downtime_seconds=900.0)
+        self.assertEqual(tracker.get_sleep_interval(), 2.0)
+
+        # Progression exponentielle : pour erreurs 1 à 9
+        expected_backoffs = [2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0, 60.0]
+        for expected in expected_backoffs:
+            is_exhausted, msg = tracker.record_error(
+                error=Exception("net err"), endpoint_desc="status", target_url="http://node:5000", job_id="job-1"
+            )
+            self.assertFalse(is_exhausted)
+            self.assertEqual(tracker.get_sleep_interval(), expected)
+            self.assertIn("Temporary failure", msg)
+
+        # 10e tentative -> épuisement
+        is_exhausted, msg = tracker.record_error(
+            error=Exception("net err"), endpoint_desc="status", target_url="http://node:5000", job_id="job-1"
+        )
+        self.assertTrue(is_exhausted)
+        self.assertTrue(tracker.is_exhausted)
+        # Message d'abandon : mentionne la continuation sur le cluster et la commande de rattachement
+        self.assertIn("Job job-1 CONTINUES RUNNING on the cluster (not canceled)", msg)
+        self.assertIn("cluster-run attach job-1", msg)
+        self.assertIn("900.0s", msg)
+
+        # Réinitialisation sur succès
+        tracker.record_success()
+        self.assertEqual(tracker.consecutive_errors, 0)
+        self.assertFalse(tracker.is_exhausted)
+        self.assertEqual(tracker.get_sleep_interval(), 2.0)
+
+    def test_network_retry_tracker_downtime_bound(self):
+        """Vérifie que le temps de panne max déclenche l'épuisement même avec peu de retries."""
+        tracker = NetworkRetryTracker(max_retries=100, max_downtime_seconds=900.0)
+        tracker.record_error(Exception("err"), "status", "http://node:5000")
+        self.assertFalse(tracker.is_exhausted)
+
+        # Simuler un saut temporel > 900s
+        tracker.first_error_time -= 950.0
+        self.assertTrue(tracker.is_exhausted)
+        is_exhausted, msg = tracker.record_error(Exception("err"), "status", "http://node:5000", job_id="job-abc")
+        self.assertTrue(is_exhausted)
+        self.assertIn("Exceeded maximum network retries", msg)
+        self.assertIn("cluster-run attach job-abc", msg)
 
 
 if __name__ == "__main__":
