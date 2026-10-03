@@ -379,3 +379,48 @@ class TestWorkerCapacities(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data, payload)
 
+    def test_cpu_affinity_failure_logs_and_returns_null_when_no_fallback(self):
+        """Verify error in sched_getaffinity is logged and returns None (null) if no CPU source succeeds."""
+        with patch.dict(os.environ, {}, clear=True):
+            # Simulate platform having sched_getaffinity (e.g. Linux) but raising an error
+            with patch.object(os, "sched_getaffinity", create=True, side_effect=OSError("Operation not permitted")):
+                with patch("os.cpu_count", return_value=None):
+                    with patch("os.path.exists", return_value=False):
+                        with self.assertLogs("src.scheduler.worker_agent", level="WARNING") as log_ctx:
+                            res = get_cpu_info()
+                            self.assertIsNone(res)
+                            self.assertTrue(any("Error reading CPU affinity" in m for m in log_ctx.output))
+
+    def test_storage_info_failure_returns_null_and_logs(self):
+        """Verify failure in get_storage_info logs error and sets storage fields to None (null)."""
+        with patch("shutil.disk_usage", side_effect=OSError("Disk failure / I/O error")):
+            with self.assertLogs("src.scheduler.worker_agent", level="ERROR") as log_ctx:
+                total, avail = get_storage_info()
+                self.assertIsNone(total)
+                self.assertIsNone(avail)
+                self.assertTrue(any("Error getting storage info" in m for m in log_ctx.output))
+
+            caps = get_worker_capabilities()
+            self.assertIsNone(caps["total_storage_gb"])
+            self.assertIsNone(caps["available_storage_gb"])
+            self.assertIsNone(caps["disk_free_gb"])
+
+            payload = build_registration_payload()
+            self.assertIsNone(payload["total_storage_gb"])
+            self.assertIsNone(payload["available_storage_gb"])
+            self.assertIsNone(payload["disk_free_gb"])
+
+    def test_discrete_gpu_vram_parse_failure_returns_null_and_logs(self):
+        """Verify discrete GPU VRAM parsing failure sets tot_gb and free_gb to None (null) and logs warning."""
+        raw_output = "0, NVIDIA GeForce RTX 3090, invalid_tot_mb, 500, invalid_free_mb"
+        with self.assertLogs("src.scheduler.worker_agent", level="WARNING") as log_ctx:
+            data = parse_nvidia_smi_output(raw_output)
+            self.assertIsNone(data["total_vram_gb"])
+            self.assertIsNone(data["available_vram_gb"])
+            self.assertEqual(data["vram_per_gpu"], [None])
+            self.assertIsNone(data["gpu_details"][0]["total_vram_gb"])
+            self.assertIsNone(data["gpu_details"][0]["free_vram_gb"])
+            self.assertTrue(any("Failed to parse discrete GPU total VRAM" in m for m in log_ctx.output))
+            self.assertTrue(any("Failed to parse discrete GPU free VRAM" in m for m in log_ctx.output))
+
+

@@ -285,16 +285,15 @@ def get_ram_info():
     return total_gb, available_gb
 
 def get_storage_info():
+    target_path = REPOS_DIR if os.path.exists(REPOS_DIR) else BASE_DIR
     try:
-        # Use the repositories directory if it exists, otherwise the root of the project
-        target_path = REPOS_DIR if os.path.exists(REPOS_DIR) else BASE_DIR
         usage = shutil.disk_usage(target_path)
         total_gb = usage.total / (1024**3)
         available_gb = usage.free / (1024**3)
         return total_gb, available_gb
     except Exception as e:
-        logger.error(f"Error getting storage info: {e}")
-        return 0.0, 0.0
+        logger.error(f"Error getting storage info for '{target_path}': {e}")
+        return None, None
 
 def get_cpu_info():
     """Detects CPU count generic for any Linux or host environment,
@@ -344,18 +343,25 @@ def get_cpu_info():
     if hasattr(os, "sched_getaffinity"):
         try:
             affinity_cpus = len(os.sched_getaffinity(0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error reading CPU affinity mask via sched_getaffinity: {e}")
+            affinity_cpus = None
 
     # 5. Fallback os.cpu_count()
-    sys_cpus = os.cpu_count() or 1
+    sys_cpus = os.cpu_count()
 
-    candidates = [sys_cpus]
+    candidates = []
+    if sys_cpus is not None and sys_cpus > 0:
+        candidates.append(sys_cpus)
     if affinity_cpus is not None and affinity_cpus > 0:
         candidates.append(affinity_cpus)
     if cgroup_cpus is not None and cgroup_cpus > 0:
         import math
         candidates.append(max(1, int(math.ceil(cgroup_cpus))))
+
+    if not candidates:
+        logger.error("Unable to determine CPU count from environment, cgroups, affinity, or system.")
+        return None
 
     return max(1, min(candidates))
 
@@ -518,20 +524,25 @@ def parse_nvidia_smi_output(stdout_text, total_ram_gb=None, available_ram_gb=Non
         try:
             tot_mb = float(g["tot_str"])
             tot_gb = round(tot_mb / 1024.0, 2)
-        except (ValueError, TypeError):
-            tot_gb = 0.0
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse discrete GPU total VRAM '{g.get('tot_str')}' for GPU {g.get('index')}: {e}")
+            tot_gb = None
 
         try:
             free_mb = float(g["free_str"])
             free_gb = round(free_mb / 1024.0, 2)
-        except (ValueError, TypeError):
-            free_gb = 0.0
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse discrete GPU free VRAM '{g.get('free_str')}' for GPU {g.get('index')}: {e}")
+            free_gb = None
 
         try:
             used_mb = float(g["used_str"])
             used_gb = round(used_mb / 1024.0, 2)
         except (ValueError, TypeError):
-            used_gb = round(max(0.0, tot_gb - free_gb), 2)
+            if tot_gb is not None and free_gb is not None:
+                used_gb = round(max(0.0, tot_gb - free_gb), 2)
+            else:
+                used_gb = None
 
         vram_per_gpu.append(tot_gb)
         free_values.append(free_gb)
@@ -544,8 +555,10 @@ def parse_nvidia_smi_output(stdout_text, total_ram_gb=None, available_ram_gb=Non
             "unified_memory": 0
         })
 
-    total_vram_gb = max(vram_per_gpu) if vram_per_gpu else 0.0
-    available_vram_gb = min(free_values) if free_values else 0.0
+    valid_tot = [v for v in vram_per_gpu if v is not None]
+    total_vram_gb = max(valid_tot) if valid_tot else None
+    valid_free = [f for f in free_values if f is not None]
+    available_vram_gb = min(valid_free) if valid_free else None
 
     return {
         "gpu_name": display_name,
@@ -604,12 +617,12 @@ def get_worker_capabilities():
 
     return {
         "cpus": cpus,
-        "ram_gb": round(total_ram_gb, 2),
-        "total_ram_gb": round(total_ram_gb, 2),
-        "available_ram_gb": round(available_ram_gb, 2),
-        "total_storage_gb": round(total_storage_gb, 2),
-        "available_storage_gb": round(available_storage_gb, 2),
-        "disk_free_gb": round(available_storage_gb, 2),
+        "ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
+        "total_ram_gb": round(total_ram_gb, 2) if total_ram_gb is not None else None,
+        "available_ram_gb": round(available_ram_gb, 2) if available_ram_gb is not None else None,
+        "total_storage_gb": round(total_storage_gb, 2) if total_storage_gb is not None else None,
+        "available_storage_gb": round(available_storage_gb, 2) if available_storage_gb is not None else None,
+        "disk_free_gb": round(available_storage_gb, 2) if available_storage_gb is not None else None,
         "gpu_name": gpu_name,
         "gpu_count": gpu_count,
         "total_vram_gb": total_vram_gb,
