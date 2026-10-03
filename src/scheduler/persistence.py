@@ -246,7 +246,9 @@ def init_db():
         'unified_memory INTEGER DEFAULT 0',
         'arch TEXT DEFAULT "x86_64"',
         'disk_free_gb REAL DEFAULT 0',
-        'assigned_job_id TEXT DEFAULT NULL'
+        'assigned_job_id TEXT DEFAULT NULL',
+        'role TEXT DEFAULT "worker"',
+        'placement_priority INTEGER DEFAULT 0'
     ]:
         col_name = col_def.split()[0]
         try:

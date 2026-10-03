@@ -678,3 +678,139 @@ def test_job_status_node_summary_and_classic_job_unchanged(isolated_db, client, 
     assert res_logs["logs"] == "Classic worker logs line 1\n"
     assert res_logs["offset"] == 30
 
+def test_headnode_last_resort_and_reserve(isolated_db, client):
+    """
+    Exigence Henri (Périmètre W3 Headnode de Dernier Recours) :
+    1. Réserves appliquées au headnode (16 Go RAM, 2 CPUs)
+    2. Headnode jamais choisi tant qu'un GB10 peut admettre (même si affinité)
+    3. Headnode choisi quand les deux GB10 sont occupés
+    """
+    from scheduler_loop import is_worker_admissible_for_node, schedule_iteration, get_worker_placement_priority
+    from src.runner.host_guard import get_headnode_safe_capacities
+
+    gb10_a = {
+        "worker_id": "gb10-worker-1",
+        "hostname": "gb10-a",
+        "service_url": "http://gb10-a:6000",
+        "total_ram_gb": 128.0,
+        "unified_memory": 1,
+        "cpus": 16,
+        "gpu_count": 1,
+        "status": "online"
+    }
+    gb10_b = {
+        "worker_id": "gb10-worker-2",
+        "hostname": "gb10-b",
+        "service_url": "http://gb10-b:6000",
+        "total_ram_gb": 128.0,
+        "unified_memory": 1,
+        "cpus": 16,
+        "gpu_count": 1,
+        "status": "online"
+    }
+    headnode_raw = {
+        "worker_id": "isipol09-headnode",
+        "hostname": "isipol09",
+        "service_url": "http://130.223.73.209:6000",
+        "role": "headnode",
+        "total_ram_gb": 32.0,
+        "unified_memory": 0,
+        "cpus": 4,
+        "total_vram_gb": 8.0,
+        "vram_per_gpu": json.dumps([8.0]),
+        "gpu_count": 1,
+        "status": "online"
+    }
+    headnode = get_headnode_safe_capacities(headnode_raw)
+
+    # 1. Test des capacités nettes de réserve Headnode (16 Go RAM nettes, 2 CPU nets via get_headnode_safe_capacities)
+    # Nœud demandant 3 CPU : le headnode a 2 CPU nets disponibles -> rejeté
+    assert is_worker_admissible_for_node(headnode, {"cpus": 3}) is False
+    assert is_worker_admissible_for_node(gb10_a, {"cpus": 3}) is True
+
+    # Nœud demandant 18 Go RAM : headnode a 16 Go nettes (- 2 Go marge) = 14 Go max -> rejeté
+    assert is_worker_admissible_for_node(headnode, {"ram_gb": 18.0}) is False
+    assert is_worker_admissible_for_node(gb10_a, {"ram_gb": 18.0}) is True
+
+    # Nœud léger (1 CPU, 8 Go RAM, 0 VRAM) : headnode admissible
+    light_res = {"cpus": 1, "ram_gb": 8.0, "vram_gb": 0.0}
+    assert is_worker_admissible_for_node(headnode, light_res) is True
+
+    # 2. Rang placement_priority W11 : plus grand = préféré, headnode le plus bas (0)
+    assert get_worker_placement_priority(gb10_a) == 100
+    assert get_worker_placement_priority(headnode) == 0
+
+    # 3. Test d'ordonnancement : 2 GB10 et 1 Headnode enregistrés en DB
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        for w in [gb10_a, gb10_b, headnode]:
+            cursor.execute('''
+                INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb,
+                                     unified_memory, cpus, gpu_count, status, role, placement_priority, last_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'online', ?, ?, CURRENT_TIMESTAMP)
+            ''', (w["worker_id"], w["hostname"], w["service_url"], w["total_ram_gb"],
+                  w.get("unified_memory", 0), w["cpus"], w.get("gpu_count", 0), w.get("role", "worker"),
+                  w.get("placement_priority", 0)))
+        conn.commit()
+
+    # Soumission Job 1 (parallèle avec "version": "3.0")
+    plan = {
+        "version": "3.0",
+        "nodes": [
+            {"name": "task1", "deps": [], "resources": light_res}
+        ]
+    }
+    resp1 = client.post("/submit_job", json={"repo": "owner/p1", "branch": "main", "plan": plan})
+    assert resp1.status_code == 200
+    job1_id = resp1.get_json()["job_id"]
+
+    # Simuler une affinité artificielle sur le headnode pour tester que le rang placement_priority prime
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO job_nodes (job_id, node_name, status, worker_id, out_paths)
+            VALUES (?, 'dummy_old', 'done', 'isipol09-headnode', '["affinity_hit"]')
+        ''', (job1_id,))
+        cursor.execute('''
+            UPDATE job_nodes SET dep_paths = '["affinity_hit"]' WHERE job_id = ? AND node_name = 'task1'
+        ''', (job1_id,))
+        conn.commit()
+
+    # Exécuter schedule_iteration : GB10 doit être choisi, JAMAIS le headnode
+    schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (job1_id,))
+        home_1 = cursor.fetchone()[0]
+    assert home_1 in ("gb10-worker-1", "gb10-worker-2")
+    assert home_1 != "isipol09-headnode"
+
+    # Soumission Job 2 : le deuxième GB10 doit être choisi
+    plan2 = {"version": "3.0", "nodes": [{"name": "task2", "deps": [], "resources": light_res}]}
+    resp2 = client.post("/submit_job", json={"repo": "owner/p2", "branch": "main", "plan": plan2})
+    job2_id = resp2.get_json()["job_id"]
+
+    schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (job2_id,))
+        home_2 = cursor.fetchone()[0]
+    assert home_2 in ("gb10-worker-1", "gb10-worker-2")
+    assert home_2 != home_1
+    assert home_2 != "isipol09-headnode"
+
+    # Soumission Job 3 : maintenant que les DEUX GB10 sont occupés, le headnode doit être choisi en DERNIER RECOURS !
+    plan3 = {"version": "3.0", "nodes": [{"name": "task3", "deps": [], "resources": light_res}]}
+    resp3 = client.post("/submit_job", json={"repo": "owner/p3", "branch": "main", "plan": plan3})
+    job3_id = resp3.get_json()["job_id"]
+
+    schedule_iteration()
+
+    with persistence.get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT home_worker FROM jobs WHERE job_id = ?", (job3_id,))
+        home_3 = cursor.fetchone()[0]
+    assert home_3 == "isipol09-headnode"
+

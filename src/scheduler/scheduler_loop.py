@@ -17,7 +17,8 @@ try:
     from defaults import (
         DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
         DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
-        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS,
+        HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
     )
     from artifact_registry import affinity_bytes, sources_for, record_node_outputs
 except ImportError:
@@ -29,7 +30,8 @@ except ImportError:
     from src.scheduler.defaults import (
         DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
         DEFAULT_STORAGE_GB, ALLOW_PACKING, OS_HEADROOM_GB,
-        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS
+        RUNNER_HEARTBEAT_TIMEOUT_S, MAX_WORKERS_PER_JOB, ALLOWED_RESOURCE_KEYS,
+        HEADNODE_RAM_RESERVE_GB, HEADNODE_CPU_RESERVE
     )
     from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
 import logging
@@ -212,6 +214,56 @@ def parse_vram_per_gpu(worker):
         return [float(total_vram)] * gpu_count
     return []
 
+def is_headnode_worker(worker):
+    """
+    Détecte si un worker représente la machine Headnode (isipol09 / 130.223.73.209)
+    hébergeant des services critiques.
+    """
+    if not worker or not isinstance(worker, dict):
+        return False
+    try:
+        from src.runner.host_guard import is_headnode_host
+        if is_headnode_host(worker):
+            return True
+    except (ImportError, AttributeError, Exception):
+        pass
+    if worker.get("role") == "headnode" or worker.get("is_headnode"):
+        return True
+    hostname = (worker.get("hostname") or "").lower()
+    service_url = (worker.get("service_url") or "").lower()
+    worker_id = (worker.get("worker_id") or "").lower()
+    if "isipol09" in hostname or "130.223.73.209" in service_url or "headnode" in worker_id or "isipol09" in worker_id:
+        return True
+    headnode_ip = os.environ.get("HEADNODE_IP", "130.223.73.209")
+    if headnode_ip and (headnode_ip in service_url or headnode_ip in hostname or headnode_ip in worker_id):
+        return True
+    return False
+
+def get_worker_placement_priority(worker):
+    """
+    Détermine le rang de priorité de placement d'un worker :
+    - Convention W11 / Cluster-CI v3 : plus grand = préféré.
+    - Fournie par src.runner.host_guard.placement_priority(worker) :
+      * GB10 / mémoire unifiée : 100
+      * Worker dédié discret : 50
+      * Headnode (dernier recours) : 0
+    - Fallback si non disponible : 0 pour headnode, 100 pour GB10, 50 par défaut.
+    """
+    if not worker or not isinstance(worker, dict):
+        return 0
+
+    try:
+        from src.runner.host_guard import placement_priority
+        return int(placement_priority(worker))
+    except (ImportError, AttributeError, Exception):
+        pass
+
+    if is_headnode_worker(worker):
+        return 0
+    if is_unified_memory(worker):
+        return 100
+    return 50
+
 def is_worker_admissible_for_node(worker, node_resources):
     """
     Règle d'admission universelle :
@@ -221,6 +273,7 @@ def is_worker_admissible_for_node(worker, node_resources):
     - Stockage : storage_gb <= worker.storage
     - Architecture : arm64 vs x86_64
     - Workers autorisés : whitelist
+    Note: Les capacités du headnode arrivent DÉJÀ nettes de réserve (via get_headnode_safe_capacities W11).
     """
     if not isinstance(node_resources, dict):
         node_resources = {}
@@ -389,6 +442,12 @@ def validate_plan(plan_data):
     """
     if not isinstance(plan_data, dict):
         raise ValueError("Le plan doit être un objet JSON")
+
+    # Version v3 acceptée sous forme de chaîne ("3.0") ou nombre
+    if "version" in plan_data:
+        ver = str(plan_data["version"]).strip()
+        if not ver.startswith("3"):
+            raise ValueError(f"Version de plan non supportée: {plan_data['version']}")
 
     nodes = plan_data.get("nodes")
     if not isinstance(nodes, list) or len(nodes) == 0:
@@ -850,25 +909,38 @@ def schedule_iteration():
                 cursor.execute('SELECT resources FROM job_nodes WHERE job_id = ? AND status = "ready"', (jid,))
                 ready_rows = cursor.fetchall()
 
+            admissible_candidates = []
             for w in list(workers):
                 can_run = any(is_worker_admissible_for_node(w, json.loads(rr["resources"]) if rr["resources"] else {}) for rr in ready_rows)
                 if can_run:
-                    hw = w["worker_id"]
-                    if hw not in job_active_map[jid]:
-                        job_active_map[jid].append(hw)
-                    with get_db_conn() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute('''
-                            UPDATE jobs
-                            SET home_worker = ?, active_workers = ?, worker_id = COALESCE(worker_id, ?),
-                                status = CASE WHEN status = 'pending' THEN 'assigned' ELSE status END
-                            WHERE job_id = ?
-                        ''', (hw, json.dumps(job_active_map[jid]), hw, jid))
-                        cursor.execute('UPDATE workers SET assigned_job_id = ? WHERE worker_id = ?', (jid, hw))
-                        conn.commit()
-                    workers = [rem for rem in workers if rem["worker_id"] != hw]
-                    p_job["home_worker"] = hw
-                    break
+                    admissible_candidates.append(w)
+
+            if admissible_candidates:
+                # Exigence (2) : Machine prioritaire d'un job choisie d'abord parmi les rangs les plus élevés.
+                # Le headnode n'est attribué que si aucune autre machine en ligne ne peut admettre le nœud.
+                # Le rang prime sur l'affinité en octets sauf si l'autre machine ne peut pas admettre.
+                best_w = max(
+                    admissible_candidates,
+                    key=lambda w: (
+                        get_worker_placement_priority(w),
+                        get_data_affinity_score(p_job, w)
+                    )
+                )
+                hw = best_w["worker_id"]
+                if hw not in job_active_map[jid]:
+                    job_active_map[jid].append(hw)
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE jobs
+                        SET home_worker = ?, active_workers = ?, worker_id = COALESCE(worker_id, ?),
+                            status = CASE WHEN status = 'pending' THEN 'assigned' ELSE status END
+                        WHERE job_id = ?
+                    ''', (hw, json.dumps(job_active_map[jid]), hw, jid))
+                    cursor.execute('UPDATE workers SET assigned_job_id = ? WHERE worker_id = ?', (jid, hw))
+                    conn.commit()
+                workers = [rem for rem in workers if rem["worker_id"] != hw]
+                p_job["home_worker"] = hw
 
     # 3.2 Garantie 1ère machine pour les jobs classiques en attente (Amendement A2)
     # Un job classique en attente détient 0 machine : il reçoit sa machine AVANT
@@ -946,7 +1018,13 @@ def schedule_iteration():
                 score -= 1
             worker_scores.append((worker, score))
 
-        worker_scores.sort(key=lambda x: x[1], reverse=True)
+        worker_scores.sort(
+            key=lambda x: (
+                get_worker_placement_priority(x[0]),
+                x[1]
+            ),
+            reverse=True
+        )
         assigned_worker, winner_score = worker_scores[0]
 
         p2p_url = None
@@ -968,7 +1046,12 @@ def schedule_iteration():
                 classic_pending.remove(c_job)
 
     # 3.3 Répartition équitable des machines supplémentaires aux jobs parallèles
-    for w in list(workers):
+    # Exigence (2) : Le headnode n'est attribué comme machine supplémentaire
+    # que si aucune autre machine en ligne ne peut admettre le nœud.
+    sorted_workers = sorted(list(workers), key=lambda w: get_worker_placement_priority(w), reverse=True)
+    for w in sorted_workers:
+        if w not in workers:
+            continue
         eligible_jobs = []
         for p_job in parallel_jobs:
             jid = p_job["job_id"]
@@ -978,6 +1061,11 @@ def schedule_iteration():
 
             with get_db_conn() as conn:
                 cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ? AND status IN ("ready", "running")', (jid,))
+                parallelizable_count = cursor.fetchone()[0]
+                if len(current_active) >= parallelizable_count:
+                    continue
+
                 cursor.execute('SELECT resources FROM job_nodes WHERE job_id = ? AND status = "ready"', (jid,))
                 ready_rows = cursor.fetchall()
 
