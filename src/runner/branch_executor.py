@@ -354,6 +354,7 @@ class BranchExecutor:
         self.current_image: Optional[str] = current_image
         self.current_resource_args: Optional[List[str]] = None
         self.current_node: Optional[str] = None
+        self.current_pythonpath: str = ""
         self.is_running = False
         self.total_containers_started = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
@@ -741,6 +742,7 @@ class BranchExecutor:
 
         env = {
             "HOME": "/home/user",
+            "PYTHONUSERBASE": "/home/user/.local",
             "UV_CACHE_DIR": "/home/user/.cache/uv",
             "HEADNODE_URL": self.headnode_url,
             "JOB_ID": self.job_id,
@@ -773,10 +775,14 @@ class BranchExecutor:
         init_cmd = (
             f"chown -R {self.user_id}:{self.group_id} /home/user && "
             f"chown -R {self.user_id}:{self.group_id} /workspace && "
-            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && '
-            '[ -n "$SITE" ] && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null | sort -u > "$SITE/cluster-ci-prefix.pth" && chmod 644 "$SITE/cluster-ci-prefix.pth" || true'
+            "if [ -d /opt/Automodel ]; then chmod -R a+rX /opt/Automodel; fi && "
+            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '
+            'if [ -d /home/user/.local ]; then find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u > "$SITE/cluster-ci-prefix.pth"; else touch "$SITE/cluster-ci-prefix.pth"; fi && '
+            'chmod 644 "$SITE/cluster-ci-prefix.pth"'
         )
-        self.docker.exec_in_container(self.current_container, init_cmd, user="root")
+        init_code, init_out = self.docker.exec_in_container(self.current_container, init_cmd, user="root")
+        if init_code != 0:
+            raise RuntimeError(f"Root initialization failed for {container_name} (code {init_code}):\n{init_out}")
 
         # 2. Outils de base (uv, dvc via uv tool, dvc-viewer) avec set -euo pipefail
         bootstrap_cmd = (
@@ -798,37 +804,63 @@ class BranchExecutor:
         # 3. smart_install avec clé de cache par image (dans son volume dédié)
         if os.path.exists(os.path.join(self.repo_dir, "pyproject.toml")):
             smart_cmd = "export PATH=$PATH:/home/user/.local/bin && bash /cluster-ci/src/runner/smart_install.sh"
-            self.docker.exec_in_container(
+            smart_code, smart_out = self.docker.exec_in_container(
                 self.current_container,
                 smart_cmd,
                 stream_prefix=f"[{image_slug}@{self.worker_id}]",
             )
+            if smart_code != 0:
+                raise RuntimeError(
+                    f"smart_install.sh failed in container {self.current_container} (code {smart_code}):\n{smart_out}"
+                )
 
-        # 4. Régénération idempotente du .pth post-installation et vérification fail-fast
+        # 4. Régénération idempotente du .pth post-installation et découverte de PYTHONPATH
         sync_pth_cmd = (
-            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && '
-            '[ -n "$SITE" ] && find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null | sort -u > "$SITE/cluster-ci-prefix.pth" && chmod 644 "$SITE/cluster-ci-prefix.pth" || true'
+            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '
+            'if [ -d /home/user/.local ]; then find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u > "$SITE/cluster-ci-prefix.pth"; else touch "$SITE/cluster-ci-prefix.pth"; fi && '
+            'chmod 644 "$SITE/cluster-ci-prefix.pth"'
         )
-        self.docker.exec_in_container(self.current_container, sync_pth_cmd, user="root")
+        sync_code, sync_out = self.docker.exec_in_container(self.current_container, sync_pth_cmd, user="root")
+        if sync_code != 0:
+            raise RuntimeError(
+                f"Failed to synchronize cluster-ci-prefix.pth in container {self.current_container} (code {sync_code}):\n{sync_out}"
+            )
 
-        verify_pth_cmd = (
-            'python3 -c "'
-            'import site, sys, os; '
-            'print(\'[Cluster-CI] sys.path:\', sys.path); '
-            'cands = [os.path.join(r, d) for r, ds, _ in os.walk(\'/home/user\') for d in ds if d in (\'site-packages\', \'dist-packages\')]; '
-            'missing = [p for p in cands if p not in sys.path]; '
-            '(sys.stderr.write(f\'❌ [Cluster-CI] FAIL-FAST: Installation path exists but is not in sys.path: {missing}\\n\'), sys.exit(1)) if missing else print(f\'✅ [Cluster-CI] All {len(cands)} installation paths verified in sys.path\')'
-            '"'
+        self.current_pythonpath = self.discover_project_pythonpath()
+
+        # 5. Vérification fail-fast des paquets installés par le projet
+        verify_cmd = (
+            f"export PYTHONPATH=\"{self.current_pythonpath}\" && "
+            f"python3 /cluster-ci/src/runner/verify_packages.py \"{self.current_pythonpath}\""
         )
         vcode, vout = self.docker.exec_in_container(
             self.current_container,
-            verify_pth_cmd,
+            verify_cmd,
             stream_prefix=f"[{image_slug}@{self.worker_id}]",
         )
         if vcode != 0:
             raise RuntimeError(
-                f"Fail-fast verification failed for container {self.current_container} (code {vcode}):\n{vout}"
+                f"Fail-fast package verification failed for container {self.current_container} (code {vcode}):\n{vout}"
             )
+
+    def discover_project_pythonpath(self) -> str:
+        """
+        Découvre les dossiers site-packages et dist-packages installés sous
+        /home/user/.local (en excluant les outils uv isolés) et les retourne
+        sous forme de chaîne PYTHONPATH.
+        """
+        if not self.current_container:
+            return ""
+        find_cmd = (
+            'if [ -d /home/user/.local ]; then '
+            'find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u; '
+            'fi'
+        )
+        code, out = self.docker.exec_in_container(self.current_container, find_cmd)
+        if code != 0 or not out.strip():
+            return ""
+        paths = [p.strip() for p in out.strip().splitlines() if p.strip()]
+        return ":".join(paths)
 
     def stop_current_container(self) -> None:
         """Arrêt et suppression propre du conteneur en cours."""
@@ -839,6 +871,7 @@ class BranchExecutor:
             self.current_container = None
             self.current_image = None
             self.current_resource_args = None
+            self.current_pythonpath = ""
 
     def execute_node_in_container(
         self,
@@ -849,9 +882,17 @@ class BranchExecutor:
         if not self.current_container:
             raise RuntimeError("No active container to execute node.")
 
+        if not self.current_pythonpath:
+            self.current_pythonpath = self.discover_project_pythonpath()
+
         stream_prefix = f"[{node}@{self.worker_id}]"
-        cmd = f"export PATH=/home/user/shims:$PATH:/home/user/.local/bin && dvc repro -s {node}"
+        cmd = "export PATH=/home/user/shims:$PATH:/home/user/.local/bin"
+        if self.current_pythonpath:
+            cmd += f" && export PYTHONPATH=\"{self.current_pythonpath}:$PYTHONPATH\""
+        cmd += f" && dvc repro -s {node}"
         env = {}
+        if self.current_pythonpath:
+            env["PYTHONPATH"] = self.current_pythonpath
         if gpu_ids_str != "":
             env["CUDA_VISIBLE_DEVICES"] = gpu_ids_str
         elif gpu_ids_str == "":
