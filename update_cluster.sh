@@ -80,6 +80,15 @@ if [ -z "$WORKER_COUNT" ]; then
     WORKER_COUNT=0
 fi
 
+# Auto-detect WORKER_1..N from environment variables (WORKER_<N>_IP)
+for var in $(compgen -v 2>/dev/null | grep '^WORKER_[0-9]\+_IP$' || true); do
+    num="${var#WORKER_}"
+    num="${num%_IP}"
+    if [ "$num" -gt "$WORKER_COUNT" ] 2>/dev/null; then
+        WORKER_COUNT=$num
+    fi
+done
+
 # Only enter worker addition flow if --add-worker flag is passed
 if [ "$ADD_WORKER" = true ]; then
     echo "--- Workers Configuration (--add-worker mode) ---"
