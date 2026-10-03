@@ -963,6 +963,7 @@ def submit_job():
     })
 
 @app.route('/workers', methods=['GET'])
+@app.route('/list_workers', methods=['GET'])
 def list_workers():
     with get_db_conn() as conn:
         cursor = conn.cursor()

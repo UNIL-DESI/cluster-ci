@@ -83,7 +83,7 @@ except ImportError:
             )
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
-                print(f"❌ Error: Échec du planificateur ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
+                print(f"❌ Error: Planner failed ({proc.returncode}): {proc.stderr or proc.stdout}", file=sys.stderr)
                 sys.exit(proc.returncode or 1)
             return json.loads(proc.stdout)
 
@@ -303,7 +303,7 @@ def print_line(line, force=False):
             _LAST_WAS_TQDM = False
 
     # Always write to log file if redirection is active
-    if _LOG_TEMP_FILE and "[Réseau]" not in line:
+    if _LOG_TEMP_FILE and "[Network]" not in line and ("[R" + chr(0xe9) + "seau]") not in line:
         try:
             _LOG_TEMP_FILE.write(line + "\n")
             _LOG_TEMP_FILE.flush()
@@ -895,36 +895,36 @@ def stream_logs(run_id, commit_sha, branch=None):
                                             if failed_nodes:
                                                 has_node_failure = True
                                                 for nd in failed_nodes:
-                                                    node_err = nd.get("error_message") or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
-                                                    print(f"❌ Nœud en échec : '{nd.get('name', 'unknown')}' -> {node_err}")
+                                                    node_err = nd.get("error_message") or f"non-zero exit code ({nd.get('exit_code', 'unknown')})"
+                                                    print(f"❌ Failed node: '{nd.get('name', 'unknown')}' -> {node_err}")
                                             elif not done_nodes and not running_nodes and (blocked_nodes or pending_nodes):
                                                 has_node_failure = True
                                                 cause_desc = job_error or (
-                                                    f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
-                                                    f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                                                    f"DAG plan interrupted before start ({len(blocked_nodes)} blocked, {len(pending_nodes)} pending out of {len(nodes_data)} node(s)); "
+                                                    f"verify that submitted dvc.yaml corresponds to stages in target repo"
                                                 )
-                                                print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}")
+                                                print(f"\n❌ v3 job failed: no node started: {cause_desc}")
 
                                         if job_error and not has_node_failure:
                                             print(f"\n❌ Error message: {job_error}")
 
                                         if isinstance(ret_code, int) and ret_code < 0:
                                             sig = -ret_code
-                                            sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                                            sig_desc = "SIGKILL (forcefully killed / external stop)" if sig == 9 else ("SIGTERM (interrupted / cancellation requested)" if sig == 15 else f"signal {sig}")
                                             if not has_node_failure and not job_error:
-                                                print(f"\n❌ [ERREUR] L'exécution a été arrêtée par {sig_desc} (Exit code: {ret_code})")
+                                                print(f"\n❌ [ERROR] Execution was stopped by {sig_desc} (Exit code: {ret_code})")
                                             else:
-                                                print(f"ℹ️  Processus exécutant arrêté par {sig_desc} (Exit code: {ret_code})")
+                                                print(f"ℹ️  Executing process stopped by {sig_desc} (Exit code: {ret_code})")
                                         else:
                                             if not has_node_failure and not job_error:
-                                                print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : failed (Exit code: {ret_code})")
+                                                print(f"\n❌ [ERROR] Execution completed with status: failed (Exit code: {ret_code})")
                                         close_log_redirection()
                                         print_log_summary()
                                         return int(ret_code)
 
                                 if not job_active and not job_finished_normally:
-                                    print("\n❌ [ERREUR INFRASTRUCTURE] Le job s'est arrêté brusquement sur le scheduler du headnode (OOM-killer ou SIGKILL).")
-                                    print("🔌 Clôture de la commande locale cluster-run et libération du terminal.")
+                                    print("\n❌ [INFRASTRUCTURE ERROR] Job stopped abruptly on headnode scheduler (OOM-killer or SIGKILL).")
+                                    print("🔌 Closing local cluster-run command and releasing terminal.")
                                     if proc:
                                         try: proc.terminate()
                                         except: pass
@@ -963,16 +963,16 @@ def stream_logs(run_id, commit_sha, branch=None):
                                     print_log_summary()
                                     return 0
                                 elif conclusion == "cancelled":
-                                    print("\n⚠️ [ERREUR] L'exécution a été annulée.")
-                                    print("❓ POURQUOI : Raisons fréquentes (nouvelle commande lancée annulant l'ancienne, timeout, ou annulation manuelle).")
-                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants : {url}")
+                                    print("\n⚠️ [ERROR] Execution was cancelled.")
+                                    print("❓ WHY: Common reasons (new command launched cancelling the previous one, timeout, or manual cancellation).")
+                                    print(f"🔧 HOW TO RESOLVE: Check remote logs: {url}")
                                     close_log_redirection()
                                     print_log_summary()
                                     return 1
                                 else:
-                                    print(f"\n❌ [ERREUR] L'exécution s'est terminée avec le statut : {conclusion or 'failed'}")
-                                    print("❓ POURQUOI : Une erreur est survenue pendant l'exécution (problème de dépendance, erreur dans le code, ou défaillance de l'infrastructure).")
-                                    print(f"🔧 COMMENT RÉSOUDRE : Consultez les logs distants pour voir la trace d'erreur complète : {url}")
+                                    print(f"\n❌ [ERROR] Execution completed with status: {conclusion or 'failed'}")
+                                    print("❓ WHY: An error occurred during execution (dependency issue, error in code, or infrastructure failure).")
+                                    print(f"🔧 HOW TO RESOLVE: Check remote logs to see the full error trace: {url}")
                                     close_log_redirection()
                                     print_log_summary()
                                     return 1
@@ -981,7 +981,7 @@ def stream_logs(run_id, commit_sha, branch=None):
 
                     if not received_data:
                         if not display_clean_queue_status(run_id):
-                            print("\n⏳ En attente de l'allocation d'un runner GitHub Actions...")
+                            print("\n⏳ Waiting for GitHub Actions runner allocation...")
                     
                     last_gha_poll_time = time.time()
 
@@ -1148,7 +1148,7 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
                 check=True,
             )
             if user_visible_files:
-                print(f"\n✨ [Auto-sync] Rapatriement réussi de {len(user_visible_files)} fichier(s) de métriques/plots :")
+                print(f"\n✨ [Auto-sync] Successfully fetched {len(user_visible_files)} metrics/plots file(s):")
                 for f in user_visible_files:
                     print(f"   🎉 {f}")
                 print()
@@ -1163,7 +1163,7 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
         if current_time - _LAST_SYNC_ERROR_TIME > 60:
             _LAST_SYNC_ERROR_TIME = current_time
             print(f"⚠️  Failed to auto-sync results from cluster: {e}", file=sys.stderr)
-            print("💡 [Info] En cas de défaillance réseau persistante, vous pourrez synchroniser vos résultats manuellement via la commande :", file=sys.stderr)
+            print("💡 [Info] In case of persistent network failure, you can synchronize your results manually using the command:", file=sys.stderr)
             print("   cluster-run sync", file=sys.stderr)
         return False, None
 
@@ -1900,29 +1900,29 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                                 if failed_nodes:
                                     has_node_failure = True
                                     for nd in failed_nodes:
-                                        node_err = nd.get("error_message") or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
-                                        print(f"❌ Nœud en échec : '{nd.get('name', 'unknown')}' -> {node_err}", file=sys.stderr)
+                                        node_err = nd.get("error_message") or f"non-zero exit code ({nd.get('exit_code', 'unknown')})"
+                                        print(f"❌ Failed node: '{nd.get('name', 'unknown')}' -> {node_err}", file=sys.stderr)
                                 elif not done_nodes and not running_nodes and (blocked_nodes or pending_nodes):
                                     has_node_failure = True
                                     cause_desc = job_error or (
-                                        f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
-                                        f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                                        f"DAG plan interrupted before start ({len(blocked_nodes)} blocked, {len(pending_nodes)} pending out of {len(nodes_data)} node(s)); "
+                                        f"verify that submitted dvc.yaml corresponds to stages in target repo"
                                     )
-                                    print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}", file=sys.stderr)
+                                    print(f"\n❌ v3 job failed: no node started: {cause_desc}", file=sys.stderr)
 
                             if job_error and not has_node_failure:
                                 print(f"❌ Error message: {job_error}", file=sys.stderr)
 
                             if isinstance(ret_code, int) and ret_code < 0:
                                 sig = -ret_code
-                                sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                                sig_desc = "SIGKILL (forcefully killed / external stop)" if sig == 9 else ("SIGTERM (interrupted / cancellation requested)" if sig == 15 else f"signal {sig}")
                                 if not has_node_failure and not job_error:
-                                    print(f"\n❌ [ERREUR] Job local interrompu par {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
+                                    print(f"\n❌ [ERROR] Local job interrupted by {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
                                 else:
-                                    print(f"ℹ️  Processus local arrêté par {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
+                                    print(f"ℹ️  Local process stopped by {sig_desc} (Exit code: {ret_code})", file=sys.stderr)
                             else:
                                 if not has_node_failure and not job_error:
-                                    print(f"\n❌ [ERREUR] Job local terminé avec le statut : {status} (Exit code: {ret_code})", file=sys.stderr)
+                                    print(f"\n❌ [ERROR] Local job completed with status: {status} (Exit code: {ret_code})", file=sys.stderr)
                             return int(ret_code)
         except Exception:
             # Status check temporary error
@@ -1986,26 +1986,26 @@ def local_run():
         matches, actual_remote, error_detail = check_repo_remote_matches(".", repo)
         if not matches:
             print(
-                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
-                f"Le répertoire local a pour remote origin '{actual_remote}', "
-                f"ce qui ne correspond pas au dépôt soumis '{repo}'.\n"
-                f"Cause : Incohérence de remote ({error_detail}).\n"
-                f"Remède : Exécuter cluster-run depuis la racine du dépôt cible.",
+                f"❌ [A17] Target repository validation error for v3 planning:\n"
+                f"Local directory has remote origin '{actual_remote}', "
+                f"which does not match submitted repository '{repo}'.\n"
+                f"Cause: Remote mismatch ({error_detail}).\n"
+                f"Remedy: Run cluster-run from the root of target repository.",
                 file=sys.stderr,
             )
             sys.exit(1)
         if not os.path.isfile("dvc.yaml"):
             print(
-                f"❌ [A17] Erreur de validation du pipeline DVC pour la planification v3 :\n"
-                f"Fichier dvc.yaml introuvable dans le répertoire local.\n"
-                f"Cause : PARALLEL_STAGES=true est activé mais le dépôt cible '{repo}' ne contient pas de dvc.yaml.\n"
-                f"Remède : Créer un fichier dvc.yaml définissant les étapes du pipeline ou retirer PARALLEL_STAGES dans .cluster-ci.",
+                f"❌ [A17] DVC pipeline validation error for v3 planning:\n"
+                f"File dvc.yaml not found in local directory.\n"
+                f"Cause: PARALLEL_STAGES=true is enabled but target repository '{repo}' does not contain dvc.yaml.\n"
+                f"Remedy: Create a dvc.yaml file defining pipeline stages or remove PARALLEL_STAGES in .cluster-ci.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        print("🧩 PARALLEL_STAGES activé et dvc.yaml validé : génération du plan via le planificateur W1...")
+        print("🧩 PARALLEL_STAGES enabled and dvc.yaml validated: generating plan via W1 planner...")
         plan = run_planner_for_submission(".")
-        print(f"✅ Plan généré avec succès ({len(plan.get('nodes', []))} nœud(s)).")
+        print(f"✅ Plan generated successfully ({len(plan.get('nodes', []))} node(s)).")
 
     payload = {
         "repo": repo,

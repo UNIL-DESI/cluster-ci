@@ -96,7 +96,7 @@ def commit_and_push_node(
         text=True,
     )
     if not status.stdout.strip():
-        logger.info("Aucun fichier modifié à commiter pour le nœud %s.", node)
+        logger.info("No modified files to commit for node %s.", node)
         return True
 
     subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
@@ -109,10 +109,10 @@ def commit_and_push_node(
         text=True,
     )
     if commit_res.returncode != 0:
-        logger.warning("git commit a échoué: %s", commit_res.stderr)
+        logger.warning("git commit failed: %s", commit_res.stderr)
         return False
 
-    logger.info("Push des modifications pour le nœud %s via W5 push_with_retries...", node)
+    logger.info("Pushing changes for node %s via W5 push_with_retries...", node)
     if dvc_git_helper is not None:
         dvc_git_helper.push_with_retries(current_branch=branch, cwd=repo_dir)
     else:
@@ -376,6 +376,7 @@ class BranchExecutor:
         exit_code: Optional[int] = None,
         error_message: Optional[str] = None,
         missing_deps: Optional[List[str]] = None,
+        outputs: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         url = f"{self.headnode_url}/api/jobs/{self.job_id}/next_node"
         payload = {
@@ -388,6 +389,8 @@ class BranchExecutor:
             "exit_code": exit_code,
             "error_message": error_message,
             "missing_deps": missing_deps,
+            "missing_paths": missing_deps,
+            "outputs": outputs,
             "current_image": self.current_image,
         }
         data = json.dumps(payload).encode("utf-8")
@@ -404,17 +407,21 @@ class BranchExecutor:
     # -----------------------------------------------------------------
 
     def _get_workers_from_headnode(self) -> List[Dict[str, Any]]:
-        try:
-            url = f"{self.headnode_url}/list_workers"
-            headers = {}
-            if self.cluster_token:
-                headers["Authorization"] = f"Bearer {self.cluster_token}"
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception as exc:
-            logger.debug("Erreur list_workers: %s", exc)
+        for endpoint in ("/list_workers", "/workers"):
+            try:
+                url = f"{self.headnode_url}{endpoint}"
+                headers = {}
+                if self.cluster_token:
+                    headers["Authorization"] = f"Bearer {self.cluster_token}"
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        workers = data if isinstance(data, list) else data.get("workers", [])
+                        if workers:
+                            return workers
+            except Exception as exc:
+                logger.debug("Erreur %s: %s", endpoint, exc)
         return []
 
     def fetch_missing_deps(
@@ -438,6 +445,29 @@ class BranchExecutor:
             except Exception as exc:
                 logger.debug("Extraction dvc.lock impossible pour %s: %s", node, exc)
 
+            # If node has not run yet in dvc.lock, resolve dep_paths from upstream outs in dvc.lock!
+            if not deps and dep_paths:
+                try:
+                    import yaml
+                    with open(dvc_lock_path, "r", encoding="utf-8") as f:
+                        lock_data = yaml.safe_load(f) or {}
+                    stages = lock_data.get("stages", {})
+                    out_md5_map = {}
+                    for st_name, st_val in stages.items():
+                        if isinstance(st_val, dict):
+                            for out in st_val.get("outs", []):
+                                if isinstance(out, dict):
+                                    p = out.get("path")
+                                    m = out.get("md5") or out.get("hash")
+                                    if p and m:
+                                        out_md5_map[p.replace("\\", "/")] = m
+                    for p in dep_paths:
+                        norm_p = p.replace("\\", "/")
+                        if norm_p in out_md5_map:
+                            deps.append({"path": p, "md5": out_md5_map[norm_p]})
+                except Exception as exc:
+                    logger.debug("Resolution upstream outs dvc.lock impossible: %s", exc)
+
         cas_deps = [d for d in deps if d.get("md5")]
         if cas_deps:
             # Sources map: {md5: [urls]}
@@ -455,6 +485,10 @@ class BranchExecutor:
                     s_url = w.get("service_url")
                     if s_url and s_url not in all_workers:
                         all_workers.append(s_url)
+                        if "isipol09" in s_url:
+                            alt_url = s_url.replace("isipol09", "130.223.73.209")
+                            if alt_url not in all_workers:
+                                all_workers.append(alt_url)
 
             for d in cas_deps:
                 md5 = d.get("md5", "")
@@ -473,9 +507,9 @@ class BranchExecutor:
 
             if not result.success:
                 missing = result.missing_deps or result.missing_hashes
-                cause = result.error_message or f"statut {result.status}: objets CAS introuvables sur les sources candidates ou intégrité md5 invalide"
+                cause = result.error_message or f"status {result.status}: CAS objects not found on candidate sources or invalid md5 integrity"
                 logger.error(
-                    "❌ Échec récupération des dépendances CAS (W6) pour le nœud %s: %s (cause: %s)",
+                    "❌ Failed to fetch CAS dependencies (W6) for node %s: %s (cause: %s)",
                     node,
                     missing,
                     cause,
@@ -498,11 +532,11 @@ class BranchExecutor:
             if os.path.exists(local_path) and (
                 os.path.isdir(local_path) or os.path.getsize(local_path) > 0
             ):
-                logger.info("Dépendance déjà présente localement : %s", path)
+                logger.info("Dependency already present locally: %s", path)
                 continue
 
             logger.error(
-                "❌ Dépendance %s introuvable localement pour le nœud %s (repli /fetch_artifact interdit sous W6 CAS)",
+                "❌ Dependency %s not found locally for node %s (fallback /fetch_artifact forbidden under W6 CAS)",
                 path,
                 node,
             )
@@ -534,7 +568,7 @@ class BranchExecutor:
         container_name = f"{self.container_prefix}{self.safe_job_id}-{image_slug}"
 
         logger.info(
-            "Démarrage du conteneur %s sur l'image %s (volume: %s)",
+            "Starting container %s on image %s (volume: %s)",
             container_name,
             image,
             home_volume,
@@ -564,7 +598,7 @@ class BranchExecutor:
             resources=resources,
         )
         if ret != 0:
-            raise RuntimeError(f"Échec docker run pour {container_name} (code {ret})")
+            raise RuntimeError(f"docker run failed for {container_name} (code {ret})")
 
         self.current_container = container_name
         self.current_image = image
@@ -593,7 +627,7 @@ class BranchExecutor:
         boot_code, boot_out = self.docker.exec_in_container(self.current_container, bootstrap_cmd)
         if boot_code != 0:
             raise RuntimeError(
-                f"Échec initialisation dvc/uv dans le conteneur {self.current_container} (code {boot_code}):\n{boot_out}"
+                f"Failed to initialize dvc/uv in container {self.current_container} (code {boot_code}):\n{boot_out}"
             )
 
         # 3. smart_install avec clé de cache par image (dans son volume dédié)
@@ -608,7 +642,7 @@ class BranchExecutor:
     def stop_current_container(self) -> None:
         """Arrêt et suppression propre du conteneur en cours."""
         if self.current_container:
-            logger.info("Arrêt et suppression du conteneur %s", self.current_container)
+            logger.info("Stopping and removing container %s", self.current_container)
             self.docker.stop_container(self.current_container)
             self.docker.remove_container(self.current_container)
             self.current_container = None
@@ -621,7 +655,7 @@ class BranchExecutor:
     ) -> Tuple[int, str]:
         """Exécute dvc repro -s <node> dans le conteneur avec logs préfixés."""
         if not self.current_container:
-            raise RuntimeError("Aucun conteneur actif pour exécuter le nœud.")
+            raise RuntimeError("No active container to execute node.")
 
         stream_prefix = f"[{node}@{self.worker_id}]"
         cmd = f"export PATH=/home/user/shims:$PATH:/home/user/.local/bin && dvc repro -s {node}"
@@ -653,6 +687,7 @@ class BranchExecutor:
         exit_code_for_req: Optional[int] = None
         error_message_for_req: Optional[str] = None
         missing_deps_for_req: Optional[List[str]] = None
+        outputs_for_req: Optional[List[Dict[str, Any]]] = None
 
         try:
             while self.is_running:
@@ -663,7 +698,9 @@ class BranchExecutor:
                     exit_code=exit_code_for_req,
                     error_message=error_message_for_req,
                     missing_deps=missing_deps_for_req,
+                    outputs=outputs_for_req,
                 )
+                outputs_for_req = None
 
                 action = resp.get("action")
                 target_node = resp.get("node")
@@ -675,7 +712,7 @@ class BranchExecutor:
                 out_paths = resp.get("out_paths") or resources.get("out_paths") or []
 
                 logger.info(
-                    "Headnode a répondu action='%s' (nœud='%s', image='%s')",
+                    "Headnode returned action='%s' (node='%s', image='%s')",
                     action,
                     target_node,
                     image,
@@ -692,12 +729,12 @@ class BranchExecutor:
                     continue
 
                 elif action == "yield":
-                    logger.info("Machine cédée (yield). Arrêt propre.")
+                    logger.info("Machine yielded (yield). Clean shutdown.")
                     self.stop_current_container()
                     return 0
 
                 elif action == "finish":
-                    logger.info("Job terminé (finish). Arrêt propre.")
+                    logger.info("Job finished (finish). Clean shutdown.")
                     self.stop_current_container()
                     return 0
 
@@ -730,7 +767,7 @@ class BranchExecutor:
                         continue
 
                 else:
-                    logger.warning("Action inconnue du headnode: %s", action)
+                    logger.warning("Unknown action from headnode: %s", action)
                     time.sleep(self.poll_interval)
                     continue
 
@@ -750,7 +787,7 @@ class BranchExecutor:
                 )
                 if missing:
                     logger.warning(
-                        "Dépendances introuvables pour %s: %s (Amendement A4)",
+                        "Dependencies not found for %s: %s (Amendment A4)",
                         target_node,
                         missing,
                     )
@@ -787,14 +824,22 @@ class BranchExecutor:
                     exit_code_for_req = 0
                     error_message_for_req = None
                     missing_deps_for_req = None
+                    outputs_for_req = []
+                    dvc_lock_path = os.path.join(self.repo_dir, "dvc.lock")
+                    if os.path.isfile(dvc_lock_path):
+                        try:
+                            from src.scheduler.artifact_registry import extract_node_outputs_from_dvc_lock
+                            outputs_for_req = extract_node_outputs_from_dvc_lock(dvc_lock_path, target_node, repo_dir=self.repo_dir)
+                        except Exception as e:
+                            logger.debug("Extraction outputs dvc.lock impossible: %s", e)
                 else:
-                    logger.error("Le nœud %s a échoué (code %d)", target_node, node_exit_code)
+                    logger.error("Node %s failed (code %d)", target_node, node_exit_code)
                     oom_killed = self.docker.is_oom_killed(self.current_container)
                     if oom_killed:
                         node_ram = (resources or {}).get("ram_gb", self.ram_limit)
                         err_msg = (
-                            f"nœud {target_node} tué par manque de mémoire (plafond ram_gb={node_ram} Go) ; "
-                            f"remède : augmenter meta.cluster.ram_gb du stage {target_node} dans dvc.yaml"
+                            f"node {target_node} killed due to out-of-memory (ram_gb={node_ram} GB ceiling); "
+                            f"remedy: increase meta.cluster.ram_gb of stage {target_node} in dvc.yaml"
                         )
                         logger.error("❌ %s", err_msg)
                         error_message_for_req = err_msg

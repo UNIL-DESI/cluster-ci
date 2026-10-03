@@ -84,8 +84,8 @@ kill_container() {
     local reason="$1"
     local used_gb="$2"
     echo "[GPU Watchdog] ❌ $reason"
-    echo "[GPU Watchdog] ❌ Erreur: Le job a dépassé la limite mémoire allouée (utilisé: ${used_gb}GB). Le conteneur a été arrêté préventivement pour protéger le worker."
-    echo "[GPU Watchdog] ❌ Veuillez réduire la consommation mémoire ou augmenter REQUIRED_VRAM dans .cluster-ci"
+    echo "[GPU Watchdog] ❌ Error: Job exceeded allocated memory limit (used: ${used_gb}GB). Container was preemptively stopped to protect the worker."
+    echo "[GPU Watchdog] ❌ Please decrease memory consumption or increase REQUIRED_VRAM in .cluster-ci"
 
     # Kill the container — this will cause docker exec to return 137
     docker kill "$CONTAINER_NAME" 2>/dev/null || true

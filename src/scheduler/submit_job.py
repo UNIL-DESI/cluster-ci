@@ -107,13 +107,13 @@ def run_planner_for_submission(repo_dir="."):
             errors="replace",
         )
     except Exception as e:
-        print(f"❌ Error: Impossible d'exécuter le planificateur ({' '.join(cmd)}): {e}", file=sys.stderr)
+        print(f"❌ Error: Unable to execute planner ({' '.join(cmd)}): {e}", file=sys.stderr)
         sys.exit(1)
 
     if proc.returncode != 0:
         err_msg = (proc.stderr or proc.stdout or "").strip()
         print(
-            f"❌ Error: Échec du planificateur (code {proc.returncode}):\n{err_msg}",
+            f"❌ Error: Planner failed (code {proc.returncode}):\n{err_msg}",
             file=sys.stderr,
         )
         sys.exit(proc.returncode if proc.returncode != 0 else 1)
@@ -124,7 +124,7 @@ def run_planner_for_submission(repo_dir="."):
         return plan_data
     except json.JSONDecodeError as e:
         print(
-            f"❌ Error: Sortie JSON invalide du planificateur: {e}\nSortie brute:\n{output}",
+            f"❌ Error: Invalid JSON output from planner: {e}\nRaw output:\n{output}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -235,7 +235,7 @@ def format_nodes_status_summary(nodes):
             counts["pending"] += 1
 
     summary_line = (
-        f"📊 [Nœuds] done={counts['done']}, running={counts['running']}, "
+        f"📊 [Nodes] done={counts['done']}, running={counts['running']}, "
         f"ready={counts['ready']}, failed={counts['failed']}, blocked={counts['blocked']}"
     )
     if counts["skipped"]:
@@ -245,11 +245,11 @@ def format_nodes_status_summary(nodes):
 
     details = []
     if running_nodes:
-        details.append(f"▶️  En cours: {', '.join(running_nodes)}")
+        details.append(f"▶️  Running: {', '.join(running_nodes)}")
     if failed_nodes:
-        details.append(f"❌ Échoués: {', '.join(failed_nodes)}")
+        details.append(f"❌ Failed: {', '.join(failed_nodes)}")
     if blocked_nodes:
-        details.append(f"⛔ Bloqués: {', '.join(blocked_nodes)}")
+        details.append(f"⛔ Blocked: {', '.join(blocked_nodes)}")
 
     return summary_line, details
 
@@ -262,7 +262,7 @@ def print_final_dag_summary(nodes, job_id):
     if not summary_line:
         return
     print("\n" + "=" * 60)
-    print(f"📊 RÉSUMÉ D'EXÉCUTION DES NŒUDS (Job: {job_id})")
+    print(f"📊 NODE EXECUTION SUMMARY (Job: {job_id})")
     print(f"   {summary_line}")
     if details:
         for d in details:
@@ -558,11 +558,11 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         # A17 / Fail-Fast : Interdiction stricte de construire le plan depuis le CWD par défaut
         if not target_repo_dir:
             print(
-                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
-                f"Aucun répertoire de dépôt cible n'a été spécifié pour '{repo}'.\n"
-                f"Cause : PARALLEL_STAGES=true exige de construire le plan depuis le dvc.yaml du dépôt cible, "
-                f"mais aucun chemin n'a été passé (--repo-dir ou --local-repo-path) et l'usage du CWD par défaut est formellement interdit.\n"
-                f"Remède : Spécifier le chemin du dépôt cible via --repo-dir ou --local-repo-path.",
+                f"❌ [A17] Target repository validation error for v3 planning:\n"
+                f"No target repository directory specified for '{repo}'.\n"
+                f"Cause: PARALLEL_STAGES=true requires building the plan from the target repository's dvc.yaml, "
+                f"but no path was provided (--repo-dir or --local-repo-path) and defaulting to CWD is strictly forbidden.\n"
+                f"Remedy: Specify the target repository path via --repo-dir or --local-repo-path.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -570,10 +570,10 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         target_repo_dir = os.path.abspath(target_repo_dir)
         if not os.path.isdir(target_repo_dir):
             print(
-                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
-                f"Le répertoire cible '{target_repo_dir}' est introuvable.\n"
-                f"Cause : Le dépôt pour '{repo}' n'a pas été extrait ou le chemin est invalide.\n"
-                f"Remède : Vérifier que le dépôt cible est extrait localement et passer son chemin via --repo-dir.",
+                f"❌ [A17] Target repository validation error for v3 planning:\n"
+                f"Target directory '{target_repo_dir}' not found.\n"
+                f"Cause: Repository for '{repo}' has not been checked out or path is invalid.\n"
+                f"Remedy: Ensure target repository is checked out locally and pass its path via --repo-dir.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -582,11 +582,11 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         matches, actual_remote, error_detail = check_repo_remote_matches(target_repo_dir, repo)
         if not matches:
             print(
-                f"❌ [A17] Erreur de validation du dépôt cible pour la planification v3 :\n"
-                f"Le répertoire '{target_repo_dir}' a pour remote origin '{actual_remote}', "
-                f"ce qui ne correspond pas au dépôt soumis '{repo}'.\n"
-                f"Cause : Incohérence entre le dossier local et le dépôt cible demandé ({error_detail}).\n"
-                f"Remède : Fournir le chemin du dépôt réellement extrait pour '{repo}' via --repo-dir, ou cloner le bon dépôt.",
+                f"❌ [A17] Target repository validation error for v3 planning:\n"
+                f"Directory '{target_repo_dir}' has remote origin '{actual_remote}', "
+                f"which does not match submitted repository '{repo}'.\n"
+                f"Cause: Mismatch between local directory and requested target repository ({error_detail}).\n"
+                f"Remedy: Provide path to repository actually checked out for '{repo}' via --repo-dir, or clone the correct repository.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -594,10 +594,10 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         dvc_yaml_path = os.path.join(target_repo_dir, "dvc.yaml")
         if not os.path.isfile(dvc_yaml_path):
             print(
-                f"❌ [A17] Erreur de validation du pipeline DVC pour la planification v3 :\n"
-                f"Fichier dvc.yaml introuvable dans '{target_repo_dir}'.\n"
-                f"Cause : PARALLEL_STAGES=true est activé mais le dépôt cible '{repo}' ne contient pas de dvc.yaml.\n"
-                f"Remède : Créer un fichier dvc.yaml définissant les étapes du pipeline ou désactiver PARALLEL_STAGES dans .cluster-ci.",
+                f"❌ [A17] DVC pipeline validation error for v3 planning:\n"
+                f"File dvc.yaml not found in '{target_repo_dir}'.\n"
+                f"Cause: PARALLEL_STAGES=true is enabled but target repository '{repo}' does not contain dvc.yaml.\n"
+                f"Remedy: Create a dvc.yaml file defining pipeline stages or disable PARALLEL_STAGES in .cluster-ci.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -818,23 +818,23 @@ def wait_for_job(headnode_url, job_id, branch=None):
                             diag_lines.append("═"*55)
                             diag_lines.append(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
                             if own_position != -1:
-                                diag_lines.append(f"   👉 Position dans la file : {own_position} / {len(queue)}")
+                                diag_lines.append(f"   👉 Queue position: {own_position} / {len(queue)}")
                             else:
-                                diag_lines.append(f"   👉 Position dans la file : En cours d'analyse par le scheduler...")
+                                diag_lines.append(f"   👉 Queue position: Analyzing by scheduler...")
                             
                             # Diagnostic if RAM required exceeds maximum physical capacity in the cluster
                             if online_workers and ram_required > (max_ram - 2.0):
-                                diag_lines.append(f"   ⚠️  CRITIQUE : Votre tâche demande {ram_required:.1f} GB de RAM.")
-                                diag_lines.append(f"      Mais la capacité maximale des machines en ligne (moins 2GB de marge OS) est de {max_ram - 2.0:.1f} GB.")
-                                diag_lines.append(f"      Ce job ne pourra JAMAIS démarrer ! Veuillez baisser REQUIRED_RAM dans .cluster-ci.")
+                                diag_lines.append(f"   ⚠️  CRITICAL: Your task requests {ram_required:.1f} GB of RAM.")
+                                diag_lines.append(f"      However, the maximum capacity of online machines (minus 2GB OS headroom) is {max_ram - 2.0:.1f} GB.")
+                                diag_lines.append(f"      This job will NEVER be able to start! Please decrease REQUIRED_RAM in .cluster-ci.")
                             elif online_workers and not compatible_workers:
-                                diag_lines.append(f"   ⚠️  ATTENTE : Aucune machine actuellement en ligne ne dispose d'assez de RAM physique ({ram_required:.1f} GB requis).")
-                                diag_lines.append(f"      En attente qu'un worker avec une capacité suffisante vienne s'enregistrer.")
+                                diag_lines.append(f"   ⚠️  WAITING: No online machine currently has enough physical RAM ({ram_required:.1f} GB required).")
+                                diag_lines.append(f"      Waiting for a worker with sufficient capacity to register.")
                             elif online_workers and compatible_workers:
                                 # Check if all compatible workers are busy
                                 all_busy = all([w.get("active_job") is not None for w in compatible_workers])
                                 if all_busy:
-                                    diag_lines.append(f"   ⚠️  ATTENTE : Toutes les machines compatibles avec vos besoins en RAM ({ram_required:.1f} GB) sont occupées.")
+                                    diag_lines.append(f"   ⚠️  WAITING: All machines compatible with your RAM requirements ({ram_required:.1f} GB) are busy.")
                                     
                                     # Calculate remaining times
                                     remaining_times = []
@@ -865,24 +865,24 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                                 time_str = f"{int(rem_hours)}h {int(rem_mins)}m"
                                             else:
                                                 time_str = f"{int(rem_mins)}m {int(rem_secs)}s"
-                                            diag_lines.append(f"      👉 Temps d'attente maximum estimé : ~{time_str} (dès que le premier worker compatible se libère)")
+                                            diag_lines.append(f"      👉 Maximum estimated wait time: ~{time_str} (as soon as the first compatible worker becomes free)")
                                         else:
-                                            diag_lines.append(f"      👉 Temps d'attente : Estimé après libération et traitement de {own_position - 1} job(s) devant vous.")
+                                            diag_lines.append(f"      👉 Estimated wait time: Calculated after freeing and processing {own_position - 1} job(s) ahead of you.")
                             
                             # Current running jobs details on each machine
-                            diag_lines.append("   🖥️  Statut des machines du cluster :")
+                            diag_lines.append("   🖥️  Cluster machine status:")
                             if not online_workers:
-                                diag_lines.append("      ❌ Aucune machine n'est actuellement en ligne ou active.")
+                                diag_lines.append("      ❌ No machine is currently online or active.")
                             else:
                                 for w in online_workers:
                                     active_job = w.get("active_job")
                                     is_compatible = (w["total_ram_gb"] - 2.0) >= ram_required
                                     worker_vram = w.get('total_vram_gb', 0)
-                                    comp_str = "Compatible" if is_compatible else "RAM insuffisante"
+                                    comp_str = "Compatible" if is_compatible else "Insufficient RAM"
                                     
                                     if active_job:
-                                        duration_str = "en cours"
-                                        remaining_str = "indéterminé"
+                                        duration_str = "running"
+                                        remaining_str = "undetermined"
                                         started_at = active_job.get("started_at")
                                         max_hours = active_job.get("max_runtime_hours", 24.0) or 24.0
                                         
@@ -915,22 +915,22 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                             except Exception:
                                                 pass
                                                 
-                                        diag_lines.append(f"      ● {w['hostname']} : OCCUPÉE par {active_job['username']} [{active_job['repo'].split('/')[-1]}] ({duration_str}, reste {remaining_str}) [{w['total_ram_gb']:.0f}GB RAM, {worker_vram:.0f}GB VRAM]")
+                                        diag_lines.append(f"      ● {w['hostname']} : BUSY with {active_job['username']} [{active_job['repo'].split('/')[-1]}] ({duration_str}, remaining {remaining_str}) [{w['total_ram_gb']:.0f}GB RAM, {worker_vram:.0f}GB VRAM]")
                                     else:
-                                        diag_lines.append(f"      ○ {w['hostname']} : LIBRE ({w['total_ram_gb']:.0f}GB RAM, {w.get('total_vram_gb', 0):.0f}GB VRAM)")
+                                        diag_lines.append(f"      ○ {w['hostname']} : IDLE ({w['total_ram_gb']:.0f}GB RAM, {w.get('total_vram_gb', 0):.0f}GB VRAM)")
                                         
                             # Waiting queue list
                             if len(queue) > 1:
-                                diag_lines.append("   📋 Jobs en attente devant vous :")
+                                diag_lines.append("   📋 Waiting jobs ahead of you:")
                                 count = 0
                                 for q_job in queue:
                                     if q_job["job_id"] == job_id:
                                         break
                                     count += 1
                                     if count <= 3:
-                                        diag_lines.append(f"      #{count} : Job [{q_job['repo'].split('/')[-1]}] par [{q_job['username']}] (demande {q_job['ram_required_gb']:.1f} GB)")
+                                        diag_lines.append(f"      #{count} : Job [{q_job['repo'].split('/')[-1]}] by [{q_job['username']}] (requests {q_job['ram_required_gb']:.1f} GB)")
                                 if len(queue) - 1 > count:
-                                    diag_lines.append(f"      ... et {len(queue) - 1 - count} autre(s) job(s)")
+                                    diag_lines.append(f"      ... and {len(queue) - 1 - count} other job(s)")
                                     
                             diag_lines.append("═"*55)
                             
@@ -982,7 +982,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 except requests.exceptions.RequestException:
                     pass  # Tolérer les micro-coupures réseau transitoires lors du polling
                 except Exception as unexpected_err:
-                    sys.stderr.write(f"\n⚠️ Erreur inattendue polling logs worker: {unexpected_err}\n")
+                    sys.stderr.write(f"\n⚠️ Unexpected error polling worker logs: {unexpected_err}\n")
 
             if logs_resp and logs_resp.status_code == 200:
                 try:
@@ -990,7 +990,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     new_logs = logs_data.get('logs', '')
                     if new_logs:
                         import re
-                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                        if re.search(r'tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
                             oom_detected = True
                         if not status_printed:
                             print(f"\n\n[Streaming logs for job {job_id}]")
@@ -1005,9 +1005,9 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         sys.stdout.flush()
                         log_offset = logs_data.get('offset', log_offset)
                 except (ValueError, KeyError) as json_err:
-                    sys.stderr.write(f"\n⚠️ Format de logs invalide reçu du headnode/worker: {json_err}\n")
+                    sys.stderr.write(f"\n⚠️ Invalid log format received from headnode/worker: {json_err}\n")
                 except Exception as unexpected_err:
-                    sys.stderr.write(f"\n⚠️ Erreur inattendue traitement logs: {unexpected_err}\n")
+                    sys.stderr.write(f"\n⚠️ Unexpected error processing logs: {unexpected_err}\n")
 
             if status == 'completed':
                 print_final_dag_summary(nodes_data, job_id)
@@ -1049,17 +1049,17 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         has_node_failure = True
                         for nd in failed_nodes:
                             n_name = nd.get('name') or nd.get('node_name') or 'unknown'
-                            n_err = nd.get('error_message') or f"code de sortie non nul ({nd.get('exit_code', 'inconnu')})"
-                            print(f"❌ Nœud en échec : '{n_name}' -> {n_err}")
+                            n_err = nd.get('error_message') or f"non-zero exit code ({nd.get('exit_code', 'unknown')})"
+                            print(f"❌ Failed node: '{n_name}' -> {n_err}")
 
                     # Détection spécifique : aucun nœud n'a démarré dans le DAG v3
                     if not done_nodes and not running_nodes and not failed_nodes and (blocked_nodes or pending_nodes):
                         has_node_failure = True
                         cause_desc = job_error or (
-                            f"plan DAG interrompu avant le démarrage ({len(blocked_nodes)} bloqué(s), {len(pending_nodes)} en attente sur {len(nodes_data)} nœud(s)) ; "
-                            f"vérifier que le pipeline dvc.yaml soumis correspond bien aux étapes du dépôt cible"
+                            f"DAG plan interrupted before start ({len(blocked_nodes)} blocked, {len(pending_nodes)} pending out of {len(nodes_data)} node(s)); "
+                            f"verify that submitted dvc.yaml corresponds to stages in target repo"
                         )
-                        print(f"\n❌ Échec du job v3 : aucun nœud n'a démarré : {cause_desc}")
+                        print(f"\n❌ v3 job failed: no node started: {cause_desc}")
 
                 if job_error and not has_node_failure:
                     print(f"\n❌ Error message: {job_error}")
@@ -1081,16 +1081,16 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         except Exception:
                             pass
                 elif exit_code == 137 or oom_detected:
-                    print(f"\n❌ Erreur: Le job a dépassé la limite REQUIRED_RAM allouée ({ram_required} GB) et a été tué par le système (OOM Killer). Veuillez augmenter cette limite dans le fichier .cluster-ci")
+                    print(f"\n❌ Error: Job exceeded allocated REQUIRED_RAM limit ({ram_required} GB) and was killed by system (OOM Killer). Please increase this limit in .cluster-ci")
                 elif exit_code == 255:
                     print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
                 elif exit_code < 0:
                     sig = -exit_code
-                    sig_desc = "SIGKILL (tué de force / arrêt externe)" if sig == 9 else ("SIGTERM (interrompu / annulation demandée)" if sig == 15 else f"signal {sig}")
+                    sig_desc = "SIGKILL (forcefully killed / external stop)" if sig == 9 else ("SIGTERM (interrupted / cancellation requested)" if sig == 15 else f"signal {sig}")
                     if not has_node_failure and not job_error:
-                        print(f"\n❌ Job {job_id} interrompu : processus exécutant arrêté par {sig_desc} (exit code {exit_code}).")
+                        print(f"\n❌ Job {job_id} interrupted: executing process stopped by {sig_desc} (exit code {exit_code}).")
                     else:
-                        print(f"ℹ️  Processus exécutant arrêté par {sig_desc} (exit code {exit_code}).")
+                        print(f"ℹ️  Executing process stopped by {sig_desc} (exit code {exit_code}).")
                 else:
                     if not job_error and not has_node_failure:
                         print(f"\n❌ Job {job_id} failed with exit code {exit_code}")

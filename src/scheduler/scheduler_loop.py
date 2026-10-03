@@ -230,6 +230,27 @@ def parse_vram_per_gpu(worker):
         return [float(total_vram) / float(gpu_count)] * gpu_count
     return []
 
+def get_worker_total_gpus(worker):
+    """Extrait le nombre total de GPU physiques équipant le worker."""
+    if not worker or not isinstance(worker, dict):
+        return 0
+    if is_unified_memory(worker):
+        cnt = worker.get("gpu_count")
+        if cnt is not None and int(cnt) > 0:
+            return int(cnt)
+        return 1
+    vram_list = parse_vram_per_gpu(worker)
+    if vram_list:
+        return len(vram_list)
+    cnt = worker.get("gpu_count")
+    if cnt is not None and int(cnt) > 0:
+        return int(cnt)
+    return 0
+
+def get_worker_available_gpu_ids(worker):
+    """Renvoie la liste des identifiants d'indices GPU physiques [0, ..., N-1]."""
+    return list(range(get_worker_total_gpus(worker)))
+
 def is_headnode_worker(worker):
     """
     Détecte si un worker représente la machine Headnode via host_guard (A14 : aucune IP/hostname en dur).
@@ -252,12 +273,12 @@ def get_worker_placement_priority(worker):
 def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
     if exclude_node and exclude_node[0] and exclude_node[1]:
         cursor.execute('''
-            SELECT resources, gpu_ids FROM job_nodes
+            SELECT job_id, node_name, resources, gpu_ids FROM job_nodes
             WHERE worker_id = ? AND status = 'running' AND NOT (job_id = ? AND node_name = ?)
         ''', (worker_id, exclude_node[0], exclude_node[1]))
     else:
         cursor.execute('''
-            SELECT resources, gpu_ids FROM job_nodes
+            SELECT job_id, node_name, resources, gpu_ids FROM job_nodes
             WHERE worker_id = ? AND status = 'running'
         ''', (worker_id,))
     running_nodes = cursor.fetchall()
@@ -267,6 +288,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
     used_vram_gb = 0.0
     used_storage_gb = 0.0
     allocated_vram_by_gpu = {}
+    allocated_gpu_ids = set()
+    gpu_holders = {}
     active_executors = len(running_nodes)
 
     for row in running_nodes:
@@ -284,18 +307,38 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         used_storage_gb += float(res.get("storage_gb") or 0.0)
 
         gpu_ids_raw = row["gpu_ids"] if "gpu_ids" in row.keys() else None
-        if gpu_ids_raw and node_vram > 0:
+        gids = []
+        if gpu_ids_raw:
             try:
                 gids = json.loads(gpu_ids_raw) if isinstance(gpu_ids_raw, str) else list(gpu_ids_raw)
-                if gids:
-                    per_gpu = node_vram / len(gids)
-                    for gid in gids:
-                        allocated_vram_by_gpu[int(gid)] = allocated_vram_by_gpu.get(int(gid), 0.0) + per_gpu
             except (json.JSONDecodeError, TypeError, ValueError):
+                gids = []
+
+        node_name_val = row["node_name"] if "node_name" in row.keys() else "node"
+        job_id_val = row["job_id"] if "job_id" in row.keys() else ""
+        holder_lbl = f"{node_name_val} ({job_id_val[:8]})" if job_id_val else str(node_name_val)
+
+        for gid in gids:
+            try:
+                gid_int = int(gid)
+                allocated_gpu_ids.add(gid_int)
+                if gid_int not in gpu_holders:
+                    gpu_holders[gid_int] = []
+                gpu_holders[gid_int].append(holder_lbl)
+            except (TypeError, ValueError):
                 pass
 
+        if gids and node_vram > 0:
+            per_gpu = node_vram / len(gids)
+            for gid in gids:
+                try:
+                    gid_int = int(gid)
+                    allocated_vram_by_gpu[gid_int] = allocated_vram_by_gpu.get(gid_int, 0.0) + per_gpu
+                except (TypeError, ValueError):
+                    pass
+
     cursor.execute('''
-        SELECT job_id, ram_required_gb, vram_required_gb FROM jobs
+        SELECT job_id, ram_required_gb, vram_required_gb, gpu_ids FROM jobs
         WHERE worker_id = ? AND status IN ('assigned', 'running') AND (parallel_mode = 0 OR parallel_mode IS NULL)
     ''', (worker_id,))
     classic_jobs = cursor.fetchall()
@@ -306,8 +349,29 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         used_ram_gb += float(cj["ram_required_gb"] or DEFAULT_RAM_GB)
         c_vram = float(cj["vram_required_gb"] or 0.0)
         used_vram_gb += c_vram
-        if c_vram > 0:
-            allocated_vram_by_gpu[0] = allocated_vram_by_gpu.get(0, 0.0) + c_vram
+        c_job_id = cj["job_id"]
+        c_lbl = f"Job {c_job_id[:8]}" if c_job_id else "Job classique"
+
+        c_gids = []
+        if "gpu_ids" in cj.keys() and cj["gpu_ids"]:
+            try:
+                c_gids = json.loads(cj["gpu_ids"]) if isinstance(cj["gpu_ids"], str) else list(cj["gpu_ids"])
+            except Exception:
+                c_gids = []
+        if not c_gids and c_vram > 0:
+            c_gids = [0]
+
+        for gid in c_gids:
+            try:
+                gid_int = int(gid)
+                allocated_gpu_ids.add(gid_int)
+                if gid_int not in gpu_holders:
+                    gpu_holders[gid_int] = []
+                gpu_holders[gid_int].append(c_lbl)
+                if c_vram > 0:
+                    allocated_vram_by_gpu[gid_int] = allocated_vram_by_gpu.get(gid_int, 0.0) + (c_vram / len(c_gids))
+            except (TypeError, ValueError):
+                pass
 
     return {
         "used_cpus": used_cpus,
@@ -315,6 +379,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         "used_vram_gb": used_vram_gb,
         "used_storage_gb": used_storage_gb,
         "allocated_vram_by_gpu": allocated_vram_by_gpu,
+        "allocated_gpu_ids": allocated_gpu_ids,
+        "gpu_holders": gpu_holders,
         "active_executors": active_executors
     }
 
@@ -334,55 +400,77 @@ def get_worker_allocated_resources(conn=None, worker_id=None, exclude_node=None)
         cursor = c.cursor()
         return _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node)
 
-def allocate_gpus(worker, node_resources, allocated_vram_by_gpu=None):
+def allocate_gpus(worker, node_resources, allocated_gpu_ids=None, allocated_vram_by_gpu=None):
     """
     Attribue la liste des indices de GPU physiques (CUDA_VISIBLE_DEVICES) (A16) :
-    - Mémoire unifiée : gpus <= 1 (retourne [] si gpus <= 1, None si gpus > 1)
-    - Machine discrète : sélectionne gpus GPU distincts ayant au moins vram_gb de libre chacun
+    - Mémoire unifiée : 1 GPU max (device 0). Si req_gpus == 0: retourne [].
+      Si req_gpus == 1: retourne [0] si GPU 0 est libre, None si déjà alloué.
+      Si req_gpus > 1: retourne None (A16 : mémoire unifiée gpus <= 1).
+    - Machine discrète : sélectionne req_gpus GPU libres (et ayant au moins req_vram libre si applicable).
     """
     if not isinstance(node_resources, dict):
         raise TypeError(f"node_resources must be a dict, got {type(node_resources).__name__}")
 
-    req_gpus = int(node_resources.get("gpus") or 0)
+    # Compatibilité signature si le 3e argument positionnel était un dict de vram
+    if isinstance(allocated_gpu_ids, dict):
+        allocated_vram_by_gpu = allocated_gpu_ids
+        allocated_gpu_ids = set()
+
+    req_gpus = int(node_resources.get("gpus") if node_resources.get("gpus") is not None else 0)
     req_vram = float(node_resources.get("vram_gb") or 0.0)
 
-    # Si vram_gb > 0 mais gpus non spécifié, au moins 1 GPU est sous-entendu
+    # Si vram_gb > 0 mais gpus non spécifié, au moins 1 GPU est sous-entendu (A16)
     if req_vram > 0 and req_gpus == 0:
         req_gpus = 1
-
-    if is_unified_memory(worker):
-        if req_gpus > 1:
-            return None  # A16 : mémoire unifiée gpus <= 1
-        return []
 
     if req_gpus <= 0 and req_vram <= 0:
         return []
 
+    if allocated_gpu_ids is None:
+        allocated_gpu_ids = set()
+    else:
+        allocated_gpu_ids = set(allocated_gpu_ids)
+
+    all_gpu_ids = get_worker_available_gpu_ids(worker)
+    if not all_gpu_ids:
+        return None
+
+    if is_unified_memory(worker):
+        if req_gpus > 1:
+            return None  # A16 : mémoire unifiée gpus <= 1
+        if 0 in allocated_gpu_ids:
+            return None
+        return [0]
+
+    if len(all_gpu_ids) < req_gpus:
+        return None
+
+    free_gpus = [gid for gid in all_gpu_ids if gid not in allocated_gpu_ids]
+    if len(free_gpus) < req_gpus:
+        return None
+
     gpus = parse_vram_per_gpu(worker)
-    if not gpus:
-        return None
+    if req_vram > 0 and gpus:
+        if allocated_vram_by_gpu is None:
+            allocated_vram_by_gpu = {}
 
-    if len(gpus) < req_gpus:
-        return None
+        candidate_gpus = []
+        for gid in free_gpus:
+            tot_v = gpus[gid] if gid < len(gpus) else 0.0
+            used_v = float(allocated_vram_by_gpu.get(gid, 0.0))
+            avail = max(0.0, tot_v - used_v)
+            if avail >= req_vram:
+                candidate_gpus.append((gid, avail))
 
-    if allocated_vram_by_gpu is None:
-        allocated_vram_by_gpu = {}
+        if len(candidate_gpus) < req_gpus:
+            return None
 
-    rem_vram = []
-    for i, total_v in enumerate(gpus):
-        used_v = float(allocated_vram_by_gpu.get(i, 0.0))
-        avail = max(0.0, total_v - used_v)
-        rem_vram.append((i, avail))
+        # Best-fit : trier par VRAM libre restante croissante qui suffit
+        candidate_gpus.sort(key=lambda x: x[1])
+        selected = [candidate_gpus[k][0] for k in range(req_gpus)]
+        return sorted(selected)
 
-    # Filtrer les GPU ayant au moins req_vram de VRAM libre (vram_gb par GPU)
-    candidate_gpus = [(i, avail) for i, avail in rem_vram if avail >= req_vram]
-    if len(candidate_gpus) < req_gpus:
-        return None
-
-    # Best-fit : trier par VRAM libre restante croissante qui suffit
-    candidate_gpus.sort(key=lambda x: x[1])
-    selected = [candidate_gpus[k][0] for k in range(req_gpus)]
-    return sorted(selected)
+    return sorted(free_gpus[:req_gpus])
 
 def is_worker_admissible_for_node(worker, node_resources, allocated=None):
     """
@@ -645,43 +733,43 @@ def validate_plan(plan_data):
     Lève ValueError si invalide.
     """
     if not isinstance(plan_data, dict):
-        raise ValueError("Le plan doit être un objet JSON")
+        raise ValueError("Plan must be a JSON object")
 
     # Version v3 acceptée sous forme de chaîne ("3.0") ou nombre
     if "version" in plan_data:
         ver = str(plan_data["version"]).strip()
         if not ver.startswith("3"):
-            raise ValueError(f"Version de plan non supportée: {plan_data['version']}")
+            raise ValueError(f"Unsupported plan version: {plan_data['version']}")
 
     nodes = plan_data.get("nodes")
     if not isinstance(nodes, list) or len(nodes) == 0:
-        raise ValueError("Le plan doit contenir une liste non vide 'nodes'")
+        raise ValueError("Plan must contain a non-empty 'nodes' list")
 
     defaults = plan_data.get("defaults", {})
     if isinstance(defaults, dict):
         unknown_defaults = set(defaults.keys()) - ALLOWED_RESOURCE_KEYS
         if unknown_defaults:
-            raise ValueError(f"Clé de ressource inconnue dans defaults: {unknown_defaults}")
+            raise ValueError(f"Unknown resource key in defaults: {unknown_defaults}")
 
     node_names = set()
     for n in nodes:
         name = n.get("name")
         if not name:
-            raise ValueError("Chaque nœud doit avoir un 'name'")
+            raise ValueError("Each node must have a 'name'")
         if name in node_names:
-            raise ValueError(f"Nom de nœud dupliqué dans le plan: '{name}'")
+            raise ValueError(f"Duplicate node name in plan: '{name}'")
         node_names.add(name)
 
         resources = n.get("resources", {})
         if isinstance(resources, dict):
             unknown_res = set(resources.keys()) - ALLOWED_RESOURCE_KEYS
             if unknown_res:
-                raise ValueError(f"Clé de ressource inconnue pour le nœud '{name}': {unknown_res}")
+                raise ValueError(f"Unknown resource key for node '{name}': {unknown_res}")
 
             # A16 : Cohérence vram_gb et gpus
             if "vram_gb" in resources and float(resources.get("vram_gb") or 0.0) > 0:
                 if resources.get("gpus") == 0:
-                    raise ValueError(f"Le nœud '{name}' demande vram_gb={resources['vram_gb']} avec gpus=0 : vram_gb exige gpus ≥ 1 ; remède : déclarer meta.cluster.gpus ≥ 1 pour le stage '{name}' dans dvc.yaml")
+                    raise ValueError(f"Node '{name}' requests vram_gb={resources['vram_gb']} with gpus=0: vram_gb requires gpus >= 1; remedy: declare meta.cluster.gpus >= 1 for stage '{name}' in dvc.yaml")
 
     # Vérification des dépendances déclarées
     adj = {name: [] for name in node_names}
@@ -689,7 +777,7 @@ def validate_plan(plan_data):
         name = n["name"]
         for dep in n.get("deps", []):
             if dep not in node_names:
-                raise ValueError(f"Dépendance invalide '{dep}' déclarée par le nœud '{name}'")
+                raise ValueError(f"Invalid dependency '{dep}' declared by node '{name}'")
             adj[dep].append(name)
 
     # Détection de cycle (DFS 3 couleurs : 0=blanc, 1=gris, 2=noir)
@@ -707,7 +795,7 @@ def validate_plan(plan_data):
     for name in node_names:
         if visited[name] == 0:
             if dfs(name):
-                raise ValueError(f"Cycle détecté dans le DAG des nœuds à partir de '{name}'")
+                raise ValueError(f"Cycle detected in DAG nodes starting from '{name}'")
 
     return True
 
@@ -742,7 +830,7 @@ def handle_next_node(req):
     duration_s = req.get("duration_s")
     exit_code = req.get("exit_code")
     error_message = req.get("error_message")
-    missing_paths = req.get("missing_paths") or []
+    missing_paths = req.get("missing_paths") or req.get("missing_deps") or []
     current_image = req.get("current_image")
 
     # 1. Enregistrement résultat nœud précédent
@@ -1002,7 +1090,12 @@ def handle_next_node(req):
             cursor = conn.cursor()
             cursor.execute("SELECT worker_id, service_url FROM workers WHERE status = 'online'")
             online_workers_map = {r[0]: r[1] for r in cursor.fetchall()}
-            dep_sources_map = sources_for(conn, dep_paths_list, online_workers_map)
+            dep_hashes = []
+            if dep_paths_list:
+                placeholders = ','.join(['?'] * len(dep_paths_list))
+                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE job_id = ? AND path IN ({placeholders})", [job_id, *dep_paths_list])
+                dep_hashes = [r[0] for r in cursor.fetchall()]
+            dep_sources_map = sources_for(conn, dep_hashes, online_workers_map)
     except Exception as e:
         logger.debug(f"Failed to query artifact sources: {e}")
 
@@ -1050,47 +1143,47 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
         if is_unified_memory(w):
             avail_unified = max(0.0, tot_ram - OS_HEADROOM_GB)
             unified_workers.append((w_id, avail_unified, w_cpus))
-            worker_caps_desc.append(f"machine {w_id} ({avail_unified:.1f} Go max RAM+VRAM unifiée, {w_cpus} CPUs)")
+            worker_caps_desc.append(f"machine {w_id} ({avail_unified:.1f} GB max unified RAM+VRAM, {w_cpus} CPUs)")
         else:
             avail_ram = max(0.0, tot_ram - 2.0)
             gpus = parse_vram_per_gpu(w)
-            gpu_str = f"{len(gpus)} GPU(s) (max VRAM {max(gpus or [0.0]):.1f} Go)" if gpus else "0 GPU"
+            gpu_str = f"{len(gpus)} GPU(s) (max VRAM {max(gpus or [0.0]):.1f} GB)" if gpus else "0 GPU"
             discrete_workers.append((w_id, avail_ram, gpus, w_cpus))
-            worker_caps_desc.append(f"machine {w_id} (RAM max {avail_ram:.1f} Go, {gpu_str}, {w_cpus} CPUs)")
+            worker_caps_desc.append(f"machine {w_id} (max RAM {avail_ram:.1f} GB, {gpu_str}, {w_cpus} CPUs)")
 
-    max_caps_str = " ; ".join(worker_caps_desc) if worker_caps_desc else "aucune machine en ligne"
+    max_caps_str = " ; ".join(worker_caps_desc) if worker_caps_desc else "no machine online"
     max_unif_threshold = int(max([avail for _, avail, _ in unified_workers], default=113))
 
     if is_classic:
         if req_vram > 0:
             demande_str = (
-                f"demande REQUIRED_RAM={req_ram:.1f} Go et REQUIRED_VRAM={req_vram:.1f} Go "
-                f"(somme={req_ram + req_vram:.1f} Go sur mémoire unifiée)"
+                f"requests REQUIRED_RAM={req_ram:.1f} GB and REQUIRED_VRAM={req_vram:.1f} GB "
+                f"(sum={req_ram + req_vram:.1f} GB on unified memory)"
             )
         else:
-            demande_str = f"demande REQUIRED_RAM={req_ram:.1f} Go"
+            demande_str = f"requests REQUIRED_RAM={req_ram:.1f} GB"
 
         err_msg = (
-            f"Job classique {item_name} impossible : {demande_str} ; "
-            f"capacités maximales des machines : {max_caps_str} ; "
-            f"remède : baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ {max_unif_threshold} Go pour les GB10, "
-            f"ou déclarer meta.cluster par étape et activer le mode v3"
+            f"Classic job {item_name} impossible: {demande_str}; "
+            f"maximum machine capacities: {max_caps_str}; "
+            f"remedy: decrease REQUIRED_RAM + REQUIRED_VRAM to <= {max_unif_threshold} GB for GB10, "
+            f"or declare meta.cluster per stage and enable v3 mode"
         )
         return True, err_msg
     else:
         # Nœud v3
         if req_vram > 0 and unified_workers and (req_ram + req_vram > max([avail for _, avail, _ in unified_workers], default=0)):
             err_msg = (
-                f"nœud {item_name} demande ram_gb={req_ram:.1f} Go + vram_gb={req_vram:.1f} Go "
-                f"({req_ram + req_vram:.1f} Go sur mémoire unifiée) ; "
-                f"capacités maximales des machines : {max_caps_str} ; "
-                f"remède : baisser ram_gb + vram_gb à ≤ {max_unif_threshold} Go pour les GB10, "
-                f"ou déclarer meta.cluster par étape et activer le mode v3"
+                f"node {item_name} requests ram_gb={req_ram:.1f} GB + vram_gb={req_vram:.1f} GB "
+                f"({req_ram + req_vram:.1f} GB on unified memory); "
+                f"maximum machine capacities: {max_caps_str}; "
+                f"remedy: decrease ram_gb + vram_gb to <= {max_unif_threshold} GB for GB10, "
+                f"or declare meta.cluster per stage and enable v3 mode"
             )
             return True, err_msg
 
         res_key = "ram_gb"
-        req_val = f"{req_ram} Go"
+        req_val = f"{req_ram} GB"
         max_worker = "none"
         max_val = "0"
 
@@ -1098,9 +1191,9 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
         avail_ram = (float(max_w_ram.get("total_ram_gb") or 0.0) - (OS_HEADROOM_GB if is_unified_memory(max_w_ram) else 2.0)) if max_w_ram else 0.0
         if req_ram > avail_ram:
             res_key = "ram_gb"
-            req_val = f"{req_ram} Go"
+            req_val = f"{req_ram} GB"
             max_worker = max_w_ram.get("worker_id") if max_w_ram else "none"
-            max_val = f"{avail_ram:.1f} Go"
+            max_val = f"{avail_ram:.1f} GB"
         elif req_gpus > 0:
             max_w_gpu = max(workers, key=lambda w: len(parse_vram_per_gpu(w)), default=None)
             avail_gpus = len(parse_vram_per_gpu(max_w_gpu)) if max_w_gpu else 0
@@ -1114,10 +1207,10 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
                 max_vram = max(all_vrams) if all_vrams else 0.0
                 if req_vram > max_vram:
                     res_key = "vram_gb"
-                    req_val = f"{req_vram} Go"
+                    req_val = f"{req_vram} GB"
                     idx_max = all_vrams.index(max_vram) if all_vrams else 0
                     max_worker = workers[idx_max].get("worker_id") if workers else "none"
-                    max_val = f"{max_vram:.1f} Go"
+                    max_val = f"{max_vram:.1f} GB"
         elif req_cpus > 0:
             max_w_cpu = max(workers, key=lambda w: int(w.get("cpus") or 0), default=None)
             avail_cpus = int(max_w_cpu.get("cpus") or 0) if max_w_cpu else 0
@@ -1131,13 +1224,13 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
             avail_stor = float(max_w_stor.get("total_storage_gb") or 0.0) if max_w_stor else 0.0
             if req_storage > avail_stor:
                 res_key = "storage_gb"
-                req_val = f"{req_storage} Go"
+                req_val = f"{req_storage} GB"
                 max_worker = max_w_stor.get("worker_id") if max_w_stor else "none"
-                max_val = f"{avail_stor:.1f} Go"
+                max_val = f"{avail_stor:.1f} GB"
 
         err_msg = (
-            f"nœud {item_name} demande {res_key}={req_val} ; plus grande capacité : machine {max_worker} ({max_val}) ; "
-            f"remède : réduire meta.cluster.{res_key} du stage {item_name} dans dvc.yaml"
+            f"node {item_name} requests {res_key}={req_val}; largest capacity: machine {max_worker} ({max_val}); "
+            f"remedy: reduce meta.cluster.{res_key} of stage {item_name} in dvc.yaml"
         )
         return True, err_msg
 

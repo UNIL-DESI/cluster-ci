@@ -96,7 +96,7 @@ def test_plan_validation_missing_dependency(client):
         "plan": bad_plan
     })
     assert resp.status_code == 400
-    assert "Dépendance invalide" in resp.get_json()["error"]
+    assert "Invalid dependency" in resp.get_json()["error"]
 
 def test_plan_validation_cycle_detection(client):
     """Rejet fail-fast (400) si un cycle existe dans le graphe."""
@@ -114,7 +114,7 @@ def test_plan_validation_cycle_detection(client):
         "plan": cycle_plan
     })
     assert resp.status_code == 400
-    assert "Cycle détecté" in resp.get_json()["error"]
+    assert "Cycle detected" in resp.get_json()["error"]
 
 
 # =========================================================================
@@ -1184,8 +1184,8 @@ def test_a16_coherence_vram_requires_gpus_rejection(client):
     resp = client.post("/submit_job", json={"repo": "owner/bad_coherence", "branch": "main", "plan": plan})
     assert resp.status_code == 400
     data = resp.get_json()
-    assert "vram_gb exige gpus ≥ 1" in data["error"]
-    assert "remède : déclarer meta.cluster.gpus ≥ 1" in data["error"]
+    assert "vram_gb requires gpus >= 1" in data["error"]
+    assert "remedy: declare meta.cluster.gpus >= 1" in data["error"]
 
 
 # =========================================================================
@@ -1231,20 +1231,20 @@ def test_a17_impossible_node_immediate_job_failure_and_actionable_message(client
         cursor.execute("SELECT status, error_message FROM job_nodes WHERE job_id = ? AND node_name = 'too_big_node'", (job_id,))
         n_status, n_err = cursor.fetchone()
         assert n_status == "failed"
-        assert "nœud too_big_node demande ram_gb=64.0 Go" in n_err
-        assert "machine W_SMALL (24.0 Go)" in n_err
-        assert "remède : réduire meta.cluster.ram_gb du stage too_big_node dans dvc.yaml" in n_err
+        assert "node too_big_node requests ram_gb=64.0 GB" in n_err
+        assert "machine W_SMALL (24.0 GB)" in n_err
+        assert "remedy: reduce meta.cluster.ram_gb of stage too_big_node in dvc.yaml" in n_err
 
     # 2. Vérification de la route /job_status
     st_resp = client.get(f"/job_status/{job_id}").get_json()
     assert st_resp["status"] == "failed"
     nodes_by_name = {n["name"]: n for n in st_resp.get("nodes", [])} if isinstance(st_resp.get("nodes"), list) else st_resp.get("nodes", {})
     node_sum = nodes_by_name.get("too_big_node", {})
-    assert "remède : réduire meta.cluster.ram_gb" in node_sum.get("error_message", "")
+    assert "remedy: reduce meta.cluster.ram_gb" in node_sum.get("error_message", "")
 
     # 3. Vérification des logs agrégés
     log_resp = client.get(f"/job_logs/{job_id}?offset=0").get_json()
-    assert "remède : réduire meta.cluster.ram_gb" in log_resp.get("logs", "")
+    assert "remedy: reduce meta.cluster.ram_gb" in log_resp.get("logs", "")
 
 
 # =========================================================================
@@ -1414,21 +1414,21 @@ def test_classic_job_impossible_unified_memory_and_actionable_message(client):
         j_status, j_exit, j_err = cursor.fetchone()
         assert j_status == "failed"
         assert j_exit == 1
-        assert "Job classique" in j_err
-        assert "REQUIRED_RAM=100.0 Go et REQUIRED_VRAM=100.0 Go" in j_err
-        assert "somme=200.0 Go sur mémoire unifiée" in j_err
-        assert "machine GB10_1 (113.6 Go max RAM+VRAM unifiée, 32 CPUs)" in j_err
-        assert "machine GB10_2 (113.6 Go max RAM+VRAM unifiée, 32 CPUs)" in j_err
-        assert "remède : baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10, ou déclarer meta.cluster par étape et activer le mode v3" in j_err
+        assert "Classic job" in j_err
+        assert "REQUIRED_RAM=100.0 GB and REQUIRED_VRAM=100.0 GB" in j_err
+        assert "sum=200.0 GB on unified memory" in j_err
+        assert "machine GB10_1 (113.6 GB max unified RAM+VRAM, 32 CPUs)" in j_err
+        assert "machine GB10_2 (113.6 GB max unified RAM+VRAM, 32 CPUs)" in j_err
+        assert "remedy: decrease REQUIRED_RAM + REQUIRED_VRAM to <= 113 GB for GB10, or declare meta.cluster per stage and enable v3 mode" in j_err
 
     # Vérification route /job_status
     st_resp = client.get(f"/job_status/{job_id_impossible}").get_json()
     assert st_resp["status"] == "failed"
-    assert "baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10" in st_resp.get("error_message", "")
+    assert "decrease REQUIRED_RAM + REQUIRED_VRAM to <= 113 GB for GB10" in st_resp.get("error_message", "")
 
     # Vérification route /job_logs
     log_resp = client.get(f"/job_logs/{job_id_impossible}?offset=0").get_json()
-    assert "baisser REQUIRED_RAM + REQUIRED_VRAM à ≤ 113 Go pour les GB10" in log_resp.get("logs", "")
+    assert "decrease REQUIRED_RAM + REQUIRED_VRAM to <= 113 GB for GB10" in log_resp.get("logs", "")
 
     # 2. Cas admissible (50 Go RAM + 50 Go VRAM = 100 Go <= 113.63 Go)
     submit_ok = client.post("/submit_job", json={

@@ -651,7 +651,7 @@ class TestV3W8Submission(unittest.TestCase):
 
         out = mock_stdout.getvalue()
         self.assertEqual(exit_code, -9)
-        self.assertIn("aucun nœud n'a démarré", out)
+        self.assertIn("no node started", out)
         self.assertIn("SIGKILL", out)
 
 

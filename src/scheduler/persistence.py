@@ -231,7 +231,8 @@ def init_db():
         'parallel_mode INTEGER DEFAULT 0',
         'plan_json TEXT',
         'active_workers TEXT DEFAULT "[]"',
-        'error_message TEXT'
+        'error_message TEXT',
+        'gpu_ids TEXT DEFAULT "[]"'
     ]:
         col_name = col_def.split()[0]
         try:
@@ -545,7 +546,7 @@ def check_runner_heartbeat_timeouts(timeout_s=RUNNER_HEARTBEAT_TIMEOUT_S):
             if elapsed is None or elapsed > timeout_s:
                 cursor.execute('''
                     UPDATE job_nodes
-                    SET status = 'ready', worker_id = NULL, runner_id = NULL
+                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]'
                     WHERE job_id = ? AND node_name = ?
                 ''', (r["job_id"], r["node_name"]))
                 cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND runner_id = ?', (r["job_id"], r["runner_id"]))
