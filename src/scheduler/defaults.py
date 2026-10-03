@@ -1,34 +1,41 @@
 """
-defaults.py - Re-export pur de src.config.defaults (source unique de vérité v3).
-Aucune duplication de constante.
+defaults.py - Paramètres opérationnels propres à l'ordonnanceur Cluster-CI v3.
+Les ressources par défaut (DEFAULT_RESOURCES, ALLOWED_CLUSTER_KEYS) sont importées
+directement depuis la source unique de vérité src.config.defaults (W1).
 """
 
 try:
-    from src.config.defaults import *
+    from src.config.defaults import (
+        DEFAULT_RESOURCES,
+        ALLOWED_CLUSTER_KEYS,
+        parse_project_cluster_ci,
+        validate_and_resolve_resources,
+    )
 except ImportError:
-    from config.defaults import *
+    from config.defaults import (
+        DEFAULT_RESOURCES,
+        ALLOWED_CLUSTER_KEYS,
+        parse_project_cluster_ci,
+        validate_and_resolve_resources,
+    )
 
-# Source unique pour les valeurs dérivées et constantes d'ordonnancement Cluster-CI v3
-DEFAULT_DOCKER_IMAGE = DEFAULT_RESOURCES.get("image", "nvcr.io/nvidia/pytorch:26.05-py3")
-DEFAULT_RAM_GB = float(DEFAULT_RESOURCES.get("ram_gb", 10.0))
-DEFAULT_VRAM_GB = float(DEFAULT_RESOURCES.get("vram_gb", 0.0))
-DEFAULT_CPUS = 2
-DEFAULT_GPUS = 0
-DEFAULT_STORAGE_GB = float(DEFAULT_RESOURCES.get("storage_gb", 0.0))
-ALLOWED_RESOURCE_KEYS = ALLOWED_CLUSTER_KEYS | {"gpus"}
+# Alias dérivés directement de src.config.defaults (zéro duplication de constante de ressource en dur)
+DEFAULT_DOCKER_IMAGE = DEFAULT_RESOURCES["image"]
+DEFAULT_CPUS = DEFAULT_RESOURCES["cpus"]
+DEFAULT_GPUS = DEFAULT_RESOURCES["gpus"]
+DEFAULT_RAM_GB = float(DEFAULT_RESOURCES["ram_gb"])
+DEFAULT_VRAM_GB = float(DEFAULT_RESOURCES["vram_gb"])
+DEFAULT_STORAGE_GB = float(DEFAULT_RESOURCES["storage_gb"])
+ALLOWED_RESOURCE_KEYS = ALLOWED_CLUSTER_KEYS
 
+# Constantes opérationnelles propres à l'ordonnanceur Cluster-CI v3 (sans doublon)
 ALLOW_PACKING: bool = True
 OS_HEADROOM_GB: float = 8.0
 RUNNER_HEARTBEAT_TIMEOUT_S: float = 60.0
 RUNNER_HEARTBEAT_INTERVAL_S: float = 15.0
 MAX_WORKERS_PER_JOB: int = 8
 
+# Réserves de sécurité applicables au Headnode
 HEADNODE_RAM_RESERVE_GB: float = 16.0
 HEADNODE_CPU_RESERVE: int = 2
-DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
-DEFAULT_HEADNODE_CPU_RESERVE: int = 2
-DEFAULT_HEADNODE_DISK_RESERVE_GB: float = 20.0
-DEFAULT_HEADNODE_CGROUP_PARENT: str = "/cluster-jobs"
 
-DEFAULT_PLACEMENT_PRIORITY: int = 50
-HEADNODE_PLACEMENT_PRIORITY: int = 0
