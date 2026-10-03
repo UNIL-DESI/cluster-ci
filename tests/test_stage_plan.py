@@ -123,7 +123,7 @@ def test_dvc_yaml_invalid():
 
 
 def test_meta_cluster_unknown_key(toy_repo):
-    """Fail-fast: explicit exception with stage name on unknown meta.cluster key."""
+    """Fail-fast: explicit actionable exception with stage name, key and remedy on unknown meta.cluster key (A17)."""
     dvc_yaml_path = os.path.join(toy_repo, "dvc.yaml")
     with open(dvc_yaml_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -132,12 +132,12 @@ def test_meta_cluster_unknown_key(toy_repo):
     with open(dvc_yaml_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f)
 
-    with pytest.raises(ValueError, match="Stage 'prep_a': unknown key"):
+    with pytest.raises(ValueError, match="stage 'prep_a'.*clé\\(s\\) inconnue\\(s\\)"):
         compute_stage_plan(toy_repo)
 
 
 def test_meta_cluster_invalid_type(toy_repo):
-    """Fail-fast: explicit exception with stage name on invalid meta.cluster types."""
+    """Fail-fast: explicit actionable exception with stage name on invalid meta.cluster types (A17)."""
     dvc_yaml_path = os.path.join(toy_repo, "dvc.yaml")
     with open(dvc_yaml_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -147,7 +147,7 @@ def test_meta_cluster_invalid_type(toy_repo):
     with open(dvc_yaml_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f)
 
-    with pytest.raises(ValueError, match="Stage 'prep_a': meta.cluster.cpus must be a positive integer"):
+    with pytest.raises(ValueError, match="stage 'prep_a'.*meta.cluster.cpus"):
         compute_stage_plan(toy_repo)
 
     # Invalid workers type (not list of strings)
@@ -155,12 +155,12 @@ def test_meta_cluster_invalid_type(toy_repo):
     with open(dvc_yaml_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f)
 
-    with pytest.raises(TypeError, match="Stage 'prep_a': meta.cluster.workers must be a list"):
+    with pytest.raises(TypeError, match="stage 'prep_a'.*meta.cluster.workers"):
         compute_stage_plan(toy_repo)
 
 
 def test_resource_hierarchy(toy_repo):
-    """Verify priority: meta.cluster > .cluster-ci > defaults."""
+    """Verify priority: meta.cluster > .cluster-ci > defaults (A16 defaults: cpus=2, gpus=0)."""
     plan = compute_stage_plan(toy_repo)
     nodes = {n["name"]: n for n in plan["nodes"]}
 
@@ -168,14 +168,16 @@ def test_resource_hierarchy(toy_repo):
     # ram_gb should come from .cluster-ci (16)
     # vram_gb should come from .cluster-ci (8)
     # image should come from .cluster-ci (nvcr.io/nvidia/pytorch:custom)
-    # cpus should come from DEFAULT (4)
+    # cpus should come from DEFAULT (2 under A16)
+    # gpus should come from .cluster-ci inferred from REQUIRED_VRAM (1)
     # storage_gb should come from DEFAULT (0)
     # workers should come from .cluster-ci (['HEC1', 'HEC2'])
     prep_res = nodes["prep_a"]["resources"]
     assert prep_res["ram_gb"] == 16
     assert prep_res["vram_gb"] == 8
     assert prep_res["image"] == "nvcr.io/nvidia/pytorch:custom"
-    assert prep_res["cpus"] == 4
+    assert prep_res["cpus"] == 2
+    assert prep_res["gpus"] == 1
     assert prep_res["storage_gb"] == 0
     assert prep_res["workers"] == ["HEC1", "HEC2"]
 
@@ -511,3 +513,151 @@ def test_always_changed_no_blind_downstream_propagation_and_replan():
         assert nodes_after["stage_c"]["stale_reason"] == "upstream_stale:stage_b"
     finally:
         shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
+
+
+def test_a16_a17_rejection_vram_without_gpus(toy_repo):
+    """A16/A17 rule: vram_gb > 0 with gpus == 0 must be rejected with actionable message."""
+    dvc_yaml_path = os.path.join(toy_repo, "dvc.yaml")
+    with open(dvc_yaml_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    # Explicitly set vram_gb > 0 and gpus: 0
+    data["stages"]["prep_a"]["meta"] = {"cluster": {"vram_gb": 8, "gpus": 0}}
+    with open(dvc_yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f)
+
+    with pytest.raises(ValueError) as excinfo:
+        compute_stage_plan(toy_repo)
+
+    err = str(excinfo.value)
+    assert "dvc.yaml" in err
+    assert "prep_a" in err
+    assert "meta.cluster.vram_gb" in err
+    assert "meta.cluster.gpus" in err
+    assert "Cause : vram_gb exige gpus >= 1" in err
+    assert "Remède :" in err
+
+
+def test_a16_a17_unknown_key_lists_valid_keys(toy_repo):
+    """A17 rule: unknown key under meta.cluster lists all valid allowed keys."""
+    dvc_yaml_path = os.path.join(toy_repo, "dvc.yaml")
+    with open(dvc_yaml_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    data["stages"]["prep_a"]["meta"] = {"cluster": {"custom_bad_field": 42}}
+    with open(dvc_yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f)
+
+    with pytest.raises(ValueError) as excinfo:
+        compute_stage_plan(toy_repo)
+
+    err = str(excinfo.value)
+    assert "dvc.yaml" in err
+    assert "prep_a" in err
+    assert "custom_bad_field" in err
+    assert "Cause :" in err
+    assert "Remède :" in err
+    assert "Clés valides autorisées :" in err
+    for k in ("cpus", "gpus", "ram_gb", "vram_gb", "storage_gb", "image"):
+        assert k in err
+
+
+def test_a16_a17_negative_or_non_numeric_values(toy_repo):
+    """A17 rule: negative or non-numeric values are rejected with cause, remedy and dvc.yaml key."""
+    dvc_yaml_path = os.path.join(toy_repo, "dvc.yaml")
+
+    # 1. Negative gpus
+    with open(dvc_yaml_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    data["stages"]["prep_a"]["meta"] = {"cluster": {"gpus": -1}}
+    with open(dvc_yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f)
+
+    with pytest.raises(ValueError) as excinfo:
+        compute_stage_plan(toy_repo)
+    assert "meta.cluster.gpus" in str(excinfo.value)
+    assert "Cause :" in str(excinfo.value)
+    assert "Remède :" in str(excinfo.value)
+
+    # 2. Non-numeric ram_gb
+    data["stages"]["prep_a"]["meta"] = {"cluster": {"ram_gb": "invalid_ten"}}
+    with open(dvc_yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f)
+
+    with pytest.raises(ValueError) as excinfo:
+        compute_stage_plan(toy_repo)
+    assert "meta.cluster.ram_gb" in str(excinfo.value)
+    assert "dvc.yaml" in str(excinfo.value)
+
+
+def test_a16_six_resolved_resource_fields(toy_repo):
+    """A16: Plan JSON carries the 6 resolved fields per node and in defaults."""
+    plan = compute_stage_plan(toy_repo)
+
+    expected_fields = {"cpus", "gpus", "ram_gb", "vram_gb", "storage_gb", "image"}
+
+    # Check defaults
+    assert expected_fields.issubset(set(plan["defaults"].keys()))
+    assert plan["defaults"]["cpus"] == 2
+    assert plan["defaults"]["gpus"] == 0
+    assert plan["defaults"]["ram_gb"] == 10
+    assert plan["defaults"]["vram_gb"] == 0
+    assert plan["defaults"]["storage_gb"] == 0
+
+    # Check each node
+    for node in plan["nodes"]:
+        res = node["resources"]
+        assert expected_fields.issubset(set(res.keys()))
+        assert isinstance(res["cpus"], int) and res["cpus"] >= 1
+        assert isinstance(res["gpus"], int) and res["gpus"] >= 0
+        assert isinstance(res["ram_gb"], (int, float)) and res["ram_gb"] >= 0
+        assert isinstance(res["vram_gb"], (int, float)) and res["vram_gb"] >= 0
+        assert isinstance(res["storage_gb"], (int, float)) and res["storage_gb"] >= 0
+        assert isinstance(res["image"], str)
+
+
+def test_a16_cluster_ci_job_equivalents():
+    """A16: REQUIRED_CPUS, REQUIRED_GPUS, REQUIRED_STORAGE in .cluster-ci override defaults."""
+    d = tempfile.mkdtemp(prefix="test_cluster_ci_eq_")
+    try:
+        subprocess.run(["git", "init"], cwd=d, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Tester"], cwd=d, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=d, check=True)
+        subprocess.run(["dvc", "init"], cwd=d, check=True, capture_output=True)
+
+        with open(os.path.join(d, "step.py"), "w", encoding="utf-8") as f:
+            f.write('with open("out.txt", "w") as f: f.write("ok\\n")\n')
+
+        with open(os.path.join(d, ".cluster-ci"), "w", encoding="utf-8") as f:
+            f.write(
+                "REQUIRED_CPUS=6\n"
+                "REQUIRED_GPUS=2\n"
+                "REQUIRED_RAM=32GB\n"
+                "REQUIRED_VRAM=24GB\n"
+                "REQUIRED_STORAGE=50GB\n"
+            )
+
+        dvc_yaml = """stages:
+  simple:
+    cmd: python step.py
+    deps:
+      - step.py
+    outs:
+      - out.txt
+"""
+        with open(os.path.join(d, "dvc.yaml"), "w", encoding="utf-8") as f:
+            f.write(dvc_yaml)
+
+        subprocess.run(["git", "add", "."], cwd=d, check=True)
+        subprocess.run(["git", "commit", "-m", "init eq repo"], cwd=d, check=True)
+
+        plan = compute_stage_plan(d)
+        res = plan["nodes"][0]["resources"]
+        assert res["cpus"] == 6
+        assert res["gpus"] == 2
+        assert res["ram_gb"] == 32
+        assert res["vram_gb"] == 24
+        assert res["storage_gb"] == 50
+    finally:
+        shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
+
