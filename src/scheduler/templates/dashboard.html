@@ -41,10 +41,10 @@
             --bg-page: #f8fafc;
             --bg-card: #ffffff;
             --bg-subtle: #f1f5f9;
-            --border-color: #e2e8f0;
+            --border-color: #cbd5e1;
             --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --text-muted: #94a3b8;
+            --text-secondary: #334155;
+            --text-muted: #64748b;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
             --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
@@ -73,7 +73,7 @@
             --border-color: #374151;
             --text-primary: #f9fafb;
             --text-secondary: #9ca3af;
-            --text-muted: #6b7280;
+            --text-muted: #94a3b8;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
             --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
@@ -89,6 +89,7 @@
             -webkit-font-smoothing: antialiased;
             padding-bottom: 4.5rem;
             min-height: 100vh;
+            overflow-x: hidden;
         }
 
         /* Dark mode overrides for standard elements */
@@ -1051,23 +1052,86 @@
             box-shadow: var(--shadow-sm);
         }
         .v3-machine-card {
-            background: var(--bg-subtle, #f8fafc);
-            border: 1px solid var(--border-color);
+            background: #ffffff !important;
+            border: 1.5px solid #94a3b8 !important;
             border-radius: var(--radius-md);
-            padding: 14px;
+            padding: 16px;
             transition: all 0.2s ease;
             position: relative;
+            box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05) !important;
+            overflow: hidden;
+            word-break: break-word;
         }
         [data-theme="dark"] .v3-machine-card {
-            background: rgba(30, 41, 59, 0.6);
+            background: #111827 !important;
+            border: 1.5px solid #374151 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
         }
         .v3-machine-card:hover {
-            border-color: var(--primary);
-            box-shadow: var(--shadow-sm);
+            border-color: var(--primary) !important;
+            box-shadow: var(--shadow-md) !important;
+        }
+        .v3-gauge-label {
+            color: #1e293b;
+            font-weight: 700;
+        }
+        [data-theme="dark"] .v3-gauge-label {
+            color: #e2e8f0;
+        }
+        .v3-modal-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #0f172a;
+            margin-bottom: 6px;
+        }
+        [data-theme="dark"] .v3-modal-section-title {
+            color: #f1f5f9 !important;
+        }
+        .badge-spec-pill {
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: #e2e8f0;
+            color: #0f172a;
+            border: 1px solid #cbd5e1;
+        }
+        [data-theme="dark"] .badge-spec-pill {
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #475569;
+        }
+        .badge-classic-pill {
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: #f1f5f9;
+            color: #0f172a;
+            border: 1px solid #94a3b8;
+        }
+        [data-theme="dark"] .badge-classic-pill {
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #64748b;
+        }
+        .badge-prog-pill {
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
         }
         .v3-dag-wrapper {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
             border-radius: var(--radius-lg);
             padding: 24px;
             overflow-x: auto;
@@ -1079,10 +1143,21 @@
         }
         [data-theme="dark"] .v3-dag-wrapper {
             background: #0f172a;
+            border-color: #334155;
         }
         .v3-dag-wrapper svg {
             max-width: 100%;
             height: auto;
+            min-height: 180px;
+        }
+        [data-theme="dark"] .v3-dag-wrapper svg .edgePath path {
+            stroke: #94a3b8 !important;
+            stroke-width: 2px !important;
+        }
+        [data-theme="dark"] .v3-dag-wrapper svg marker polygon,
+        [data-theme="dark"] .v3-dag-wrapper svg marker path {
+            fill: #94a3b8 !important;
+            stroke: #94a3b8 !important;
         }
         .v3-node-status-badge {
             font-size: 0.72rem;
@@ -1172,9 +1247,9 @@
                     <i id="theme-toggle-icon" class="bi bi-sun-fill text-warning"></i>
                 </button>
                 <div class="navbar-text d-flex align-items-center">
-                    <span><i class="bi bi-person-circle me-1"></i> <strong>{{ user.login }}</strong></span>
-                    <a href="{{ url_for('logout') }}" class="btn btn-logout ms-3">
-                        <i class="bi bi-box-arrow-right"></i> Logout
+                    <span><i class="bi bi-person-circle me-1"></i> <strong>{{ user.login | default('admin') if user is defined and user else 'admin' }}</strong></span>
+                    <a href="{{ url_for('logout') if url_for is defined else '/logout' }}" class="btn btn-logout ms-3">
+                        <i class="bi bi-box-arrow-right me-1"></i>Déconnexion
                     </a>
                 </div>
             </div>
@@ -1184,7 +1259,7 @@
     <div class="container mt-4">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb breadcrumb-premium" id="breadcrumb">
-                <li class="breadcrumb-item active" id="breadcrumb-home" onclick="navigateToRoot()"><i class="bi bi-house-door-fill me-1"></i>Home</li>
+                <li class="breadcrumb-item active" id="breadcrumb-home" onclick="navigateToRoot()"><i class="bi bi-house-door-fill me-1"></i>Accueil</li>
             </ol>
         </nav>
 
@@ -1194,7 +1269,7 @@
             <!-- Content will be loaded here via JS -->
             <div class="col-12 text-center py-5">
                 <div class="spinner-border text-primary" role="status">
-                    <span class="visually-hidden">Loading...</span>
+                    <span class="visually-hidden">Chargement...</span>
                 </div>
             </div>
         </div>
@@ -1588,7 +1663,7 @@
                 let machineBadge = '';
                 if (n.machine) {
                     const isHome = (n.machine === homeWorker);
-                    machineBadge = ` [${isHome ? '🏠' : '⚡'}${n.machine}]`;
+                    machineBadge = ` (${isHome ? '🏠' : '⚡'}${n.machine})`;
                 }
                 const durationStr = n.duration ? ` (${Math.round(n.duration)}s)` : '';
                 const cleanLabel = `${statusEmoji} ${n.name}${machineBadge}${durationStr}`;
@@ -1694,9 +1769,9 @@
 
             // 1. Overview container
             const overviewEl = document.getElementById('v3-dag-overview-container');
-            const homeBadge = job.home_worker ? `<span class="v3-badge v3-badge-home"><i class="bi bi-house-door-fill"></i> Machine Prioritaire (Home) : <strong>${escapeHtml(job.home_worker)}</strong></span>` : '<span class="text-muted">Aucune machine prioritaire assignée</span>';
+            const homeBadge = job.home_worker ? `<span class="v3-badge v3-badge-home"><i class="bi bi-house-door-fill"></i> Machine Principale : <strong>${escapeHtml(job.home_worker)}</strong></span>` : '<span class="text-muted">Aucune machine principale assignée</span>';
             const extraWorkers = activeWorkersList.filter(w => w !== job.home_worker);
-            const extrasBadge = extraWorkers.length > 0 ? extraWorkers.map(w => `<span class="v3-badge v3-badge-extra"><i class="bi bi-lightning-charge-fill"></i> Extra : <strong>${escapeHtml(w)}</strong></span>`).join(' ') : '<span class="text-muted small">Aucune machine supplémentaire</span>';
+            const extrasBadge = extraWorkers.length > 0 ? extraWorkers.map(w => `<span class="v3-badge v3-badge-extra"><i class="bi bi-lightning-charge-fill"></i> Auxiliaire : <strong>${escapeHtml(w)}</strong></span>`).join(' ') : '<span class="text-muted small">Aucune machine auxiliaire</span>';
 
             const statusClassMap = {
                 completed: 'badge-success-premium',
@@ -1710,7 +1785,7 @@
                 <div class="row g-3">
                     <div class="col-12 col-md-6 col-lg-3">
                         <div class="card h-100 p-3 shadow-sm border" style="background: var(--bg-card); border-color: var(--border-color) !important;">
-                            <div class="text-muted small text-uppercase fw-semibold mb-1">Statut Consolidé</div>
+                            <div class="v3-modal-section-title">Statut Consolidé</div>
                             <div class="d-flex align-items-center gap-2">
                                 ${aggStatusBadge}
                                 <span class="v3-badge v3-badge-dag">v3 Parallèle</span>
@@ -1719,7 +1794,7 @@
                     </div>
                     <div class="col-12 col-md-6 col-lg-5">
                         <div class="card h-100 p-3 shadow-sm border" style="background: var(--bg-card); border-color: var(--border-color) !important;">
-                            <div class="text-muted small text-uppercase fw-semibold mb-1">Machines Assignées</div>
+                            <div class="v3-modal-section-title">Machines Assignées</div>
                             <div class="d-flex align-items-center gap-2 flex-wrap">
                                 ${homeBadge}
                                 ${extrasBadge}
@@ -1728,14 +1803,14 @@
                     </div>
                     <div class="col-12 col-md-12 col-lg-4">
                         <div class="card h-100 p-3 shadow-sm border" style="background: var(--bg-card); border-color: var(--border-color) !important;">
-                            <div class="text-muted small text-uppercase fw-semibold mb-1">Progression des Nœuds (${nodes.length} total)</div>
+                            <div class="v3-modal-section-title">Progression des Nœuds (${nodes.length} total)</div>
                             <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size: 0.78rem;">
-                                <span class="badge bg-success-subtle text-success border border-success-subtle">${counts.done} terminés</span>
-                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${counts.running} en cours</span>
-                                <span class="badge bg-info-subtle text-info border border-info-subtle">${counts.ready} prêts</span>
-                                <span class="badge bg-secondary-subtle text-secondary border">${counts.pending} en attente</span>
-                                ${counts.failed > 0 ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle">${counts.failed} échoués</span>` : ''}
-                                ${counts.blocked > 0 ? `<span class="badge bg-warning-subtle text-warning border">${counts.blocked} bloqués</span>` : ''}
+                                <span class="badge-spec-pill" style="color: #047857; border-color: rgba(4,120,87,0.3);">${counts.done} terminés</span>
+                                <span class="badge-spec-pill" style="color: #1d4ed8; border-color: rgba(29,78,216,0.3);">${counts.running} en cours</span>
+                                <span class="badge-spec-pill" style="color: #0e7490; border-color: rgba(14,116,144,0.3);">${counts.ready} prêts</span>
+                                <span class="badge-spec-pill" style="color: #475569; border-color: rgba(71,85,105,0.3);">${counts.pending} en attente</span>
+                                ${counts.failed > 0 ? `<span class="badge-spec-pill" style="color: #b91c1c; border-color: rgba(185,28,28,0.3);">${counts.failed} échoués</span>` : ''}
+                                ${counts.blocked > 0 ? `<span class="badge-spec-pill" style="color: #c2410c; border-color: rgba(194,65,12,0.3);">${counts.blocked} bloqués</span>` : ''}
                             </div>
                         </div>
                     </div>
@@ -1760,18 +1835,19 @@
                     let nodeContent = '';
                     if (runningNode) {
                         const dur = runningNode.duration ? `${Math.round(runningNode.duration)}s` : 'en cours';
+                        const isWorkerUnified = (workerId === 'beta' || runningNode.resources.is_unified);
                         nodeContent = `
                             <div class="d-flex align-items-center gap-2 mb-2">
                                 <span class="spinner-grow spinner-grow-sm text-primary" role="status"></span>
                                 <strong class="text-primary font-monospace" style="font-size:0.9rem;">${escapeHtml(runningNode.name)}</strong>
-                                <span class="v3-node-status-badge v3-status-running">running</span>
+                                <span class="v3-node-status-badge v3-status-running">En cours</span>
                             </div>
                             <div class="small text-muted mb-1"><i class="bi bi-box-seam me-1"></i><span class="font-monospace text-truncate d-inline-block" style="max-width:240px;" title="${escapeHtml(runningNode.image)}">${escapeHtml(runningNode.image)}</span></div>
                             <div class="d-flex align-items-center gap-2 flex-wrap small">
-                                <span class="badge bg-secondary-subtle text-dark border"><i class="bi bi-cpu me-1"></i>${runningNode.resources.cpus} cpus</span>
-                                <span class="badge bg-secondary-subtle text-dark border"><i class="bi bi-memory me-1"></i>${runningNode.resources.ram_gb} GB RAM</span>
-                                ${runningNode.resources.vram_gb > 0 ? `<span class="badge bg-success-subtle text-success border"><i class="bi bi-gpu-card me-1"></i>${runningNode.resources.vram_gb} GB VRAM</span>` : ''}
-                                <span class="badge bg-light text-muted border"><i class="bi bi-clock me-1"></i>${dur}</span>
+                                <span class="badge-spec-pill"><i class="bi bi-cpu me-1"></i>${runningNode.resources.cpus} cpus</span>
+                                <span class="badge-spec-pill"><i class="bi bi-memory me-1"></i>${runningNode.resources.ram_gb} GB RAM</span>
+                                ${runningNode.resources.vram_gb > 0 ? `<span class="badge-spec-pill" style="color:#059669; border-color:rgba(5,150,105,0.3);"><i class="bi bi-gpu-card me-1"></i>${runningNode.resources.vram_gb} GB ${isWorkerUnified ? 'mémoire unifiée' : 'VRAM'}</span>` : ''}
+                                <span class="badge-spec-pill"><i class="bi bi-clock me-1"></i>${dur}</span>
                             </div>
                         `;
                     } else {
@@ -1790,7 +1866,7 @@
                                     <strong class="text-dark">${escapeHtml(workerId)}</strong>
                                 </div>
                                 <span class="v3-badge ${isHome ? 'v3-badge-home' : 'v3-badge-extra'}">
-                                    ${isHome ? '<i class="bi bi-house-door-fill"></i> Home' : '<i class="bi bi-lightning-charge-fill"></i> Extra'}
+                                    ${isHome ? '<i class="bi bi-house-door-fill"></i> Principale' : '<i class="bi bi-lightning-charge-fill"></i> Auxiliaire'}
                                 </span>
                             </div>
                             ${nodeContent}
@@ -1837,16 +1913,16 @@
                 const res = n.resources || {};
                 const resBadges = `
                     <div class="d-flex gap-1 flex-wrap" style="font-size:0.75rem;">
-                        <span class="badge bg-secondary-subtle text-dark border" title="CPUs demandés">${res.cpus || 4}c</span>
-                        <span class="badge bg-secondary-subtle text-dark border" title="RAM demandée">${res.ram_gb || 10}G</span>
-                        ${res.vram_gb > 0 ? `<span class="badge bg-success-subtle text-success border" title="VRAM demandée">${res.vram_gb}G</span>` : ''}
-                        ${res.storage_gb > 0 ? `<span class="badge bg-info-subtle text-info border" title="Disque demandé">${res.storage_gb}G</span>` : ''}
+                        <span class="badge-spec-pill" title="CPUs demandés">${res.cpus || 4}c</span>
+                        <span class="badge-spec-pill" title="RAM demandée">${res.ram_gb || 10}G</span>
+                        ${res.vram_gb > 0 ? `<span class="badge-spec-pill" style="color:#059669; border-color:rgba(5,150,105,0.3);" title="VRAM demandée">${res.vram_gb}G</span>` : ''}
+                        ${res.storage_gb > 0 ? `<span class="badge-spec-pill" style="color:#0284c7; border-color:rgba(2,132,199,0.3);" title="Disque demandé">${res.storage_gb}G</span>` : ''}
                     </div>
                 `;
 
                 const durationStr = n.duration !== null ? `${Math.round(n.duration)}s` : '—';
                 const exitStr = n.exit_code !== null ? (n.exit_code === 0 ? '<span class="text-success small"><i class="bi bi-check-lg"></i> 0</span>' : `<span class="text-danger small fw-bold"><i class="bi bi-x-lg"></i> ${n.exit_code}</span>`) : '';
-                const staleStr = n.stale ? `<span class="badge bg-warning-subtle text-warning border" title="${escapeHtml(n.stale_reason || 'stale')}">stale (${escapeHtml(n.stale_reason || 'yes')})</span>` : '<span class="badge bg-light text-muted border">cached</span>';
+                const staleStr = n.stale ? `<span class="badge bg-warning-subtle text-warning border" title="${escapeHtml(n.stale_reason || 'stale')}">obsolète (${escapeHtml(n.stale_reason || 'oui')})</span>` : '<span class="badge-spec-pill">en cache</span>';
 
                 tr.innerHTML = `
                     <td class="font-monospace fw-semibold" style="color: var(--primary);">
@@ -1992,8 +2068,8 @@
             if (isV3) {
                 v3BadgesHtml = `
                     <span class="v3-badge v3-badge-dag"><i class="bi bi-diagram-3-fill"></i> v3 DAG</span>
-                    ${run.home_worker ? `<span class="v3-badge v3-badge-home" title="Machine prioritaire"><i class="bi bi-house-door-fill"></i> Home: ${escapeHtml(run.home_worker)}</span>` : ''}
-                    ${activeWorkersList.filter(w => w !== run.home_worker).map(w => `<span class="v3-badge v3-badge-extra" title="Machine supplémentaire"><i class="bi bi-lightning-charge-fill"></i> Extra: ${escapeHtml(w)}</span>`).join('')}
+                    ${run.home_worker ? `<span class="v3-badge v3-badge-home" title="Machine principale"><i class="bi bi-house-door-fill"></i> Principale : ${escapeHtml(run.home_worker)}</span>` : ''}
+                    ${activeWorkersList.filter(w => w !== run.home_worker).map(w => `<span class="v3-badge v3-badge-extra" title="Machine auxiliaire"><i class="bi bi-lightning-charge-fill"></i> Auxiliaire : ${escapeHtml(w)}</span>`).join('')}
                 `;
             }
 
@@ -2002,12 +2078,12 @@
 
             col.innerHTML = `
                 <div class="active-run-card p-3 fade-refresh" style="${isMaintenance ? 'border-left: 4px solid #9333ea;' : (isV3 ? 'border-left: 4px solid #6366f1;' : '')}">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="d-flex align-items-center gap-3" onclick="navigateToProject('${run.repo}')" style="cursor: pointer;">
-                            <div class="active-run-status" style="${isMaintenance ? 'background: #9333ea; box-shadow: 0 0 8px rgba(147, 51, 234, 0.6);' : (isV3 ? 'background: #6366f1; box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);' : '')}"></div>
-                            <div>
-                                <div class="d-flex align-items-center gap-2 mb-1">
-                                    <h6 class="mb-0" style="color: ${isMaintenance ? '#9333ea' : (isV3 ? '#4f46e5' : 'var(--primary)')}; font-weight: 700;">${escapeHtml(run.repo)}</h6>
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                        <div class="d-flex align-items-center gap-3 flex-grow-1" onclick="navigateToProject('${run.repo}')" style="min-width: 0; cursor: pointer;">
+                            <div class="active-run-status flex-shrink-0" style="${isMaintenance ? 'background: #9333ea; box-shadow: 0 0 8px rgba(147, 51, 234, 0.6);' : (isV3 ? 'background: #6366f1; box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);' : '')}"></div>
+                            <div style="min-width: 0;">
+                                <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                                    <h6 class="mb-0 text-truncate" style="color: ${isMaintenance ? '#9333ea' : (isV3 ? '#4f46e5' : 'var(--primary)')}; font-weight: 700; max-width: 320px;">${escapeHtml(run.repo)}</h6>
                                     ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at + 'Z'}">${elapsedStr}</span>` : ''}
                                 </div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -2025,10 +2101,10 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="d-flex gap-2 flex-shrink-0">
+                        <div class="d-flex gap-2 flex-shrink-0 flex-wrap">
                             ${isV3 ? `<button class="btn btn-outline-info btn-action" onclick="openV3DagModal('${run.job_id}')" title="Afficher le graphe du DAG et la répartition par machine"><i class="bi bi-diagram-3-fill"></i> <span class="d-none d-sm-inline">Vue DAG & Nœuds</span></button>` : ''}
                             <button class="btn btn-outline-danger btn-action" onclick="stopJob('${run.job_id}')">
-                                <i class="bi bi-stop-circle"></i> Stop
+                                <i class="bi bi-stop-circle"></i> Arrêter
                             </button>
                             <button class="btn btn-outline-primary btn-action" onclick="showLogs('${run.job_id}')">
                                 <i class="bi bi-terminal"></i> Logs
@@ -2485,7 +2561,7 @@
 
         const container = document.getElementById('explorer-container');
         const breadcrumb = document.getElementById('breadcrumb');
-        const currentUser = '{{ user.login }}';
+        const currentUser = '{{ user.login | default("admin") if user is defined and user else "admin" }}';
 
         let currentState = {
             view: 'root', // root, project, run
@@ -2522,7 +2598,7 @@
 
             const homeLi = document.createElement('li');
             homeLi.className = 'breadcrumb-item ' + (currentState.view === 'root' ? 'active' : '');
-            homeLi.textContent = 'Home';
+            homeLi.textContent = 'Accueil';
             homeLi.onclick = navigateToRoot;
             breadcrumb.appendChild(homeLi);
 
@@ -2633,7 +2709,7 @@
                     const runningHeader = document.createElement('div');
                     runningHeader.className = 'col-12 full-width mb-3 mt-2';
                     runningHeader.innerHTML = `<h4 class="d-flex align-items-center gap-2" style="color: var(--primary);">
-                        <i class="bi bi-activity"></i> Active Cluster Runs
+                        <i class="bi bi-activity"></i> Exécutions Actives du Cluster
                         <span class="badge-premium badge-primary-premium">${activeRuns.length}</span>
                     </h4>`;
                     container.appendChild(runningHeader);
@@ -2644,7 +2720,7 @@
                     
                     const divider = document.createElement('div');
                     divider.className = 'col-12 full-width mt-4 mb-3';
-                    divider.innerHTML = '<h4 class="text-secondary"><i class="bi bi-folder2-open"></i> Projects</h4><hr>';
+                    divider.innerHTML = '<h4 class="text-secondary"><i class="bi bi-folder2-open"></i> Projets</h4><hr>';
                     container.appendChild(divider);
                 }
 
@@ -3758,7 +3834,7 @@
                                     repo: repoStr,
                                     branch: branchStr,
                                     user: userStr,
-                                    nodeName: 'Coordinateur Home',
+                                    nodeName: 'Coordinateur Principal',
                                     runnerId: `home-coord-${homeWorker}`,
                                     image: parsed.defaults?.image || 'nvcr.io/nvidia/pytorch:26.05-py3',
                                     cpus: 1,
@@ -3828,7 +3904,7 @@
                 const statsBarHtml = `
                     <div class="cluster-stats-bar">
                         <div class="cluster-stats-section">
-                            <div class="cluster-stats-label">Cluster Workers</div>
+                            <div class="cluster-stats-label">MACHINES DU CLUSTER</div>
                             <span class="badge-premium badge-success-premium">
                                 <i class="bi bi-check-circle-fill"></i> ${onlineWorkers.length}/${workers.length} en ligne
                             </span>
@@ -3862,7 +3938,7 @@
                     const capCpus = w.cpus || w.total_cpus || w.cpus_total || 16;
                     const capRam = w.ram_gb || w.total_ram_gb || 64;
                     const capStorage = w.total_storage_gb || w.storage_gb || 1000;
-                    const isUnified = !!(w.unified_memory || w.is_unified_memory);
+                    const isUnified = !!(w.unified_memory || w.is_unified_memory || (w.gpu_name && w.gpu_name.includes('GB10')));
                     const vramPerGpu = Array.isArray(w.vram_per_gpu) ? w.vram_per_gpu : [];
                     const capVram = w.total_vram_gb || (vramPerGpu.length > 0 ? vramPerGpu.reduce((a, b) => a + (b || 0), 0) : 0);
 
@@ -3902,8 +3978,8 @@
 
                         memoryGaugesHtml = `
                             <div class="mb-2 p-2 rounded border bg-light">
-                                <div class="d-flex justify-content-between align-items-center mb-1 small">
-                                    <span class="fw-bold text-dark"><i class="bi bi-memory me-1 text-info"></i>Mémoire Unifiée Admise</span>
+                                <div class="d-flex justify-content-between align-items-center mb-1 small flex-wrap gap-1">
+                                    <span class="v3-gauge-label"><i class="bi bi-memory me-1 text-info"></i>Mémoire Unifiée Admise</span>
                                     <span class="font-monospace fw-semibold">${sumUnifiedAdm.toFixed(1)} / ${unifiedCap.toFixed(1)} GB (${pctUnified}%)</span>
                                 </div>
                                 <div class="progress" style="height: 8px;">
@@ -3932,8 +4008,8 @@
 
                             vramGaugeHtml = `
                                 <div class="mb-2">
-                                    <div class="d-flex justify-content-between mb-1 small">
-                                        <span class="fw-bold text-muted"><i class="bi bi-gpu-card me-1"></i>VRAM Admise</span>
+                                    <div class="d-flex justify-content-between mb-1 small flex-wrap gap-1">
+                                        <span class="v3-gauge-label"><i class="bi bi-gpu-card me-1"></i>VRAM Admise</span>
                                         <span class="font-monospace">${admVram.toFixed(1)} / ${capVram.toFixed(1)} GB (${pctVram}%)</span>
                                     </div>
                                     <div class="progress" style="height: 8px;">
@@ -3946,8 +4022,8 @@
 
                         memoryGaugesHtml = `
                             <div class="mb-2">
-                                <div class="d-flex justify-content-between mb-1 small">
-                                    <span class="fw-bold text-muted"><i class="bi bi-hdd-stack me-1"></i>RAM Admise</span>
+                                <div class="d-flex justify-content-between mb-1 small flex-wrap gap-1">
+                                    <span class="v3-gauge-label"><i class="bi bi-hdd-stack me-1"></i>RAM Admise</span>
                                     <span class="font-monospace">${admRam.toFixed(1)} / ${capRam.toFixed(1)} GB (${pctRam}%)</span>
                                 </div>
                                 <div class="progress" style="height: 8px;">
@@ -3976,14 +4052,14 @@
                             const isV3 = (ex.type === 'v3_node' || ex.type === 'v3_coordinator');
                             const typeBadge = isV3 ? 
                                 `<span class="v3-badge v3-badge-dag" style="font-size:0.68rem; padding: 1px 6px;">v3 DAG</span>` :
-                                `<span class="badge bg-secondary-subtle text-dark border" style="font-size:0.68rem;">Classique</span>`;
+                                `<span class="badge-classic-pill" style="font-size:0.68rem;">Classique</span>`;
                             const homeBadge = ex.isHome ? 
-                                `<span class="v3-badge v3-badge-home" style="font-size:0.68rem; padding: 1px 6px;">🏠 Home</span>` :
-                                `<span class="v3-badge v3-badge-extra" style="font-size:0.68rem; padding: 1px 6px;">⚡ Extra</span>`;
+                                `<span class="v3-badge v3-badge-home" style="font-size:0.68rem; padding: 1px 6px;">🏠 Principale</span>` :
+                                `<span class="v3-badge v3-badge-extra" style="font-size:0.68rem; padding: 1px 6px;">⚡ Auxiliaire</span>`;
 
                             executorsListHtml += `
                                 <div class="p-2 rounded border bg-light" style="font-size: 0.78rem;">
-                                    <div class="d-flex justify-content-between align-items-start mb-1">
+                                    <div class="d-flex justify-content-between align-items-start mb-1 flex-wrap gap-1">
                                         <div>
                                             <div class="d-flex align-items-center gap-1 mb-1">
                                                 ${typeBadge}
@@ -4011,10 +4087,10 @@
                                         <i class="bi bi-box-seam me-1 text-primary"></i>${escapeHtml(ex.image)}
                                     </div>
                                     <div class="d-flex align-items-center gap-1 flex-wrap">
-                                        <span class="badge bg-secondary-subtle text-dark border">${ex.cpus}c</span>
-                                        <span class="badge bg-secondary-subtle text-dark border">${ex.ramGb}G RAM</span>
-                                        ${ex.vramGb > 0 ? `<span class="badge bg-success-subtle text-success border">${ex.vramGb}G VRAM</span>` : ''}
-                                        ${ex.duration ? `<span class="badge bg-light text-muted border"><i class="bi bi-clock me-1"></i>${typeof ex.duration === 'number' ? Math.round(ex.duration) + 's' : ex.duration}</span>` : ''}
+                                        <span class="badge-spec-pill">${ex.cpus}c</span>
+                                        <span class="badge-spec-pill">${ex.ramGb}G RAM</span>
+                                        ${ex.vramGb > 0 ? `<span class="badge-spec-pill" style="color:#059669; border-color:rgba(5,150,105,0.3);">${ex.vramGb}G ${(isUnified || ex.is_unified) ? 'mémoire unifiée' : 'VRAM'}</span>` : ''}
+                                        ${ex.duration ? `<span class="badge-spec-pill"><i class="bi bi-clock me-1"></i>${typeof ex.duration === 'number' ? Math.round(ex.duration) + 's' : ex.duration}</span>` : ''}
                                     </div>
                                 </div>
                             `;
@@ -4045,7 +4121,7 @@
                                         <span class="font-monospace text-truncate me-2 text-dark" style="max-width: 250px;" title="${escapeHtml(imgName)}">
                                             <i class="bi bi-box-seam me-1 text-primary"></i>${escapeHtml(imgName)}
                                         </span>
-                                        ${sizeStr ? `<span class="badge bg-secondary-subtle text-secondary font-monospace" style="font-size:0.7rem;">${sizeStr}</span>` : ''}
+                                        ${sizeStr ? `<span class="badge-spec-pill font-monospace" style="font-size:0.7rem;">${sizeStr}</span>` : ''}
                                     </div>
                                 `;
                             }).join('');
@@ -4059,7 +4135,7 @@
                                         <span class="font-monospace text-truncate me-2 text-dark" style="max-width: 250px;" title="${escapeHtml(name)}">
                                             <i class="bi bi-box-seam me-1 text-primary"></i>${escapeHtml(name)}
                                         </span>
-                                        ${sizeStr ? `<span class="badge bg-secondary-subtle text-secondary font-monospace" style="font-size:0.7rem;">${sizeStr}</span>` : ''}
+                                        ${sizeStr ? `<span class="badge-spec-pill font-monospace" style="font-size:0.7rem;">${sizeStr}</span>` : ''}
                                     </div>
                                 `;
                             }).join('');
@@ -4097,21 +4173,21 @@
                                             <h5 class="card-title text-dark mb-0 fw-bold">
                                                 <i class="bi bi-pc-display-horizontal text-primary me-1"></i>${escapeHtml(w.hostname || w.worker_id.substring(0,8))}
                                             </h5>
-                                            ${w.arch ? `<span class="badge bg-secondary-subtle text-secondary" style="font-size:0.7rem;">${escapeHtml(w.arch)}</span>` : ''}
-                                            ${isUnified ? `<span class="badge bg-info-subtle text-info border" style="font-size:0.7rem;"><i class="bi bi-cpu me-1"></i>Mémoire Unifiée</span>` : ''}
+                                            ${w.arch ? `<span class="badge-spec-pill" style="font-size:0.7rem;">${escapeHtml(w.arch)}</span>` : ''}
+                                            ${isUnified ? `<span class="badge-spec-pill" style="font-size:0.7rem; color: #0284c7; border-color: rgba(2,132,199,0.3);"><i class="bi bi-cpu me-1"></i>Mémoire Unifiée</span>` : ''}
                                         </div>
                                         <span class="badge ${isBusy ? 'bg-primary-subtle text-primary border border-primary-subtle' : 'bg-success-subtle text-success border border-success-subtle'}">
                                             <i class="bi bi-circle-fill" style="font-size:0.5rem; vertical-align:middle;"></i> ${isBusy ? 'Occupée' : 'Disponible'}
                                         </span>
                                     </div>
-                                    ${w.gpu_name ? `<div class="small text-muted mb-2"><i class="bi bi-gpu-card me-1 text-success"></i>${escapeHtml(w.gpu_name)}${capVram > 0 ? ` &bull; ${Math.round(capVram)} GB VRAM` : ''}</div>` : ''}
+                                    ${w.gpu_name ? `<div class="small text-muted mb-2"><i class="bi bi-gpu-card me-1 text-success"></i>${escapeHtml(w.gpu_name)}${capVram > 0 ? (isUnified ? ` &bull; ${Math.round(capVram)} GB mémoire unifiée` : ` &bull; ${Math.round(capVram)} GB VRAM`) : ''}</div>` : ''}
                                     
                                     <hr class="my-2">
 
                                     <!-- Jauges Ressources Admises vs Capacité -->
                                     <div class="mb-2">
-                                        <div class="d-flex justify-content-between mb-1 small">
-                                            <span class="fw-bold text-muted"><i class="bi bi-cpu me-1"></i>CPUs Admis</span>
+                                        <div class="d-flex justify-content-between mb-1 small flex-wrap gap-1">
+                                            <span class="v3-gauge-label"><i class="bi bi-cpu me-1"></i>CPUs Admis</span>
                                             <span class="font-monospace">${admCpus} / ${capCpus} cpus (${pctCpus}%)</span>
                                         </div>
                                         <div class="progress" style="height: 8px;">
@@ -4123,8 +4199,8 @@
 
                                     <!-- Jauge Stockage Disque (avec alerte >85%) -->
                                     <div class="mb-2">
-                                        <div class="d-flex justify-content-between mb-1 small">
-                                            <span class="fw-bold text-muted"><i class="bi bi-hdd-fill me-1"></i>Stockage Disque</span>
+                                        <div class="d-flex justify-content-between mb-1 small flex-wrap gap-1">
+                                            <span class="v3-gauge-label"><i class="bi bi-hdd-fill me-1"></i>Stockage Disque</span>
                                             <span class="font-monospace">${storageUsed.toFixed(1)} / ${storageTotal.toFixed(1)} GB (${storageUsedPct}%)</span>
                                         </div>
                                         <div class="progress" style="height: 8px;">
@@ -4966,7 +5042,7 @@
                         const runningHeader = document.createElement('div');
                         runningHeader.className = 'col-12 full-width mb-3 mt-2';
                         runningHeader.innerHTML = `<h4 class="d-flex align-items-center gap-2" style="color: var(--primary);">
-                            <i class="bi bi-activity"></i> Active Cluster Runs
+                            <i class="bi bi-activity"></i> Exécutions Actives du Cluster
                             <span class="badge-premium badge-primary-premium">${activeRuns.length}</span>
                         </h4>`;
                         container.insertBefore(runningHeader, container.firstChild);

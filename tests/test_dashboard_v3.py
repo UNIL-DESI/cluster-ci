@@ -11,10 +11,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, render_template
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-TEMPLATE_PATH = BASE_DIR / "src" / "scheduler" / "templates" / "dashboard.html"
+TEMPLATE_DIR = BASE_DIR / "src" / "scheduler" / "templates"
+STATIC_DIR = BASE_DIR / "src" / "scheduler" / "static"
 FIXTURE_PATH = BASE_DIR / "tests" / "fixtures" / "v3_job_fixture.json"
 
 
@@ -25,14 +26,15 @@ def load_fixtures():
 
 def create_test_app():
     fixtures = load_fixtures()
-    static_dir = BASE_DIR / "src" / "scheduler" / "static"
-    app = Flask(__name__, static_folder=str(static_dir), static_url_path="/static")
+    app = Flask(__name__, template_folder=str(TEMPLATE_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
 
     @app.route("/")
     def index():
-        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            html = f.read()
-        return Response(html, mimetype="text/html")
+        return render_template("dashboard.html", user={"login": "hjamet"})
+
+    @app.route("/logout")
+    def logout():
+        return ("", 200)
 
     @app.route("/api/projects")
     def api_projects():
@@ -156,6 +158,13 @@ class DashboardV3ServerTestCase(unittest.TestCase):
         self.assertIn("Alerte Disque (&gt;85%)", resp.text)
         self.assertNotIn("Packing A11", resp.text)
         self.assertNotIn("CPUs Admis (A11)", resp.text)
+        self.assertIn("hjamet", resp.text)
+        self.assertNotIn("{{ user", resp.text)
+        self.assertIn("MACHINES DU CLUSTER", resp.text)
+        self.assertIn("Exécutions Actives du Cluster", resp.text)
+        self.assertIn("badge-spec-pill", resp.text)
+        self.assertIn("v3-modal-section-title", resp.text)
+        self.assertNotIn("Active Cluster Runs", resp.text)
 
     def test_local_mermaid_static_serving(self):
         resp = self.client.get("/static/mermaid.min.js")
