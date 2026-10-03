@@ -17,6 +17,8 @@ If you are a researcher looking to run experiments on the cluster, start here:
 *   **[DVC & Storage Guide](user/dvc.md)**: Learn how to define your experiment pipeline in `dvc.yaml` and how results are synced back to you.
 *   **[Docker Containers & Environments](user/containers.md)**: Understand the default PyTorch environment, customize Docker images, and set up libraries like Unsloth.
 *   **[CI Pipeline & Queue Scheduler](user/ci_queue.md)**: How jobs are queued, scheduled across workers, and cancelled automatically.
+*   **[Per-Stage Resources (`meta.cluster`)](user/stage_resources.md)**: Fine-grained resource allocation (CPU, RAM, VRAM, storage, image) per stage in `dvc.yaml`.
+*   **[Parallel DAG Execution](user/parallel_execution.md)**: Multi-worker distributed execution of independent pipeline branches.
 *   **[Monitoring Dashboard](user/dashboard.md)**: Navigate the real-time web dashboard to monitor jobs, browse artifacts, and inspect experiment results.
 *   **[Configuration Reference (`.cluster-ci`)](user/configuration.md)**: Complete reference for all hardware, runtime, and Docker parameters.
 *   **[Support & Troubleshooting](user/support.md)**: Error code lookup table and pre-commit scanner guidelines.

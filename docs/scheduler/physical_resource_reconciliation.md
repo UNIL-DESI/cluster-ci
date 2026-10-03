@@ -71,6 +71,8 @@ The worker agent (`worker_agent.py`) implements a high-reliability, multi-tiered
    * **JIT Pre-flight Purge**: Before spawning new container runtimes.
    * **Cancellation Webhook**: Triggered immediately upon receiving `/cancel/<job_id>`.
    * **Systemd Shutdown Hook**: Executed on worker agent SIGTERM signals to ensure absolute clean states.
+   * **v3 Node Rebalancing & Yield**: When a worker yields (`action: "yield"`) at a DAG stage boundary or transitions to a new image (`action: "switch_image"`), host resources are cleanly reset to prevent cross-stage memory leakage.
+<!-- v3: à vérifier contre l'implémentation : appel des hooks de purge lors du switch_image -->
 
 ### 2.3 Main Loop Hardening & Network Resilience
 To prevent silent worker failures where the background API server continues responding but the main execution loop has crashed, the agent incorporates a defensive dual-layer recovery structure:

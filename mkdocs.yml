@@ -35,6 +35,8 @@ nav:
       - DVC & Storage: user/dvc.md
       - Docker Containers: user/containers.md
       - CI & Queue Scheduler: user/ci_queue.md
+      - Per-Stage Resources (meta.cluster): user/stage_resources.md
+      - Parallel DAG Execution: user/parallel_execution.md
       - Monitoring Dashboard: user/dashboard.md
       - Configuration Reference: user/configuration.md
       - Support & Troubleshooting: user/support.md

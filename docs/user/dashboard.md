@@ -24,22 +24,23 @@ The main dashboard view is divided into three monitoring panels:
 ### A. Worker Diagnostics Node View
 Shows the current status of all physical workers in the cluster:
 *   **Worker State**: Green indicators for online workers; grey for offline nodes.
-*   **Hardware Telemetry**: Displays the active RAM and GPU VRAM utilization.
-*   **Active Allocation**: Shows which job is currently assigned to the worker.
+*   **Hardware Telemetry**: Displays the active RAM, GPU VRAM, CPU utilization, and free disk space.
+*   **Active Allocation**: Shows which job and pipeline node is currently assigned to the worker.
 
 ### B. Active Executions
 Tracks jobs currently running on the cluster:
-*   **Job Metadata**: Displays the user, repository, active branch, and elapsed time (automatically calibrated to UTC timezone offsets).
+*   **Job Metadata**: Displays the user, repository, active branch, elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated **Home Worker**).
+*   **Stage DAG Status**: For parallel jobs (`PARALLEL_STAGES=true`), displays the execution graph state per stage (`pending`, `ready`, `running`, `done`, `failed`, `blocked`, `skipped`).
 *   **Control Actions**:
-    - **Stop**: Issues a cancellation request to terminate execution.
-    - **Logs**: Opens the live logging window.
+    - **Stop**: Issues a cancellation request to terminate execution across all active workers.
+    - **Logs**: Opens the live logging window streaming unified tagged logs (`[node@hostname]`).
     - **DVC-Viewer**: Opens the live web monitor for the running pipeline's metrics.
 
 ### C. Queue Panel & Diagnosis
 Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled immediately, the panel displays a **wait reason** calculated by the scheduler:
 *   `branch_exclusivity`: Blocked because another job is already running on the same repository and branch.
-*   `no_free_workers`: All workers satisfying the job's constraints are occupied.
-*   `insufficient_ram`: No free worker has enough physical RAM available to satisfy the `REQUIRED_RAM` constraint (accounting for the 8 GB OS reserve).
+*   `no_free_workers`: All workers satisfying the job's or node's resource constraints are occupied.
+*   `insufficient_ram`: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
 *   `scheduling`: The scheduler is actively evaluating placement scores.
 
 ---
@@ -48,6 +49,7 @@ Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled i
 
 Clicking the **Logs** button opens an interactive modal:
 
+*   **Multi-Node Log Streaming**: In parallel mode, logs from multiple worker nodes are multiplexed in real time with `[stage@worker]` prefixes (e.g. `[train@HEC45801] Epoch 1/10`).
 *   **Stage-by-Stage Segmentation**: The dashboard parses the log stream and separates it into distinct tabs based on execution phases (e.g. Setup, DVC stages like `preprocess` or `training`, and Git Synchronization/GC).
 *   **Live Status Indicator**: Active tabs display a loading spinner. If the run fails, a skull emoji `☠️` appears along with the shell exit code.
 *   **"Last Error" Button**: If a stage fails, this button highlights the last line containing the error trace. Clicking it automatically opens the failing stage's tab and scrolls directly to the error line.

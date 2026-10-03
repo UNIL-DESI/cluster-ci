@@ -19,6 +19,17 @@ Asynchronous continuous integration system for research pipelines, designed as a
 | **PyTorch** | 2.12 (CUDA 13.2) | 2.12 (CUDA 13.2) |
 | **Storage** | ~3.2 TB | ~938 GB |
 
+## Cluster-CI v3 : Parallel DAG & Granular Resource Scheduling
+
+Cluster-CI v3 introduces distributed DAG branch execution and fine-grained resource definitions:
+* **Per-Stage Resources (`meta.cluster`)**: Declare CPU, RAM, VRAM, storage, custom Docker images, and worker whitelists per stage directly in `dvc.yaml` ([Documentation](docs/user/stage_resources.md)).
+* **Parallel DAG Scheduling (`PARALLEL_STAGES=true`)**: Independent branches execute concurrently across up to 8 cluster machines ([Documentation](docs/user/parallel_execution.md)).
+* **Fair-Share Multi-Machine Balancing**: Each job receives a guaranteed Home Worker; additional machines are dynamically rebalanced at stage boundaries without preemption ([Documentation](docs/user/ci_queue.md)).
+* **Automatic Hardware Telemetry**: Workers self-report compute, RAM, VRAM (per-GPU and unified Grace Blackwell pools), and disk availability with zero headnode reconfiguration.
+* **Conflict-Free Git Synchronization**: Concurrent stage outputs are committed and merged transparently via an automated `dvc.lock` merge driver.
+
+See the complete documentation at [https://unil-desi.github.io/cluster-ci/](https://unil-desi.github.io/cluster-ci/).
+
 # Installation
 
 ### 1. Client Installation (Projet de recherche)
@@ -99,7 +110,7 @@ Cluster CI is based on GitOps principles. Instead of the agent trying to maintai
 5. **Authentication**: The runner silently injects credentials (Google Drive) by sourcing the global cluster `.env` and `.env.secrets` files.
 6. **CI Feedback**: Joules receives native failure and success notifications via GitHub PR integration.
 7. **Configuration `.cluster-ci`**: Les jobs nécessitant d'être schedulés peuvent déclarer les paramètres suivants à la racine :
-    - `REQUIRED_RAM=16GB` : Contrainte de placement RAM (défaut : 2GB).
+    - `REQUIRED_RAM=16GB` : Contrainte de placement RAM (défaut : 10GB).
     - `REQUIRED_VRAM=24GB` : Contrainte de placement VRAM **par GPU** (défaut : 0, pas de contrainte). Deux GPU de 24GB ne satisfont pas une demande de 32GB. Le watchdog contrôle la carte la plus chargée, sans additionner les cartes ; sur les GB10, il surveille la RAM système. Voir [les limites et tests du watchdog](docs/gpu-watchdog.md).
     - `MAX_RUNTIME_HOURS=24` : Durée maximale d'exécution (**OBLIGATOIRE**, max 24h) pour éviter les processus zombies.
     - `EXPOSED_PORT=8501` : Active le routage vers une interface graphique (ex: Streamlit, Gradio) sur le port spécifié.
