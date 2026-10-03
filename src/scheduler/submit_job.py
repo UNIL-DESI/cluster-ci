@@ -74,6 +74,7 @@ def run_planner_for_submission(repo_dir="."):
         cmd = [
             uv_path,
             "run",
+            "--no-project",
             "--with",
             "dvc==3.67.1",
             "python",

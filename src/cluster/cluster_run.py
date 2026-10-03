@@ -77,7 +77,7 @@ except ImportError:
             import subprocess
             planner_mod = os.environ.get("CLUSTER_CI_PLANNER_MODULE", "src.planner.stage_plan")
             cmd = (
-                ["uv", "run", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
+                ["uv", "run", "--no-project", "--with", "dvc==3.67.1", "python", "-m", planner_mod, "--repo", repo_dir, "--json"]
                 if shutil.which("uv")
                 else [sys.executable, "-m", planner_mod, "--repo", repo_dir, "--json"]
             )
