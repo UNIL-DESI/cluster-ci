@@ -10,6 +10,10 @@ socket.setdefaulttimeout(20.0)
 
 from flask import abort, Flask, request, jsonify, send_from_directory, Response, stream_with_context, session, url_for, redirect, render_template, send_file
 from persistence import init_db, get_db_conn
+try:
+    from redaction import redact_secrets
+except ImportError:
+    from src.scheduler.redaction import redact_secrets
 from authlib.integrations.flask_client import OAuth
 import uuid
 import datetime
@@ -878,10 +882,10 @@ def scheduler_status():
         ''')
         pending_queue = [dict(row) for row in cursor.fetchall()]
         
-    return jsonify({
+    return jsonify(redact_secrets({
         "workers": workers_list,
         "queue": pending_queue
-    })
+    }))
 
 @app.route('/job_status/<job_id>', methods=['GET'])
 def job_status(job_id):
@@ -895,7 +899,7 @@ def job_status(job_id):
         ''', (job_id,))
         job = cursor.fetchone()
         if job:
-            return jsonify(dict(job))
+            return jsonify(redact_secrets(dict(job)))
         else:
             return jsonify({"error": "Job not found"}), 404
 
@@ -1429,7 +1433,7 @@ def api_list_runs(repo):
     else:
         for run in runs: run['commit_title'] = ""
 
-    return jsonify(runs)
+    return jsonify(redact_secrets(runs))
     
 @app.route('/api/jobs/<job_id>/logs', methods=['GET'])
 def api_get_run_logs(job_id):
@@ -1445,17 +1449,17 @@ def api_get_run_logs(job_id):
         job = cursor.fetchone()
         
     if not job or not job['service_url']:
-        return jsonify({"logs": "Log source not found (worker might be offline or job not assigned)", "offset": offset})
+        return jsonify(redact_secrets({"logs": "Log source not found (worker might be offline or job not assigned)", "offset": offset}))
         
     worker_url = f"{job['service_url']}/job_logs/{job_id}?offset={offset}"
     try:
         resp = requests.get(worker_url, timeout=5)
         if resp.status_code == 200:
-            return jsonify(resp.json())
+            return jsonify(redact_secrets(resp.json()))
         else:
-            return jsonify({"logs": f"Error fetching logs from worker: {resp.text}", "offset": offset}), 500
+            return jsonify(redact_secrets({"logs": f"Error fetching logs from worker: {resp.text}", "offset": offset})), 500
     except Exception as e:
-        return jsonify({"logs": f"Connection error to worker: {str(e)}", "offset": offset}), 500
+        return jsonify(redact_secrets({"logs": f"Connection error to worker: {str(e)}", "offset": offset})), 500
 
 @app.route('/api/runs/<job_id>/files', methods=['GET'])
 def api_run_files(job_id):
@@ -1535,14 +1539,14 @@ def api_run_files(job_id):
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
         if result.returncode != 0:
-            return jsonify({
+            return jsonify(redact_secrets({
                 "error": "Failed to list DVC files",
                 "details": result.stderr
-            }), 500
+            })), 500
 
         return Response(result.stdout, mimetype='application/json')
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(redact_secrets({"error": str(e)})), 500
 
 # --- Portal & OAuth Routes ---
 
@@ -1571,7 +1575,7 @@ def api_active_runs():
                 ORDER BY created_at DESC
             ''')
             runs = [dict(row) for row in cursor.fetchall()]
-        return jsonify(runs)
+        return jsonify(redact_secrets(runs))
     except Exception as e:
         app.logger.error(f"Error fetching active runs: {e}")
         return jsonify({"error": "Internal server error"}), 500
@@ -1659,7 +1663,7 @@ def api_queue():
 
             job['wait_reasons'] = reasons if reasons else ["scheduling"]
 
-        return jsonify(pending_jobs)
+        return jsonify(redact_secrets(pending_jobs))
     except Exception as e:
         app.logger.error(f"Error fetching queue: {e}")
         return jsonify({"error": "Internal server error"}), 500
