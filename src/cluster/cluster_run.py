@@ -1672,28 +1672,108 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
     return False
 
 
+_job_logs_fallback_warned = False
+
+
 def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None):
     """Fetch logs from headnode with priority on /job_logs/{job_id} and fallback on /api/jobs/{job_id}/logs."""
+    global _job_logs_fallback_warned
     routes = [
         f"{headnode_url}/job_logs/{job_id}?offset={offset}",
         f"{headnode_url}/api/jobs/{job_id}/logs?offset={offset}",
     ]
-    for url in routes:
+    for idx, url in enumerate(routes):
         try:
             req = urllib.request.Request(url)
             if cluster_token:
                 req.add_header("Authorization", f"Bearer {cluster_token}")
             with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
+                status_code = getattr(resp, "status", getattr(resp, "code", None))
+                if status_code == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     return data.get("logs", ""), data.get("offset", offset)
         except urllib.error.HTTPError as e:
             if e.code == 404:
+                if idx == 0 and not _job_logs_fallback_warned:
+                    print(
+                        f"⚠️ Avertissement : Route /job_logs/{job_id} introuvable (HTTP 404), "
+                        f"bascule de repli vers /api/jobs/{job_id}/logs.",
+                        file=sys.stderr,
+                    )
+                    _job_logs_fallback_warned = True
                 continue
             break
         except Exception:
             break
     return "", offset
+
+
+def format_multi_machine_log_line(line, nodes_data=None):
+    """Garantit que chaque ligne est préfixée [nœud@machine] lorsque plusieurs nœuds tournent en parallèle."""
+    import re
+    if not line or not line.strip():
+        return line
+
+    stripped = line.strip()
+    if not nodes_data or not isinstance(nodes_data, list):
+        return line
+
+    active_nodes = [
+        n for n in nodes_data
+        if isinstance(n, dict) and n.get("status") in ("running", "assigned")
+    ]
+    candidates = active_nodes if active_nodes else [n for n in nodes_data if isinstance(n, dict)]
+
+    # 1. La ligne commence par un préfixe entre crochets [tag]
+    m_bracket = re.match(r"^\[([^\]]+)\]\s*(.*)$", stripped)
+    if m_bracket:
+        tag = m_bracket.group(1).strip()
+        rest = m_bracket.group(2)
+        for nd in candidates:
+            n_name = nd.get("name") or nd.get("node_name")
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            if not n_name:
+                continue
+            if tag == f"{n_name}@{machine}":
+                return line  # Déjà préfixé avec nœud et machine
+            if tag == n_name:
+                return f"[{n_name}@{machine}] {rest}"
+        # Si le tag se termine déjà par une machine connue
+        machines_all = {
+            nd.get("machine") or nd.get("worker_id")
+            for nd in candidates
+            if (nd.get("machine") or nd.get("worker_id"))
+        }
+        for m in machines_all:
+            if tag.endswith(f"@{m}"):
+                return line
+        return line
+
+    # 2. La ligne commence par "node_name: ..."
+    for nd in candidates:
+        n_name = nd.get("name") or nd.get("node_name")
+        if n_name and stripped.startswith(f"{n_name}:"):
+            rest = stripped[len(n_name) + 1:].lstrip()
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            return f"[{n_name}@{machine}] {rest}"
+
+    # 3. Plusieurs nœuds tournent en parallèle sur des machines distinctes
+    machines = {
+        nd.get("machine") or nd.get("worker_id")
+        for nd in active_nodes
+        if (nd.get("machine") or nd.get("worker_id"))
+    }
+    if len(active_nodes) > 1 and len(machines) > 1:
+        for nd in active_nodes:
+            n_name = nd.get("name") or nd.get("node_name")
+            if n_name and n_name in stripped:
+                machine = nd.get("machine") or nd.get("worker_id") or "worker"
+                return f"[{n_name}@{machine}] {stripped}"
+        first_node = active_nodes[0].get("name") or "parallel"
+        first_mach = active_nodes[0].get("machine") or active_nodes[0].get("worker_id") or "cluster"
+        return f"[{first_node}@{first_mach}] {stripped}"
+
+    return line
 
 
 def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
@@ -1702,6 +1782,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
     offset = 0
     last_status_msg = ""
     last_nodes_summary = None
+    current_nodes_data = None
 
     while True:
         # 1. Fetch latest logs from Headnode API (priorité /job_logs, repli /api/jobs/{id}/logs)
@@ -1709,7 +1790,8 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
             new_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
             if new_logs and isinstance(new_logs, str):
                 for line in new_logs.splitlines():
-                    print_line(line)
+                    formatted_line = format_multi_machine_log_line(line, current_nodes_data)
+                    print_line(formatted_line)
         except Exception:
             # Silently continue on temporary network glitches while polling logs
             pass
@@ -1729,6 +1811,7 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                     # Suivi en direct des nœuds (v3 multi-nœuds)
                     nodes_data = job_data.get("nodes") or job_data.get("job_nodes")
                     if nodes_data:
+                        current_nodes_data = nodes_data
                         summary_line, details = format_nodes_status_summary(nodes_data)
                         if summary_line and summary_line != last_nodes_summary:
                             print_line(summary_line)
@@ -1748,7 +1831,8 @@ def stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token=None):
                             final_logs, offset = _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token)
                             if final_logs and isinstance(final_logs, str):
                                 for line in final_logs.splitlines():
-                                    print_line(line)
+                                    formatted_line = format_multi_machine_log_line(line, current_nodes_data)
+                                    print_line(formatted_line)
                         except Exception:
                             pass
 

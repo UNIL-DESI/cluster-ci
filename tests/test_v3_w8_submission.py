@@ -455,6 +455,69 @@ class TestV3W8Submission(unittest.TestCase):
 
                     self.assertIn("http://fake-headnode:5000/api/jobs/test-job-stop/stop", stop_called_urls)
 
+    def test_multi_node_logs_prefixed_format_function(self):
+        """(1) Vérifie le préfixage strict [nœud@machine] des lignes de logs en multi-machines."""
+        from src.cluster.cluster_run import format_multi_machine_log_line
+        from src.scheduler.submit_job import format_multi_machine_log_line as submit_fmt
+
+        nodes_data = [
+            {"name": "train_model@alpha", "status": "running", "machine": "HEC45801", "worker_id": "HEC45801"},
+            {"name": "train_model@beta", "status": "running", "machine": "HEC45803", "worker_id": "HEC45803"},
+        ]
+
+        # Ligne déjà préfixée -> conservée sans altération
+        line_already = "[train_model@alpha@HEC45801] Epoch 1/5 loss=0.42"
+        self.assertEqual(format_multi_machine_log_line(line_already, nodes_data), line_already)
+        self.assertEqual(submit_fmt(line_already, nodes_data), line_already)
+
+        # Ligne avec préfixe de nœud seul [train_model@alpha] -> enrichie avec la machine
+        line_node_only = "[train_model@alpha] Epoch 2/5 loss=0.38"
+        self.assertEqual(
+            format_multi_machine_log_line(line_node_only, nodes_data),
+            "[train_model@alpha@HEC45801] Epoch 2/5 loss=0.38",
+        )
+
+        # Ligne avec "train_model@beta: ..." -> préfixée
+        line_colon = "train_model@beta: Epoch 2/5 loss=0.39"
+        self.assertEqual(
+            format_multi_machine_log_line(line_colon, nodes_data),
+            "[train_model@beta@HEC45803] Epoch 2/5 loss=0.39",
+        )
+
+    def test_job_logs_fallback_warns_on_404(self):
+        """(2) Vérifie que la bascule de repli /job_logs -> /api/jobs/{id}/logs avertit explicitement sur 404."""
+        from src.cluster.cluster_run import _fetch_headnode_logs
+        import io
+        import urllib.error
+
+        called_urls = []
+
+        def fake_urlopen(req, timeout=5):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            called_urls.append(url)
+            if "/job_logs/" in url:
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b""))
+            elif "/api/jobs/" in url:
+                mock_resp = MagicMock()
+                mock_resp.status = 200
+                mock_resp.code = 200
+                mock_resp.__enter__.return_value = mock_resp
+                mock_resp.read.return_value = json.dumps({"logs": "fallback logs\n", "offset": 14}).encode("utf-8")
+                return mock_resp
+            raise urllib.error.HTTPError(url, 500, "Error", {}, io.BytesIO(b""))
+
+        import src.cluster.cluster_run as cr
+        cr._job_logs_fallback_warned = False
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                logs, offset = _fetch_headnode_logs("test-job-fallback", "http://fake-headnode:5000", 0)
+
+        self.assertEqual(logs, "fallback logs\n")
+        self.assertEqual(offset, 14)
+        self.assertIn("Avertissement", mock_stderr.getvalue())
+        self.assertIn("/api/jobs/test-job-fallback/logs", mock_stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

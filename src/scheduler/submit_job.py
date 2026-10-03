@@ -226,6 +226,74 @@ def print_final_dag_summary(nodes, job_id):
     print("=" * 60)
 
 
+def format_multi_machine_log_line(line, nodes_data=None):
+    """Garantit que chaque ligne est préfixée [nœud@machine] lorsque plusieurs nœuds tournent en parallèle."""
+    import re
+    if not line or not line.strip():
+        return line
+
+    stripped = line.strip()
+    if not nodes_data or not isinstance(nodes_data, list):
+        return line
+
+    active_nodes = [
+        n for n in nodes_data
+        if isinstance(n, dict) and n.get("status") in ("running", "assigned")
+    ]
+    candidates = active_nodes if active_nodes else [n for n in nodes_data if isinstance(n, dict)]
+
+    # 1. La ligne commence par un préfixe entre crochets [tag]
+    m_bracket = re.match(r"^\[([^\]]+)\]\s*(.*)$", stripped)
+    if m_bracket:
+        tag = m_bracket.group(1).strip()
+        rest = m_bracket.group(2)
+        for nd in candidates:
+            n_name = nd.get("name") or nd.get("node_name")
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            if not n_name:
+                continue
+            if tag == f"{n_name}@{machine}":
+                return line  # Déjà préfixé avec nœud et machine
+            if tag == n_name:
+                return f"[{n_name}@{machine}] {rest}"
+        # Si le tag se termine déjà par une machine connue
+        machines_all = {
+            nd.get("machine") or nd.get("worker_id")
+            for nd in candidates
+            if (nd.get("machine") or nd.get("worker_id"))
+        }
+        for m in machines_all:
+            if tag.endswith(f"@{m}"):
+                return line
+        return line
+
+    # 2. La ligne commence par "node_name: ..."
+    for nd in candidates:
+        n_name = nd.get("name") or nd.get("node_name")
+        if n_name and stripped.startswith(f"{n_name}:"):
+            rest = stripped[len(n_name) + 1:].lstrip()
+            machine = nd.get("machine") or nd.get("worker_id") or "worker"
+            return f"[{n_name}@{machine}] {rest}"
+
+    # 3. Plusieurs nœuds tournent en parallèle sur des machines distinctes
+    machines = {
+        nd.get("machine") or nd.get("worker_id")
+        for nd in active_nodes
+        if (nd.get("machine") or nd.get("worker_id"))
+    }
+    if len(active_nodes) > 1 and len(machines) > 1:
+        for nd in active_nodes:
+            n_name = nd.get("name") or nd.get("node_name")
+            if n_name and n_name in stripped:
+                machine = nd.get("machine") or nd.get("worker_id") or "worker"
+                return f"[{n_name}@{machine}] {stripped}"
+        first_node = active_nodes[0].get("name") or "parallel"
+        first_mach = active_nodes[0].get("machine") or active_nodes[0].get("worker_id") or "cluster"
+        return f"[{first_node}@{first_mach}] {stripped}"
+
+    return line
+
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -614,6 +682,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
     log_offset = 0
     status_printed = False
     oom_detected = False
+    fallback_warned = False
     last_queue_check = 0
     last_status = None
     last_queue_diagnostic = None
@@ -802,6 +871,12 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     if h_resp.status_code == 200:
                         logs_resp = h_resp
                     elif h_resp.status_code == 404:
+                        if not fallback_warned:
+                            sys.stderr.write(
+                                f"\n⚠️ [submit_job] Route canonique /job_logs/{job_id} introuvable (HTTP 404). "
+                                f"Bascule de repli vers /api/jobs/{job_id}/logs.\n"
+                            )
+                            fallback_warned = True
                         h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
@@ -829,7 +904,13 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         if not status_printed:
                             print(f"\n\n[Streaming logs for job {job_id}]")
                             status_printed = True
-                        sys.stdout.write(new_logs)
+                        formatted_chunks = []
+                        for l in new_logs.splitlines(keepends=True):
+                            has_nl = l.endswith("\n")
+                            content_no_nl = l[:-1] if has_nl else l
+                            formatted = format_multi_machine_log_line(content_no_nl, nodes_data)
+                            formatted_chunks.append(formatted + ("\n" if has_nl else ""))
+                        sys.stdout.write("".join(formatted_chunks))
                         sys.stdout.flush()
                         log_offset = logs_data.get('offset', log_offset)
                 except (ValueError, KeyError) as json_err:
