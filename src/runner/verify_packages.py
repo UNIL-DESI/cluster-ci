@@ -34,8 +34,8 @@ def get_importable_modules(dist: Optional[importlib.metadata.Distribution], pkg_
             top_level = dist.read_text("top_level.txt")
             if top_level:
                 for line in top_level.splitlines():
-                    name = line.strip()
-                    if name and not name.startswith("#"):
+                    name = line.strip().split("/")[0]
+                    if name and not name.startswith("#") and name not in modules:
                         modules.append(name)
         except Exception:
             pass
@@ -109,8 +109,8 @@ def get_importable_modules(dist, pkg_name):
             top_level = dist.read_text("top_level.txt")
             if top_level:
                 for line in top_level.splitlines():
-                    name = line.strip()
-                    if name and not name.startswith("#"):
+                    name = line.strip().split("/")[0]
+                    if name and not name.startswith("#") and name not in modules:
                         modules.append(name)
         except Exception:
             pass

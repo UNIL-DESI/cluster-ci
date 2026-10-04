@@ -8,6 +8,8 @@ R4: Volume invalidation: Composite deps hash with mechanism version and image fo
 R5: Fail-fast verification of package versions in real stage execution conditions.
 """
 
+import importlib
+import importlib.metadata
 import os
 import sys
 import tempfile
@@ -19,6 +21,7 @@ from src.runner.verify_packages import (
     discover_project_paths,
     _run_subprocess_check,
     verify_packages,
+    get_importable_modules,
 )
 
 
@@ -299,6 +302,115 @@ def test_verify_packages_detects_real_import_failure(capsys):
         assert "broken_pkg" in captured.err
         assert "failed real import" in captured.err
         assert "libcuda.so.1" in captured.err
+
+
+def test_verify_packages_top_level_slashes_duplicates_and_missing(capsys):
+    """
+    Régression bloquante : verify_packages tentait d'importer les sous-chemins de top_level.txt
+    (ex: sentencepiece/__init__), causant un ModuleNotFoundError sur un paquet valide.
+    Vérifie qu'une distribution dont top_level.txt contient des entrées avec slash, des lignes vides
+    et des doublons est nettoyée et importée sans faux échec (code 0).
+    Vérifie également qu'un module réellement absent déclenche un échec explicite fail-fast (code 1).
+    """
+    top_level_content = (
+        "\n"
+        "sentencepiece/__init__\n"
+        "sentencepiece\n"
+        "\n"
+        "sentencepiece\n"
+        "sentencepiece/_version\n"
+        "sentencepiece/sentencepiece_model_pb2\n"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_home:
+        user_sp = os.path.join(tmp_home, ".local", "lib", "python3.12", "site-packages")
+        dist_info = os.path.join(user_sp, "sentencepiece-0.2.0.dist-info")
+        os.makedirs(dist_info, exist_ok=True)
+        with open(os.path.join(dist_info, "METADATA"), "w") as f:
+            f.write("Metadata-Version: 2.1\nName: sentencepiece\nVersion: 0.2.0\n")
+        with open(os.path.join(dist_info, "top_level.txt"), "w") as f:
+            f.write(top_level_content)
+
+        class MockDist:
+            def __init__(self, name, version, path, top_content):
+                self.name = name
+                self.version = version
+                self._path = path
+                self.top_content = top_content
+
+            def locate_file(self, f):
+                return self._path
+
+            def read_text(self, filename):
+                if filename == "top_level.txt":
+                    return self.top_content
+                return None
+
+        sp_dist = MockDist("sentencepiece", "0.2.0", dist_info, top_level_content)
+
+        # 1. Vérification unitaire de get_importable_modules
+        mods = get_importable_modules(sp_dist, "sentencepiece")
+        # Les entrées avec slashes sont nettoyées vers le module racine, les lignes vides et doublons ignorés
+        assert mods == ["sentencepiece"]
+
+        # 2. Vérification complète dans verify_packages : import valide -> code 0 (aucun faux échec)
+        def mock_distributions(path=None):
+            return [sp_dist]
+
+        def mock_dist_lookup(name):
+            if name == "sentencepiece":
+                return sp_dist
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        imported_modules = []
+
+        def mock_import(mod):
+            imported_modules.append(mod)
+            return MagicMock()
+
+        with patch("importlib.metadata.distributions", side_effect=mock_distributions), \
+             patch("importlib.metadata.distribution", side_effect=mock_dist_lookup), \
+             patch("importlib.import_module", side_effect=mock_import):
+            res = verify_packages(
+                pythonpath=user_sp,
+                base_dir=os.path.join(tmp_home, ".local"),
+                check_subprocesses=False,
+            )
+            assert res == 0
+            assert imported_modules == ["sentencepiece"]
+
+        # 3. Module réellement absent -> échec explicite fail-fast (code 1)
+        absent_top_level = "\nmissing_mod/__init__\nmissing_mod\n"
+        absent_dist_info = os.path.join(user_sp, "missing_pkg-1.0.0.dist-info")
+        os.makedirs(absent_dist_info, exist_ok=True)
+        missing_dist = MockDist("missing_pkg", "1.0.0", absent_dist_info, absent_top_level)
+
+        def mock_missing_distributions(path=None):
+            return [missing_dist]
+
+        def mock_missing_lookup(name):
+            if name == "missing_pkg":
+                return missing_dist
+            raise importlib.metadata.PackageNotFoundError(name)
+
+        def mock_missing_import(mod):
+            raise ModuleNotFoundError(f"No module named '{mod}'")
+
+        with patch("importlib.metadata.distributions", side_effect=mock_missing_distributions), \
+             patch("importlib.metadata.distribution", side_effect=mock_missing_lookup), \
+             patch("importlib.import_module", side_effect=mock_missing_import):
+            res_missing = verify_packages(
+                pythonpath=user_sp,
+                base_dir=os.path.join(tmp_home, ".local"),
+                check_subprocesses=False,
+            )
+            assert res_missing == 1
+
+        captured = capsys.readouterr()
+        assert "FAIL-FAST" in captured.err
+        assert "missing_pkg" in captured.err
+        assert "failed real import" in captured.err
+        assert "ModuleNotFoundError" in captured.err
 
 
 def test_verify_packages_supports_requirements_txt():
