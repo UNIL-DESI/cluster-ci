@@ -4,7 +4,29 @@
 # Hash is stored in /home/user/.cluster-ci-deps-hash (persistent Docker volume).
 set -e
 
+export PYTHONUSERBASE="/home/user/.local"
+export PATH="/home/user/.local/bin:$PATH"
+
 HASH_FILE="/home/user/.cluster-ci-deps-hash"
+
+# Migration: migrate legacy ~/.local/local (from previous pip --prefix installs) to standard user-site ~/.local
+if [ -d "/home/user/.local/local" ]; then
+    echo "📦 [Cluster-CI] Migrating legacy packages from ~/.local/local to user-site..."
+    for d in /home/user/.local/local/lib/python3.*/dist-packages; do
+        if [ -d "$d" ]; then
+            pyver=$(basename $(dirname "$d"))
+            target="/home/user/.local/lib/$pyver/site-packages"
+            mkdir -p "$target"
+            cp -rn "$d"/* "$target/" 2>/dev/null || cp -a "$d"/* "$target/" 2>/dev/null || true
+        fi
+    done
+    if [ -d "/home/user/.local/local/bin" ]; then
+        mkdir -p "/home/user/.local/bin"
+        cp -rn /home/user/.local/local/bin/* "/home/user/.local/bin/" 2>/dev/null || cp -a /home/user/.local/local/bin/* "/home/user/.local/bin/" 2>/dev/null || true
+    fi
+    rm -rf "/home/user/.local/local"
+    echo "✅ [Cluster-CI] Migration to user-site complete."
+fi
 
 # Compute a composite hash of all dependency specification files
 compute_deps_hash() {
@@ -19,13 +41,12 @@ DEPS_HASH=$(compute_deps_hash)
 CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
-    # Quick sanity check: verify that pip-installed packages are actually present.
-    # pip --prefix creates dirs in both site-packages and dist-packages locations
-    if find /home/user -path '*/lib/python3.*/dist-packages/*.dist-info' -o -path '*/lib/python3.*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
+    # Quick sanity check: verify that pip-installed packages are actually present in user-site.
+    if find /home/user/.local -path '*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
         exit 0
     else
-        echo "⚠️  [Cluster-CI] Cache hit but pip packages missing from prefix. Reinstalling..."
+        echo "⚠️  [Cluster-CI] Cache hit but pip packages missing from user-site. Reinstalling..."
         rm -f "$HASH_FILE"
     fi
 fi
@@ -57,10 +78,10 @@ if m:
 " > "$GIT_DEPS_FILE" 2>/dev/null
 
     if [ -s "$GIT_DEPS_FILE" ]; then
-        # Step 1: Install git deps to system site-packages
+        # Step 1: Install git deps to user site-packages
         while read pkg_name git_url; do
             echo "📦 [Cluster-CI] Pre-installing private git dependency: $pkg_name from $git_url"
-            pip install -q --progress-bar off --break-system-packages "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
+            pip install -q --progress-bar off --break-system-packages --user "$git_url" 2>&1 || echo "⚠️  [Cluster-CI] Warning: failed to install $pkg_name, continuing..."
         done < "$GIT_DEPS_FILE"
 
         # Step 2: Temporarily strip git deps from pyproject.toml
@@ -198,9 +219,9 @@ else
     echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned"
 fi
 
-run_pip_silently --progress-bar off --break-system-packages --prefix /home/user/.local -c "$CONSTRAINTS_FILE" -e . || {
+run_pip_silently --progress-bar off --break-system-packages --user -c "$CONSTRAINTS_FILE" -e . || {
     echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
-    run_pip_silently --progress-bar off --break-system-packages --ignore-installed --prefix /home/user/.local -e .
+    run_pip_silently --progress-bar off --break-system-packages --ignore-installed --user -e .
 }
 
 
@@ -270,6 +291,22 @@ if [ -f "$UV_DVC_BIN" ]; then
 else
     echo "⚠️  [Cluster-CI] Warning: isolated uv DVC binary not found at $UV_DVC_BIN"
 fi
+
+# Ensure usercustomize.py exists in user-site to guarantee user packages take priority across all images
+for sp in /home/user/.local/lib/python3.*/site-packages; do
+    if [ -d "$sp" ]; then
+        cat << 'EOF_UC' > "$sp/usercustomize.py"
+import sys
+import site
+
+user_site = site.getusersitepackages()
+if user_site in sys.path:
+    sys.path.remove(user_site)
+    idx = 1 if (sys.path and sys.path[0] in ("", ".", "/workspace")) else 0
+    sys.path.insert(idx, user_site)
+EOF_UC
+    fi
+done
 
 # Save hash only after successful install
 echo "$DEPS_HASH" > "$HASH_FILE"

@@ -224,6 +224,8 @@ class DockerRunner:
             "--ulimit", "stack=67108864",
             "--ipc=host",
             "--user", f"{user_id}:{group_id}",
+            "-e", "HOME=/home/user",
+            "-e", "PYTHONUSERBASE=/home/user/.local",
             "--entrypoint", "tail",
         ])
         if env:
@@ -771,14 +773,31 @@ class BranchExecutor:
         self.current_resource_args = self.compute_docker_resource_args(resources)
         self.total_containers_started += 1
 
-        # 1. Initialisation root
+        # 1. Initialisation root : permissions, purge de l'ancien .pth, migration ~/.local/local vers user-site
         init_cmd = (
             f"chown -R {self.user_id}:{self.group_id} /home/user && "
+            f'HOMEDIR=$(getent passwd {self.user_id} 2>/dev/null | cut -d: -f6) && '
+            f'if [ -n "$HOMEDIR" ] && [ "$HOMEDIR" != "/home/user" ] && [ ! -e "$HOMEDIR" ]; then ln -s /home/user "$HOMEDIR"; fi && '
             "if [ -d /opt/Automodel ]; then chmod -R a+rX /opt/Automodel; fi && "
             "if [ -d /opt/uv_cache ]; then chmod -R a+rwX /opt/uv_cache; fi && "
-            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '
-            'if [ -d /home/user/.local ]; then find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u > "$SITE/cluster-ci-prefix.pth"; else touch "$SITE/cluster-ci-prefix.pth"; fi && '
-            'chmod 644 "$SITE/cluster-ci-prefix.pth"'
+            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) && '
+            'if [ -n "$SITE" ] && [ -f "$SITE/cluster-ci-prefix.pth" ]; then rm -f "$SITE/cluster-ci-prefix.pth"; fi && '
+            'if [ -d /home/user/.local/local ]; then '
+            'for d in /home/user/.local/local/lib/python3.*/dist-packages; do '
+            'if [ -d "$d" ]; then '
+            'pyver=$(basename $(dirname "$d")); '
+            'target="/home/user/.local/lib/$pyver/site-packages"; '
+            'mkdir -p "$target"; '
+            'cp -rn "$d"/* "$target/" 2>/dev/null || cp -a "$d"/* "$target/" 2>/dev/null || true; '
+            'fi; '
+            'done; '
+            'if [ -d /home/user/.local/local/bin ]; then '
+            'mkdir -p /home/user/.local/bin; '
+            'cp -rn /home/user/.local/local/bin/* /home/user/.local/bin/ 2>/dev/null || cp -a /home/user/.local/local/bin/* /home/user/.local/bin/ 2>/dev/null || true; '
+            'fi; '
+            'rm -rf /home/user/.local/local; '
+            f'chown -R {self.user_id}:{self.group_id} /home/user; '
+            'fi'
         )
         init_code, init_out = self.docker.exec_in_container(self.current_container, init_cmd, user="root")
         if init_code != 0:
@@ -814,25 +833,8 @@ class BranchExecutor:
                     f"smart_install.sh failed in container {self.current_container} (code {smart_code}):\n{smart_out}"
                 )
 
-        # 4. Régénération idempotente du .pth post-installation et découverte de PYTHONPATH
-        sync_pth_cmd = (
-            'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '
-            'if [ -d /home/user/.local ]; then find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u > "$SITE/cluster-ci-prefix.pth"; else touch "$SITE/cluster-ci-prefix.pth"; fi && '
-            'chmod 644 "$SITE/cluster-ci-prefix.pth"'
-        )
-        sync_code, sync_out = self.docker.exec_in_container(self.current_container, sync_pth_cmd, user="root")
-        if sync_code != 0:
-            raise RuntimeError(
-                f"Failed to synchronize cluster-ci-prefix.pth in container {self.current_container} (code {sync_code}):\n{sync_out}"
-            )
-
-        self.current_pythonpath = self.discover_project_pythonpath()
-
-        # 5. Vérification fail-fast des paquets installés par le projet
-        verify_cmd = (
-            f"export PYTHONPATH=\"{self.current_pythonpath}\" && "
-            f"python3 /cluster-ci/src/runner/verify_packages.py \"{self.current_pythonpath}\""
-        )
+        # 4. Vérification fail-fast des paquets installés par le projet (conditions réelles de stage)
+        verify_cmd = "python3 /cluster-ci/src/runner/verify_packages.py"
         vcode, vout = self.docker.exec_in_container(
             self.current_container,
             verify_cmd,
