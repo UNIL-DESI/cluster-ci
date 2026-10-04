@@ -730,11 +730,6 @@ def _get_start_commit(cwd=None):
         )
         sha = res.stdout.strip() if (res.returncode == 0 and isinstance(res.stdout, str)) else ""
         if sha and len(sha) >= 7:
-            try:
-                with open(start_file, "w", encoding="utf-8") as f:
-                    f.write(sha + "\n")
-            except Exception:
-                pass
             return sha
     except Exception:
         pass

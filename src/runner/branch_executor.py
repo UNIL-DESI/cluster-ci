@@ -121,6 +121,23 @@ def commit_and_push_node(
             files_to_sync.append(norm)
 
     commit_msg = f"chore(ci): complete node {node} [skip ci]"
+
+    for p in uncached_outs:
+        full_p = os.path.join(repo_dir, p)
+        if os.path.exists(full_p):
+            subprocess.run(["git", "add", "-f", p], cwd=repo_dir, check=False)
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if status.stdout.strip():
+        subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
+        subprocess.run(["git", "config", "user.email", "bot@cluster-ci.io"], cwd=repo_dir, check=False)
+        subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_dir, capture_output=True, text=True)
+
     logger.info("Pushing changes for node %s via W5 push_with_retries (%s)...", node, files_to_sync)
     helper = dvc_git_helper
     if helper is None:
@@ -347,12 +364,7 @@ class BranchExecutor:
             except Exception:
                 self.start_commit = "HEAD"
 
-        if self.start_commit and self.start_commit != "HEAD":
-            try:
-                with open(os.path.join(self.repo_dir, ".cluster-ci-start-commit"), "w", encoding="utf-8") as f:
-                    f.write(self.start_commit + "\n")
-            except Exception:
-                pass
+
 
         # Résolution du dossier racine de cluster-ci
         if base_dir:
