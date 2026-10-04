@@ -339,3 +339,93 @@ class TestTargetedGitSync:
 
         with pytest.raises(RuntimeError, match="sync_before_node failed on branch 'main'"):
             sync_before_node(current_branch="main", cwd=str(fake_repo))
+
+    def test_dvc_foreach_stages_resolved_and_code_rejected(self, tmp_path):
+        """DVC foreach stage expansion evaluates variables like ${datasets} and resolves concrete outputs.
+        Code files, params.yaml and dvc.yaml must be rejected.
+        """
+        repo_dir = tmp_path / "foreach_repo"
+        subprocess.run(["git", "init", str(repo_dir)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.name", "Tester"], check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.email", "tester@test.io"], check=True)
+
+        params_data = {
+            "datasets": ["movielens", "amazon-books", "amazon-video-games"],
+        }
+        _write_yaml(repo_dir / "params.yaml", params_data)
+
+        dvc_yaml_data = {
+            "stages": {
+                "step_compare_metrics_zeroshot": {
+                    "foreach": "${datasets}",
+                    "do": {
+                        "cmd": "python scripts/compare_metrics.py dataset=${item}",
+                        "deps": ["scripts/compare_metrics.py"],
+                        "metrics": [
+                            {"results/metrics/comparative_table_zeroshot_${item}.md": {"cache": False}},
+                            {"results/metrics/comparative_metrics_summary_zeroshot_${item}.csv": {"cache": False}},
+                        ],
+                        "plots": [
+                            {"results/plots/global_comparative_benchmark_zeroshot_${item}.png": {"cache": False}},
+                        ],
+                    },
+                },
+            },
+        }
+        _write_yaml(repo_dir / "dvc.yaml", dvc_yaml_data)
+
+        subprocess.run(["git", "-C", str(repo_dir), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "commit", "-m", "Initial commit with foreach"], check=True)
+        c0_sha = subprocess.check_output(["git", "-C", str(repo_dir), "rev-parse", "HEAD"], text=True).strip()
+
+        allowed = get_allowed_sync_paths(repo_path=str(repo_dir), start_commit=c0_sha)
+
+        # 3 datasets * 3 outputs = 9 outputs allowed
+        expected_allowed = [
+            "results/plots/global_comparative_benchmark_zeroshot_amazon-video-games.png",
+            "results/metrics/comparative_metrics_summary_zeroshot_amazon-video-games.csv",
+            "results/metrics/comparative_table_zeroshot_amazon-video-games.md",
+            "results/plots/global_comparative_benchmark_zeroshot_movielens.png",
+            "results/metrics/comparative_metrics_summary_zeroshot_movielens.csv",
+            "results/metrics/comparative_table_zeroshot_movielens.md",
+            "results/plots/global_comparative_benchmark_zeroshot_amazon-books.png",
+            "results/metrics/comparative_metrics_summary_zeroshot_amazon-books.csv",
+            "results/metrics/comparative_table_zeroshot_amazon-books.md",
+            "dvc.lock",
+        ]
+        for p in expected_allowed:
+            assert is_path_allowed(p, allowed) is True, f"Expected {p} to be allowed"
+
+        # Code and config files MUST be rejected
+        rejected_paths = [
+            "scripts/compare_metrics.py",
+            "scripts/simulate_research.py",
+            "dvc.yaml",
+            "params.yaml",
+        ]
+        for p in rejected_paths:
+            assert is_path_allowed(p, allowed) is False, f"Expected {p} to be rejected"
+
+    def test_dvc_resolution_failure_raises_runtime_error(self, tmp_path):
+        """Malformed dvc.yaml or unresolvable foreach must raise explicit RuntimeError without silent fallback."""
+        repo_dir = tmp_path / "broken_repo"
+        subprocess.run(["git", "init", str(repo_dir)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.name", "Tester"], check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "config", "user.email", "tester@test.io"], check=True)
+
+        dvc_yaml_data = {
+            "stages": {
+                "broken_stage": {
+                    "foreach": "${missing_var}",
+                    "do": {"cmd": "echo 1", "outs": ["out_${item}.txt"]},
+                },
+            },
+        }
+        _write_yaml(repo_dir / "dvc.yaml", dvc_yaml_data)
+        subprocess.run(["git", "-C", str(repo_dir), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(repo_dir), "commit", "-m", "Broken foreach"], check=True)
+        c0_sha = subprocess.check_output(["git", "-C", str(repo_dir), "rev-parse", "HEAD"], text=True).strip()
+
+        with pytest.raises(RuntimeError, match="Failed to resolve DVC stage outputs"):
+            get_allowed_sync_paths(repo_path=str(repo_dir), start_commit=c0_sha)
+

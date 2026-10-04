@@ -342,27 +342,34 @@ class BranchExecutor:
         # Résolution du commit de départ figé (Henri - gel du code de départ)
         if start_commit:
             self.start_commit = start_commit
-        elif os.path.isfile(os.path.join(self.repo_dir, ".cluster-ci-start-commit")):
-            try:
-                with open(os.path.join(self.repo_dir, ".cluster-ci-start-commit"), "r", encoding="utf-8") as f:
-                    self.start_commit = f.read().strip()
-            except Exception:
-                self.start_commit = ""
-        elif os.path.isfile(os.path.join(self.repo_dir, ".cluster-ci-commit")):
-            try:
-                with open(os.path.join(self.repo_dir, ".cluster-ci-commit"), "r", encoding="utf-8") as f:
-                    self.start_commit = f.read().strip()
-            except Exception:
-                self.start_commit = ""
-        elif os.environ.get("CALLER_COMMIT_SHA"):
-            self.start_commit = os.environ.get("CALLER_COMMIT_SHA", "").strip()
         else:
-            try:
-                self.start_commit = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=self.repo_dir, text=True, stderr=subprocess.DEVNULL
-                ).strip()
-            except Exception:
-                self.start_commit = "HEAD"
+            helper = dvc_git_helper
+            if helper is None:
+                from src.runner import dvc_git_helper as helper
+            self.start_commit = helper._get_start_commit(self.repo_dir)
+
+        if self.start_commit and self.start_commit != "HEAD":
+            git_dir = os.path.join(self.repo_dir, ".git")
+            target_git_file = None
+            if os.path.isdir(git_dir):
+                target_git_file = os.path.join(git_dir, "cluster-ci-start-commit")
+            elif os.path.isfile(git_dir):
+                try:
+                    with open(git_dir, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content.startswith("gitdir:"):
+                        actual_git_dir = content.split(":", 1)[1].strip()
+                        if not os.path.isabs(actual_git_dir):
+                            actual_git_dir = os.path.normpath(os.path.join(self.repo_dir, actual_git_dir))
+                        target_git_file = os.path.join(actual_git_dir, "cluster-ci-start-commit")
+                except Exception:
+                    pass
+            if target_git_file:
+                try:
+                    with open(target_git_file, "w", encoding="utf-8") as f:
+                        f.write(self.start_commit + "\n")
+                except Exception:
+                    pass
 
 
 
