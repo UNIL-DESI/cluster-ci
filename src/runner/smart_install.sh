@@ -4,29 +4,62 @@
 # Hash is stored in /home/user/.cluster-ci-deps-hash (persistent Docker volume).
 set -e
 
-export PYTHONUSERBASE="/home/user/.local"
-export PATH="/home/user/.local/bin:$PATH"
+USER_BASE="${PYTHONUSERBASE:-/home/user/.local}"
+export PYTHONUSERBASE="$USER_BASE"
+export PATH="$USER_BASE/bin:$PATH"
 
-HASH_FILE="/home/user/.cluster-ci-deps-hash"
+HOME_DIR="${HOME:-/home/user}"
+HASH_FILE="${CLUSTER_CI_HASH_FILE:-$HOME_DIR/.cluster-ci-deps-hash}"
 
-# Migration: migrate legacy ~/.local/local (from previous pip --prefix installs) to standard user-site ~/.local
-if [ -d "/home/user/.local/local" ]; then
-    echo "📦 [Cluster-CI] Migrating legacy packages from ~/.local/local to user-site..."
-    for d in /home/user/.local/local/lib/python3.*/dist-packages; do
-        if [ -d "$d" ]; then
-            pyver=$(basename $(dirname "$d"))
-            target="/home/user/.local/lib/$pyver/site-packages"
-            mkdir -p "$target"
-            cp -rn "$d"/* "$target/" 2>/dev/null || cp -a "$d"/* "$target/" 2>/dev/null || true
+# Function to ensure usercustomize.py exists in all user site-packages directories
+ensure_usercustomize() {
+    for sp in "$USER_BASE"/lib/python3.*/site-packages; do
+        if [ -d "$sp" ]; then
+            cat << 'EOF_UC' > "$sp/usercustomize.py"
+import sys
+import site
+
+user_site = site.getusersitepackages()
+if user_site in sys.path:
+    sys.path.remove(user_site)
+    idx = 1 if (sys.path and sys.path[0] in ("", ".", "/workspace")) else 0
+    sys.path.insert(idx, user_site)
+EOF_UC
         fi
     done
-    if [ -d "/home/user/.local/local/bin" ]; then
-        mkdir -p "/home/user/.local/bin"
-        cp -rn /home/user/.local/local/bin/* "/home/user/.local/bin/" 2>/dev/null || cp -a /home/user/.local/local/bin/* "/home/user/.local/bin/" 2>/dev/null || true
+}
+
+# Migration: migrate legacy ~/.local/local (from previous pip --prefix installs) to standard user-site ~/.local
+if [ -d "$USER_BASE/local" ]; then
+    echo "📦 [Cluster-CI] Migrating legacy packages from $USER_BASE/local to user-site..."
+    for d in "$USER_BASE"/local/lib/python3.*/dist-packages; do
+        if [ -d "$d" ]; then
+            pyver=$(basename $(dirname "$d"))
+            target="$USER_BASE/lib/$pyver/site-packages"
+            mkdir -p "$target"
+            if [ -n "$(ls -A "$d" 2>/dev/null)" ]; then
+                cp -a "$d"/. "$target/" || {
+                    echo "❌ [Cluster-CI] Migration failed: could not copy packages from $d to $target" >&2
+                    exit 1
+                }
+            fi
+        fi
+    done
+    if [ -d "$USER_BASE/local/bin" ]; then
+        mkdir -p "$USER_BASE/bin"
+        if [ -n "$(ls -A "$USER_BASE/local/bin" 2>/dev/null)" ]; then
+            cp -a "$USER_BASE/local/bin"/. "$USER_BASE/bin/" || {
+                echo "❌ [Cluster-CI] Migration failed: could not copy binaries from $USER_BASE/local/bin to $USER_BASE/bin" >&2
+                exit 1
+            }
+        fi
     fi
-    rm -rf "/home/user/.local/local"
+    rm -rf "$USER_BASE/local"
     echo "✅ [Cluster-CI] Migration to user-site complete."
 fi
+
+# Ensure usercustomize.py exists right away (e.g. for existing/migrated packages)
+ensure_usercustomize
 
 # Compute a composite hash of all dependency specification files
 compute_deps_hash() {
@@ -42,8 +75,14 @@ CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
     # Quick sanity check: verify that pip-installed packages are actually present in user-site.
-    if find /home/user/.local -path '*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
+    if find "$USER_BASE" -path '*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
+        ensure_usercustomize
+        if [ -f "/cluster-ci/src/runner/verify_packages.py" ]; then
+            python3 /cluster-ci/src/runner/verify_packages.py
+        elif command -v python3 >/dev/null 2>&1 && [ -f "$(dirname "$0")/verify_packages.py" ]; then
+            python3 "$(dirname "$0")/verify_packages.py"
+        fi
         exit 0
     else
         echo "⚠️  [Cluster-CI] Cache hit but pip packages missing from user-site. Reinstalling..."
@@ -283,30 +322,22 @@ fi
 
 # Ensure isolated DVC launcher from uv tool is preserved in /home/user/.local/bin
 # (prevents pip install -e . or pip dependencies from overwriting it with a broken shebang)
-UV_DVC_BIN="/home/user/.local/share/uv/tools/dvc/bin/dvc"
+UV_DVC_BIN="$USER_BASE/share/uv/tools/dvc/bin/dvc"
 if [ -f "$UV_DVC_BIN" ]; then
-    mkdir -p /home/user/.local/bin
-    ln -sf "$UV_DVC_BIN" /home/user/.local/bin/dvc
-    echo "🔧 [Cluster-CI] Restored isolated DVC launcher symlink ($UV_DVC_BIN -> /home/user/.local/bin/dvc)"
+    mkdir -p "$USER_BASE/bin"
+    ln -sf "$UV_DVC_BIN" "$USER_BASE/bin/dvc"
+    echo "🔧 [Cluster-CI] Restored isolated DVC launcher symlink ($UV_DVC_BIN -> $USER_BASE/bin/dvc)"
 else
     echo "⚠️  [Cluster-CI] Warning: isolated uv DVC binary not found at $UV_DVC_BIN"
 fi
 
 # Ensure usercustomize.py exists in user-site to guarantee user packages take priority across all images
-for sp in /home/user/.local/lib/python3.*/site-packages; do
-    if [ -d "$sp" ]; then
-        cat << 'EOF_UC' > "$sp/usercustomize.py"
-import sys
-import site
-
-user_site = site.getusersitepackages()
-if user_site in sys.path:
-    sys.path.remove(user_site)
-    idx = 1 if (sys.path and sys.path[0] in ("", ".", "/workspace")) else 0
-    sys.path.insert(idx, user_site)
-EOF_UC
-    fi
-done
+ensure_usercustomize
+if [ -f "/cluster-ci/src/runner/verify_packages.py" ]; then
+    python3 /cluster-ci/src/runner/verify_packages.py
+elif command -v python3 >/dev/null 2>&1 && [ -f "$(dirname "$0")/verify_packages.py" ]; then
+    python3 "$(dirname "$0")/verify_packages.py"
+fi
 
 # Save hash only after successful install
 echo "$DEPS_HASH" > "$HASH_FILE"
