@@ -168,8 +168,9 @@ def test_smart_install_cached_path_ensures_usercustomize():
             f.write("Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.0.0\n")
 
         hash_file = os.path.join(user_home, ".cluster-ci-deps-hash")
+        script_path = os.path.abspath("src/runner/smart_install.sh")
         calc_hash = subprocess.run(
-            ["bash", "-c", "md5sum pyproject.toml 2>/dev/null | md5sum | cut -d' ' -f1"],
+            ["bash", script_path, "--compute-hash"],
             cwd=repo_dir,
             capture_output=True,
             text=True,
