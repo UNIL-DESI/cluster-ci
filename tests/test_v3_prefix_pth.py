@@ -90,10 +90,31 @@ def test_verify_packages_detects_mismatch(monkeypatch, capsys):
         assert "imported version '1.0.0'" in captured2.err
 
 
+def test_verify_packages_subprocess_check():
+    """
+    Vérifie le fonctionnement du vérificateur subprocess (conditions réelles PYTHONPATH).
+    """
+    from src.runner.verify_packages import _run_subprocess_check
+    import importlib.metadata
+
+    real_ver = importlib.metadata.version("pytest")
+    cwd = os.getcwd()
+
+    # 1. Version exacte -> succès (0 mismatches)
+    mismatches_ok = _run_subprocess_check("test_ok", dict(os.environ), cwd, {"pytest": real_ver})
+    assert mismatches_ok == []
+
+    # 2. Version erronée -> mismatch détecté
+    mismatches_err = _run_subprocess_check("test_err", dict(os.environ), cwd, {"pytest": "999.0.0"})
+    assert len(mismatches_err) == 1
+    assert "pytest" in mismatches_err[0]
+    assert "999.0.0" in mismatches_err[0]
+
+
 def test_init_cmd_does_not_chown_workspace():
     """
     Vérifie rigoureusement que BranchExecutor n'applique JAMAIS de chown sur /workspace
-    (dossier monté depuis l'hôte), évitant la mutation d'ownership sur l'hôte.
+    (dossier monté depuis l'hôte), supprime l'ancien .pth et migre ~/.local/local vers user-site.
     """
     from src.runner.branch_executor import BranchExecutor
     from src.runner.test_branch_executor import MockDockerRunner
@@ -118,4 +139,7 @@ def test_init_cmd_does_not_chown_workspace():
         # Invariant: /workspace ne doit jamais être chowné
         assert "/workspace" not in init_cmd or "chown" not in init_cmd
         assert "/home/user" in init_cmd and "chown -R" in init_cmd
+        # Invariant: suppression de cluster-ci-prefix.pth et migration ~/.local/local
+        assert "cluster-ci-prefix.pth" in init_cmd and "rm -f" in init_cmd
+        assert "/home/user/.local/local" in init_cmd and "site-packages" in init_cmd
 

@@ -10,7 +10,9 @@ is shadowed by an older container package or fails to import.
 """
 
 import importlib.metadata
+import json
 import os
+import subprocess
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -33,9 +35,77 @@ def discover_project_paths(base_dir: str = "/home/user/.local") -> List[str]:
     return paths
 
 
-def verify_packages(pythonpath: Optional[str] = None) -> int:
+def _run_subprocess_check(
+    condition_name: str,
+    env_override: Dict[str, str],
+    cwd: str,
+    expected_pkgs: Dict[str, str],
+) -> List[str]:
+    """
+    Runs a subprocess with specified env and cwd to verify active package versions.
+    """
+    child_code = """
+import sys
+import json
+import importlib.metadata
+
+expected = json.loads(sys.stdin.read())
+mismatches = []
+
+for pkg_name, exp_ver in expected.items():
+    try:
+        active_dist = importlib.metadata.distribution(pkg_name)
+        active_ver = active_dist.version
+        active_loc = getattr(active_dist, "_path", getattr(active_dist, "locate_file", lambda f: "")(""))
+        if active_ver != exp_ver:
+            mismatches.append(
+                f"Package '{pkg_name}': expected version '{exp_ver}', but imported version '{active_ver}' from {active_loc}"
+            )
+    except importlib.metadata.PackageNotFoundError:
+        mismatches.append(
+            f"Package '{pkg_name}': expected version '{exp_ver}', but package was not found in active environment"
+        )
+    except Exception as exc:
+        mismatches.append(f"Package '{pkg_name}': verification failed with exception: {exc}")
+
+if mismatches:
+    print(json.dumps(mismatches))
+    sys.exit(1)
+sys.exit(0)
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", child_code],
+            input=json.dumps(expected_pkgs),
+            text=True,
+            capture_output=True,
+            cwd=cwd,
+            env=env_override,
+            timeout=30,
+        )
+    except Exception as exc:
+        return [f"Condition '{condition_name}': subprocess failed to execute: {exc}"]
+
+    if proc.returncode != 0:
+        try:
+            return json.loads(proc.stdout)
+        except Exception:
+            err = proc.stderr.strip() or proc.stdout.strip()
+            return [f"Condition '{condition_name}': verification process failed (code {proc.returncode}): {err}"]
+
+    return []
+
+
+def verify_packages(
+    pythonpath: Optional[str] = None,
+    check_subprocesses: bool = False,
+    workspace_dir: str = "/workspace",
+) -> int:
     """
     Verifies that all distributions installed in project_paths match their active imported versions.
+    Checks in-process and optionally verifies dual-stage conditions via subprocesses:
+      1) Condition 1: env -u PYTHONPATH
+      2) Condition 2: PYTHONPATH=. with cwd=workspace_dir
     Returns 0 on success, 1 on failure.
     """
     if pythonpath is None:
@@ -48,11 +118,6 @@ def verify_packages(pythonpath: Optional[str] = None) -> int:
     if not project_paths:
         print("ℹ️ [Cluster-CI] No project package paths found under /home/user/.local. Skipping package verification.")
         return 0
-
-    # Ensure project_paths are at the front of sys.path for this verification process
-    for p in reversed(project_paths):
-        if p not in sys.path:
-            sys.path.insert(0, p)
 
     # Collect unique distributions installed in project_paths.
     # The order of project_paths determines priority (first occurrence wins).
@@ -105,10 +170,44 @@ def verify_packages(pythonpath: Optional[str] = None) -> int:
             sys.stderr.write(f"  - {m}\n")
         return 1
 
-    print(f"✅ [Cluster-CI] All {verified_count} project packages verified (imported version matches installed version).")
+    # If subprocess checks requested, verify real stage execution conditions
+    if check_subprocesses:
+        expected_dict = {pkg_name: exp_ver for _, (pkg_name, exp_ver, _) in seen_distributions.items()}
+        work_dir = workspace_dir if os.path.isdir(workspace_dir) else os.getcwd()
+
+        # Condition 1: PYTHONPATH unset
+        env1 = dict(os.environ)
+        env1.pop("PYTHONPATH", None)
+        sub_mismatches_c1 = _run_subprocess_check("PYTHONPATH unset", env1, work_dir, expected_dict)
+        if sub_mismatches_c1:
+            sys.stderr.write(
+                f"❌ [Cluster-CI] FAIL-FAST: {len(sub_mismatches_c1)} package version mismatch(es) detected under condition 'PYTHONPATH unset'!\n"
+            )
+            for m in sub_mismatches_c1:
+                sys.stderr.write(f"  - {m}\n")
+            return 1
+
+        # Condition 2: PYTHONPATH=. with cwd=workspace_dir
+        env2 = dict(os.environ)
+        env2["PYTHONPATH"] = "."
+        sub_mismatches_c2 = _run_subprocess_check("PYTHONPATH=.", env2, work_dir, expected_dict)
+        if sub_mismatches_c2:
+            sys.stderr.write(
+                f"❌ [Cluster-CI] FAIL-FAST: {len(sub_mismatches_c2)} package version mismatch(es) detected under condition 'PYTHONPATH=.'!\n"
+            )
+            for m in sub_mismatches_c2:
+                sys.stderr.write(f"  - {m}\n")
+            return 1
+
+        print(
+            f"✅ [Cluster-CI] All {verified_count} project packages verified under both PYTHONPATH unset and PYTHONPATH=. conditions."
+        )
+    else:
+        print(f"✅ [Cluster-CI] All {verified_count} project packages verified (imported version matches installed version).")
+
     return 0
 
 
 if __name__ == "__main__":
     pp = sys.argv[1] if len(sys.argv) > 1 else None
-    sys.exit(verify_packages(pp))
+    sys.exit(verify_packages(pp, check_subprocesses=True))
