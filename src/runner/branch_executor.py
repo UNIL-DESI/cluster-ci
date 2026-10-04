@@ -774,7 +774,6 @@ class BranchExecutor:
         # 1. Initialisation root
         init_cmd = (
             f"chown -R {self.user_id}:{self.group_id} /home/user && "
-            f"chown -R {self.user_id}:{self.group_id} /workspace && "
             "if [ -d /opt/Automodel ]; then chmod -R a+rX /opt/Automodel; fi && "
             "if [ -d /opt/uv_cache ]; then chmod -R a+rwX /opt/uv_cache; fi && "
             'SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && '

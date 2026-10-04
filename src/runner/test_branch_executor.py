@@ -63,6 +63,7 @@ class MockDockerRunner(DockerRunner):
         env: Optional[Dict[str, str]] = None,
         user_id: int = 1000,
         group_id: int = 1000,
+        resources: Optional[Dict[str, Any]] = None,
     ) -> int:
         self.containers_started.append({
             "name": container_name,

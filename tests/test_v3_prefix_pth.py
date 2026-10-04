@@ -88,3 +88,34 @@ def test_verify_packages_detects_mismatch(monkeypatch, capsys):
         assert "FAIL-FAST" in captured2.err
         assert "expected version '2.0.0'" in captured2.err
         assert "imported version '1.0.0'" in captured2.err
+
+
+def test_init_cmd_does_not_chown_workspace():
+    """
+    Vérifie rigoureusement que BranchExecutor n'applique JAMAIS de chown sur /workspace
+    (dossier monté depuis l'hôte), évitant la mutation d'ownership sur l'hôte.
+    """
+    from src.runner.branch_executor import BranchExecutor
+    from src.runner.test_branch_executor import MockDockerRunner
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        mock_docker = MockDockerRunner()
+        executor = BranchExecutor(
+            headnode_url="http://localhost:5000",
+            job_id="job-test-ownership",
+            runner_id="runner-1",
+            worker_id="worker-1",
+            repo_dir=tmp_dir,
+            target_repo="UNIL-DESI/llm-as-recommender",
+            target_branch="main",
+            docker=mock_docker,
+        )
+        executor.start_container_for_image("python:3.11-slim")
+
+        root_cmds = [c["command"] for c in mock_docker.exec_commands if c.get("user") == "root"]
+        assert len(root_cmds) >= 1
+        init_cmd = root_cmds[0]
+        # Invariant: /workspace ne doit jamais être chowné
+        assert "/workspace" not in init_cmd or "chown" not in init_cmd
+        assert "/home/user" in init_cmd and "chown -R" in init_cmd
+

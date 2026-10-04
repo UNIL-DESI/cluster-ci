@@ -604,7 +604,7 @@ docker run -d \
 # We use a temp script to avoid all escaping issues with docker exec.
 cat > /tmp/_cluster_ci_init.sh << 'INIT_SCRIPT'
 #!/bin/bash
-chown -R "$1" /home/user && chown -R "$1" /workspace
+chown -R "$1" /home/user
 [ -d /opt/Automodel ] && chmod -R a+rX /opt/Automodel 2>/dev/null || true
 [ -d /opt/venv ] && chmod -R a+rX /opt/venv 2>/dev/null || true
 SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
