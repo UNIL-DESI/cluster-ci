@@ -143,3 +143,63 @@ def test_init_cmd_does_not_chown_workspace():
         assert "cluster-ci-prefix.pth" in init_cmd and "rm -f" in init_cmd
         assert "/home/user/.local/local" in init_cmd and "site-packages" in init_cmd
 
+
+def test_smart_install_cached_path_ensures_usercustomize():
+    """
+    Vérifie que le chemin cache valide de smart_install.sh crée systématiquement
+    usercustomize.py dans site-packages, évitant le shadowing des paquets conteneur.
+    Sur cdab1c2, smart_install.sh sort par exit 0 (l.47) avant l'écriture (l.295-309).
+    """
+    import subprocess
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_dir = os.path.join(tmp_dir, "repo")
+        os.makedirs(repo_dir, exist_ok=True)
+        pyproj = os.path.join(repo_dir, "pyproject.toml")
+        with open(pyproj, "w") as f:
+            f.write('[project]\nname = "demo"\nversion = "0.1.0"\n')
+
+        user_home = os.path.join(tmp_dir, "home")
+        user_base = os.path.join(user_home, ".local")
+        sp_dir = os.path.join(user_base, "lib", "python3.12", "site-packages")
+        dist_info = os.path.join(sp_dir, "demo_pkg-1.0.0.dist-info")
+        os.makedirs(dist_info, exist_ok=True)
+        with open(os.path.join(dist_info, "METADATA"), "w") as f:
+            f.write("Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.0.0\n")
+
+        hash_file = os.path.join(user_home, ".cluster-ci-deps-hash")
+        calc_hash = subprocess.run(
+            ["bash", "-c", "md5sum pyproject.toml 2>/dev/null | md5sum | cut -d' ' -f1"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        with open(hash_file, "w") as f:
+            f.write(calc_hash + "\n")
+
+        uc_file = os.path.join(sp_dir, "usercustomize.py")
+        assert not os.path.exists(uc_file)
+
+        script_path = os.path.abspath("src/runner/smart_install.sh")
+        env = dict(os.environ)
+        env["HOME"] = user_home
+        env["PYTHONUSERBASE"] = user_base
+        env["CLUSTER_CI_HASH_FILE"] = hash_file
+
+        res = subprocess.run(
+            ["bash", script_path],
+            cwd=repo_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0
+        assert "Dependencies unchanged (cached)" in res.stdout
+        assert os.path.exists(uc_file), f"usercustomize.py must exist on cached path, but was missing!\nOutput: {res.stdout}"
+        with open(uc_file, "r") as f:
+            content = f.read()
+        assert "getusersitepackages" in content
+        assert "sys.path.insert" in content
+
+
