@@ -532,3 +532,113 @@ class TestGitMergeDriverIntegration:
         assert "base_stage" in final_lock["stages"]
         assert "stage_a" in final_lock["stages"]
         assert "stage_b" in final_lock["stages"]
+
+    def test_push_with_retries_reconciles_with_unstaged_tracked_modifications(self, git_cluster):
+        """Test that push_with_retries reconciles via autostash when tracked files are modified but unstaged."""
+        clone_a = git_cluster["clone_a"]
+        clone_b = git_cluster["clone_b"]
+        env = _get_git_env()
+
+        # In clone_a: add an initial tracked CSV file, commit & push
+        metrics_file_a = os.path.join(clone_a, "metrics.csv")
+        with open(metrics_file_a, "w", encoding="utf-8") as f:
+            f.write("epoch,loss\n0,0.5\n")
+        subprocess.run(["git", "-C", clone_a, "add", "metrics.csv"], check=True, env=env)
+        subprocess.run(["git", "-C", clone_a, "commit", "-m", "Add metrics.csv"], check=True, env=env)
+        push_with_retries(current_branch="main", cwd=clone_a)
+
+        # Clone B pulls the new commit so it tracks metrics.csv
+        subprocess.run(["git", "-C", clone_b, "pull", "--rebase", "origin", "main"], check=True, env=env)
+        metrics_file_b = os.path.join(clone_b, "metrics.csv")
+        assert os.path.exists(metrics_file_b)
+
+        # Clone A produces another commit and pushes first (concurrent push)
+        lock_a = _read_yaml(os.path.join(clone_a, "dvc.lock"))
+        lock_a["stages"]["stage_a"] = {
+            "cmd": "echo A",
+            "outs": [{"path": "out_a.txt", "hash": "md5", "md5": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+        }
+        _write_yaml(os.path.join(clone_a, "dvc.lock"), lock_a)
+        subprocess.run(["git", "-C", clone_a, "commit", "-am", "Worker A completed stage_a"], check=True, env=env)
+        push_with_retries(current_branch="main", cwd=clone_a)
+
+        # Clone B adds stage_b to dvc.lock and commits it
+        lock_b = _read_yaml(os.path.join(clone_b, "dvc.lock"))
+        lock_b["stages"]["stage_b"] = {
+            "cmd": "echo B",
+            "outs": [{"path": "out_b.txt", "hash": "md5", "md5": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+        }
+        _write_yaml(os.path.join(clone_b, "dvc.lock"), lock_b)
+        subprocess.run(["git", "-C", clone_b, "commit", "-am", "Worker B completed stage_b"], check=True, env=env)
+
+        # Clone B has an unstaged modification in tracked metrics.csv (not git added)
+        with open(metrics_file_b, "a", encoding="utf-8") as f:
+            f.write("1,0.25\n")
+
+        # Verify it is modified and unstaged
+        st = subprocess.run(["git", "-C", clone_b, "status", "--porcelain"], capture_output=True, text=True, check=True, env=env)
+        assert "M metrics.csv" in st.stdout
+
+        # Now clone B pushes: push is rejected, rebase reconciliation with --autostash runs and succeeds
+        success = push_with_retries(current_branch="main", cwd=clone_b)
+        assert success is True
+
+        # Check remote history contains both Worker A and Worker B commits
+        log_res = subprocess.run(
+            ["git", "-C", clone_b, "log", "--oneline", "origin/main"],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env
+        )
+        assert "Worker A completed stage_a" in log_res.stdout
+        assert "Worker B completed stage_b" in log_res.stdout
+
+        # Verify the unstaged tracked file is still modified with the new content
+        with open(metrics_file_b, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "1,0.25" in content
+
+        # Verify git status still reports it as modified
+        st_after = subprocess.run(["git", "-C", clone_b, "status", "--porcelain"], capture_output=True, text=True, check=True, env=env)
+        assert "M metrics.csv" in st_after.stdout
+
+    def test_push_with_retries_autostash_conflict_fails_loudly(self, git_cluster):
+        """Test that push_with_retries fails loudly if autostash reapplication results in conflict."""
+        clone_a = git_cluster["clone_a"]
+        clone_b = git_cluster["clone_b"]
+        env = _get_git_env()
+
+        # In clone_a: add an initial tracked CSV file and commit & push
+        conf_file_a = os.path.join(clone_a, "conf.txt")
+        with open(conf_file_a, "w", encoding="utf-8") as f:
+            f.write("initial\n")
+        subprocess.run(["git", "-C", clone_a, "add", "conf.txt"], check=True, env=env)
+        subprocess.run(["git", "-C", clone_a, "commit", "-m", "Add conf.txt"], check=True, env=env)
+        push_with_retries(current_branch="main", cwd=clone_a)
+
+        # Clone B pulls the new commit
+        subprocess.run(["git", "-C", clone_b, "pull", "--rebase", "origin", "main"], check=True, env=env)
+        conf_file_b = os.path.join(clone_b, "conf.txt")
+
+        # Clone A modifies conf.txt and commits & pushes
+        with open(conf_file_a, "w", encoding="utf-8") as f:
+            f.write("remote change\n")
+        subprocess.run(["git", "-C", clone_a, "commit", "-am", "Worker A modifies conf.txt"], check=True, env=env)
+        push_with_retries(current_branch="main", cwd=clone_a)
+
+        # Clone B makes a commit on another file
+        dummy_b = os.path.join(clone_b, "dummy.txt")
+        with open(dummy_b, "w", encoding="utf-8") as f:
+            f.write("dummy\n")
+        subprocess.run(["git", "-C", clone_b, "add", "dummy.txt"], check=True, env=env)
+        subprocess.run(["git", "-C", clone_b, "commit", "-m", "Worker B dummy commit"], check=True, env=env)
+
+        # Clone B makes a conflicting unstaged change to conf.txt
+        with open(conf_file_b, "w", encoding="utf-8") as f:
+            f.write("local conflicting change\n")
+
+        # push_with_retries should fail loudly (RuntimeError) due to autostash conflict
+        with pytest.raises(RuntimeError, match=r"(?s)Reconciliation failed.*Applying autostash resulted in conflicts"):
+            push_with_retries(current_branch="main", cwd=clone_b)
+
