@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 import zipfile
 import shutil
+import io
+import tarfile
 from pathlib import Path
 
 if sys.platform.startswith("win"):
@@ -766,13 +768,34 @@ def _get_start_commit(cwd=None):
     return "HEAD"
 
 
+def get_dvc_command():
+    """Finds dvc executable in PATH, ~/.local/bin, ~/.local/share/uv/tools/dvc/bin, or uvx fallback."""
+    dvc_path = shutil.which("dvc")
+    if dvc_path:
+        return [dvc_path]
+    local_dvc = os.path.expanduser("~/.local/bin/dvc")
+    if os.path.isfile(local_dvc) and os.access(local_dvc, os.X_OK):
+        return [local_dvc]
+    uv_tool_dvc = os.path.expanduser("~/.local/share/uv/tools/dvc/bin/dvc")
+    if os.path.isfile(uv_tool_dvc) and os.access(uv_tool_dvc, os.X_OK):
+        return [uv_tool_dvc]
+    uvx_path = shutil.which("uvx")
+    if not uvx_path:
+        cand_uvx = os.path.expanduser("~/.local/bin/uvx")
+        if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
+            uvx_path = cand_uvx
+    if uvx_path:
+        return [uvx_path, "--from", "dvc==3.67.1", "dvc"]
+    return ["dvc"]
+
+
 def get_allowed_sync_paths(repo_path=None, start_commit=None):
     """Return the set of repository-relative paths allowed for synchronization.
     
     In accordance with Henri's architecture:
     Allowed paths are strictly deduced from dvc.yaml and dvc.lock OF THE STARTING COMMIT:
       - dvc.lock (always permitted)
-      - stage outs declared in dvc.yaml (outs, metrics, plots) evaluated via DVC Repo API
+      - stage outs declared in dvc.yaml (outs, metrics, plots) evaluated via DVC subprocess
       - outs recorded in dvc.lock
     Code files, params files, and dvc.yaml are strictly excluded unless declared in outs.
     """
@@ -780,54 +803,77 @@ def get_allowed_sync_paths(repo_path=None, start_commit=None):
     allowed = {"dvc.lock"}
     start_commit = start_commit or _get_start_commit(cwd)
 
-    # 1. Resolve stage outputs declared in dvc.yaml via DVC Python API
-    try:
-        from dvc.repo import Repo
-        dvc_rev = start_commit if (start_commit and start_commit != "HEAD") else None
-        dvc_repo = Repo(cwd, rev=dvc_rev, uninitialized=True)
-        for stage in dvc_repo.index.stages:
-            for out in stage.outs:
-                if hasattr(out, "fs_path"):
-                    rel = os.path.relpath(out.fs_path, dvc_repo.root_dir)
-                else:
-                    rel = str(out)
-                p_str = Path(rel).as_posix().lstrip("./")
-                if p_str and p_str != "." and not p_str.startswith(".dvc-viewer/"):
-                    allowed.add(p_str)
-    except Exception as e:
-        from dvc.exceptions import DvcException
-        from dvc.stage.exceptions import StageFileDoesNotExistError, StageFileIsNotDvcFileError
-        if isinstance(e, (StageFileDoesNotExistError, StageFileIsNotDvcFileError)):
-            pass
-        elif isinstance(e, DvcException):
-            raise RuntimeError(
-                f"Failed to resolve DVC stage outputs at starting commit '{start_commit or 'HEAD'}': {e}"
-            ) from e
+    # 1. Resolve stage outputs declared in dvc.yaml via DVC subprocess
+    has_yaml = False
+    if start_commit and start_commit != "HEAD":
+        chk = subprocess.run(["git", "cat-file", "-e", f"{start_commit}:dvc.yaml"], cwd=cwd, capture_output=True)
+        has_yaml = (chk.returncode == 0)
+    else:
+        has_yaml = os.path.isfile(os.path.join(cwd, "dvc.yaml"))
 
-        # In mock unit tests where OS/git calls are patched, fallback to get_cache_false_paths
-        local_yaml = os.path.join(cwd, "dvc.yaml")
+    if has_yaml:
+        curr_head = None
         try:
-            cf_paths = get_cache_false_paths(local_yaml)
-            for p in cf_paths:
-                allowed.add(Path(p).as_posix().lstrip("./"))
+            res_h = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True)
+            if res_h.returncode == 0:
+                curr_head = res_h.stdout.strip()
         except Exception:
             pass
 
-        if not allowed or allowed == {"dvc.lock"}:
-            yaml_exists = False
-            if start_commit and start_commit != "HEAD":
-                chk = subprocess.run(
-                    ["git", "cat-file", "-e", f"{start_commit}:dvc.yaml"],
-                    cwd=cwd, capture_output=True
+        target_dir = cwd
+        temp_dir = None
+        created_dvc_dir = False
+        try:
+            if start_commit and start_commit != "HEAD" and start_commit != curr_head:
+                temp_dir = tempfile.mkdtemp(prefix="cluster_dvc_dag_")
+                target_dir = temp_dir
+                proc = subprocess.run(
+                    ["git", "archive", start_commit],
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True
                 )
-                yaml_exists = (chk.returncode == 0)
+                with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as tar:
+                    if hasattr(tarfile, "data_filter"):
+                        tar.extractall(temp_dir, filter="data")
+                    else:
+                        tar.extractall(temp_dir)
+                os.makedirs(os.path.join(temp_dir, ".dvc"), exist_ok=True)
+                subprocess.run(["git", "init"], cwd=temp_dir, capture_output=True)
             else:
-                yaml_exists = os.path.isfile(local_yaml)
+                dvc_dir = os.path.join(cwd, ".dvc")
+                if not os.path.exists(dvc_dir):
+                    os.makedirs(dvc_dir, exist_ok=True)
+                    created_dvc_dir = True
 
-            if yaml_exists:
+            cmd = [*get_dvc_command(), "dag", "--outs", "--dot"]
+            res = subprocess.run(
+                cmd,
+                cwd=target_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace"
+            )
+            if res.returncode != 0:
+                err = res.stderr.strip() if res.stderr else (res.stdout.strip() if res.stdout else "unknown error")
                 raise RuntimeError(
-                    f"Failed to resolve DVC stage outputs at starting commit '{start_commit or 'HEAD'}': {e}"
-                ) from e
+                    f"Failed to resolve DVC stage outputs at starting commit '{start_commit or 'HEAD'}': {err}"
+                )
+
+            for node in re.findall(r'"([^"]+)"', res.stdout):
+                norm = Path(node).as_posix().lstrip("./")
+                if norm and norm != "." and not norm.startswith(".dvc-viewer/"):
+                    allowed.add(norm)
+        finally:
+            if created_dvc_dir:
+                try:
+                    os.rmdir(os.path.join(cwd, ".dvc"))
+                except Exception:
+                    pass
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     # 2. Read dvc.lock at start_commit (or local)
     dvc_lock_content = None
@@ -952,40 +998,67 @@ def push_with_retries(
     if not current_branch:
         current_branch = _get_current_branch(cwd)
 
+    if files_to_commit is None:
+        for attempt in range(1, max_retries + 1):
+            log_info(f"Push attempt {attempt}/{max_retries} to origin/{current_branch}...")
+
+            res_push = subprocess.run(
+                ['git', 'push', 'origin', f'HEAD:{current_branch}'],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=60,
+                env=env
+            )
+            if res_push.returncode == 0:
+                log_success(f"Changes pushed successfully to origin/{current_branch} on attempt {attempt}.")
+                return True
+
+            stderr_msg = res_push.stderr.strip() if res_push.stderr else (res_push.stdout.strip() if res_push.stdout else "Unknown push error")
+            log_warn(f"Push attempt {attempt}/{max_retries} failed: {stderr_msg}")
+
+            if attempt == max_retries:
+                raise RuntimeError(
+                    f"Failed to push to origin/{current_branch} after {max_retries} attempts. Last error: {stderr_msg}"
+                )
+
+            log_info(f"Attempting reconciliation via pull --rebase on branch '{current_branch}'...")
+            res_rebase = subprocess.run(
+                ['git', 'pull', '--rebase', '--autostash', 'origin', current_branch],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=60,
+                env=env
+            )
+            autostash_conflict = "Applying autostash resulted in conflicts" in ((res_rebase.stderr or "") + (res_rebase.stdout or ""))
+            if res_rebase.returncode != 0 or autostash_conflict:
+                rebase_err = res_rebase.stderr.strip() if res_rebase.stderr else (res_rebase.stdout.strip() if res_rebase.stdout else "Rebase failed")
+                log_warn(f"Rebase conflict or failure: {rebase_err}")
+                subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
+                raise RuntimeError(
+                    f"Reconciliation failed during pull --rebase on branch '{current_branch}'. "
+                    f"Unresolvable conflict encountered: {rebase_err}"
+                )
+
+            log_info(f"Rebase successful on attempt {attempt}. Preparing for next push attempt...")
+
+            backoff = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            jitter = random.uniform(0.1, 0.5)
+            delay = backoff + jitter
+            log_info(f"Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}...")
+            time.sleep(delay)
+
+        raise RuntimeError(f"Failed to push to origin/{current_branch} after {max_retries} attempts.")
+
+    # Targeted output push mode when files_to_commit is specified
     start_commit = start_commit or _get_start_commit(cwd)
     allowed_paths = get_allowed_sync_paths(cwd, start_commit=start_commit)
-
-    # 1. Determine target output files
-    if files_to_commit is not None:
-        target_files = [Path(f).as_posix().lstrip("./") for f in files_to_commit if is_path_allowed(f, allowed_paths)]
-    else:
-        candidates = set()
-        # Staged files
-        res_staged = subprocess.run(['git', 'diff', '--cached', '--name-only'], cwd=cwd, capture_output=True, text=True, env=env)
-        if res_staged.returncode == 0:
-            for line in res_staged.stdout.splitlines():
-                if line.strip():
-                    candidates.add(Path(line.strip()).as_posix().lstrip("./"))
-        # Unstaged modified files
-        res_unstaged = subprocess.run(['git', 'diff', '--name-only'], cwd=cwd, capture_output=True, text=True, env=env)
-        if res_unstaged.returncode == 0:
-            for line in res_unstaged.stdout.splitlines():
-                if line.strip():
-                    candidates.add(Path(line.strip()).as_posix().lstrip("./"))
-        # Check dvc.lock
-        if os.path.exists(os.path.join(cwd, "dvc.lock")):
-            candidates.add("dvc.lock")
-        # Check local commits ahead of remote / merge-base (e.g. test environment)
-        try:
-            head_diff = subprocess.run(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], cwd=cwd, capture_output=True, text=True, env=env)
-            if head_diff.returncode == 0:
-                for line in head_diff.stdout.splitlines():
-                    if line.strip():
-                        candidates.add(Path(line.strip()).as_posix().lstrip("./"))
-        except Exception:
-            pass
-
-        target_files = [f for f in sorted(candidates) if is_path_allowed(f, allowed_paths)]
+    target_files = [Path(f).as_posix().lstrip("./") for f in files_to_commit if is_path_allowed(f, allowed_paths)]
 
     if not target_files:
         log_info("No output files to commit or push.")
