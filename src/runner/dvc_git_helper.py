@@ -726,7 +726,7 @@ def push_with_retries(current_branch=None, max_retries=10, base_delay=0.5, max_d
 
         log_info(f"Attempting reconciliation via pull --rebase on branch '{current_branch}'...")
         res_rebase = subprocess.run(
-            ['git', 'pull', '--rebase', 'origin', current_branch],
+            ['git', 'pull', '--rebase', '--autostash', 'origin', current_branch],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -736,7 +736,8 @@ def push_with_retries(current_branch=None, max_retries=10, base_delay=0.5, max_d
             env=env
         )
 
-        if res_rebase.returncode != 0:
+        autostash_conflict = "Applying autostash resulted in conflicts" in ((res_rebase.stderr or "") + (res_rebase.stdout or ""))
+        if res_rebase.returncode != 0 or autostash_conflict:
             rebase_err = res_rebase.stderr.strip() if res_rebase.stderr else (res_rebase.stdout.strip() if res_rebase.stdout else "Rebase failed")
             log_warn(f"Rebase conflict or failure: {rebase_err}")
             subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
@@ -785,7 +786,7 @@ def sync_before_node(current_branch=None, cwd=None):
 
 
     res = subprocess.run(
-        ['git', 'pull', '--rebase', 'origin', current_branch],
+        ['git', 'pull', '--rebase', '--autostash', 'origin', current_branch],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -794,7 +795,8 @@ def sync_before_node(current_branch=None, cwd=None):
         timeout=60,
         env=env
     )
-    if res.returncode != 0:
+    autostash_conflict = "Applying autostash resulted in conflicts" in ((res.stderr or "") + (res.stdout or ""))
+    if res.returncode != 0 or autostash_conflict:
         err = res.stderr.strip() if res.stderr else (res.stdout.strip() if res.stdout else "Rebase failed")
         log_warn(f"Failed to pull --rebase before node: {err}")
         subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
