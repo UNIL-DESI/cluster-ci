@@ -692,6 +692,10 @@ def push_with_retries(current_branch=None, max_retries=10, base_delay=0.5, max_d
     with bounded exponential backoff and jitter.
     Fails loudly if reconciliation fails or max retries are exceeded.
     """
+    if os.environ.get("IS_LOCAL") == "1":
+        log_info("IS_LOCAL=1: skipping Git push; results stay in the local workspace.")
+        return True
+
     cwd = cwd or os.getcwd()
     install_dvc_lock_merge_driver(repo_path=cwd)
     env = _get_git_env()
@@ -763,6 +767,10 @@ def sync_before_node(current_branch=None, cwd=None):
     Fails loudly on unresolved conflicts. Does NOT perform git reset --hard
     so that any unpushed local work is safely preserved and rebased.
     """
+    if os.environ.get("IS_LOCAL") == "1":
+        log_info("IS_LOCAL=1: using the local workspace without Git synchronization.")
+        return
+
     cwd = cwd or os.getcwd()
     install_dvc_lock_merge_driver(repo_path=cwd)
     env = _get_git_env()

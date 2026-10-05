@@ -85,6 +85,10 @@ def commit_and_push_node(
     """
     Commit et push (dvc.lock + sorties non cachées du nœud) avec W5 push_with_retries.
     """
+    if os.environ.get("IS_LOCAL") == "1":
+        logger.info("IS_LOCAL=1: keeping node %s outputs local; skipping Git staging and push.", node)
+        return True
+
     dvc_lock = os.path.join(repo_dir, "dvc.lock")
     if os.path.exists(dvc_lock):
         subprocess.run(["git", "add", "dvc.lock"], cwd=repo_dir, check=False)
@@ -750,6 +754,7 @@ class BranchExecutor:
             "JOB_ID": self.job_id,
             "CLUSTER_TOKEN": self.cluster_token or "",
             "CLUSTER_CI_MODE": "executor",
+            "IS_LOCAL": os.environ.get("IS_LOCAL", "0"),
         }
 
         ret = self.docker.run_container(
