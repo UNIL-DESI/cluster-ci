@@ -176,6 +176,10 @@ def main():
         print(f"🚀 Executing stage: {stage}")
         print("==================================================")
         
+        if stage == "dvc-code-analysis" and os.environ.get("SKIP_CODE_INVALIDATION") == "1":
+            print(f"⏭️ Skipping stage '{stage}' (SKIP_CODE_INVALIDATION=1)")
+            continue
+
         write_status(stage)
         stage_cmd = ["dvc", "repro", stage] + flags
         if stage != "dvc-code-analysis" and "-s" not in stage_cmd and "--single-item" not in stage_cmd:

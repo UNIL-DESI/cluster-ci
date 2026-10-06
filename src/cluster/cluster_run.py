@@ -1352,7 +1352,7 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
 
 
 
-def shadow_run():
+def shadow_run(skip_code: bool = False):
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED, RUN_IS_LOCAL
     RUN_IS_LOCAL = False
@@ -1383,8 +1383,11 @@ def shadow_run():
         res_tree = subprocess.run(["git", "write-tree"], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         tree = res_tree.stdout.strip()
         # 4. git commit-tree tree -p HEAD -m "Shadow commit..."
+        commit_msg = f"Shadow commit for {user}"
+        if skip_code:
+            commit_msg += " [skip-code-invalidation]"
         res_commit = subprocess.run(
-            ["git", "commit-tree", tree, "-p", "HEAD", "-m", f"Shadow commit for {user}"],
+            ["git", "commit-tree", tree, "-p", "HEAD", "-m", commit_msg],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
         )
         commit_sha = res_commit.stdout.strip()
@@ -1413,6 +1416,9 @@ def shadow_run():
     print(f"🚀 Shadow pushing to origin/{BRANCH} and triggering CI via tag cluster-run...")
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/heads/{BRANCH}", "--force", "--quiet"], check=True)
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/cluster-run", "--force", "--quiet"], check=True)
+    if skip_code:
+        print("🏷️ Triggering skip-code CI via tag cluster-run-skip-code...")
+        subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/cluster-run-skip-code", "--force", "--quiet"], check=True)
 
     # Find the triggered GHA run
     print("⏳ Waiting for GitHub Actions to trigger...")
@@ -2193,13 +2199,21 @@ def _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token=Non
         time.sleep(sleep_int)
 
 
-def local_run():
+def local_run(skip_code: bool = False):
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
     global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE, RUN_IS_LOCAL
     RUN_IS_LOCAL = True
     os.environ['DVC_NO_ANALYTICS'] = '1'
 
     clean_old_results()
+
+    if skip_code:
+        print("🔧 Realigning local dvc.lock for code-only changes (--skip-code)...")
+        from src.runner.dvc_realign import realign_dvc_lock
+        try:
+            realign_dvc_lock(".", strict_guardrails=True)
+        except Exception as e:
+            print(f"⚠️  dvc_realign warning: {e}", file=sys.stderr)
 
     headnode_url = discover_headnode_url()
     if not headnode_url:
@@ -2370,6 +2384,8 @@ def main():
     parser.add_argument("run_id", nargs="?", default=None,
                         help="Target GHA run ID for 'view'/'cancel' or job ID for 'attach'")
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
+    parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
+                        help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
 
     args = parser.parse_args()
 
@@ -2541,14 +2557,15 @@ def main():
 
     else:
         # Submit run
+        skip_code = getattr(args, "skip_code_invalidation", False)
         if args.local:
             try:
-                local_run()
+                local_run(skip_code=skip_code)
             finally:
                 cleanup()
         else:
             try:
-                shadow_run()
+                shadow_run(skip_code=skip_code)
             finally:
                 cleanup()
 

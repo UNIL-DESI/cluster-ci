@@ -1279,6 +1279,8 @@ if __name__ == '__main__':
     parser.add_argument("--repo-dir", default=None, help="Path to target repository containing dvc.yaml")
     parser.add_argument("-e", "--env", action="append", default=[], help="Environment variables (KEY=VAL)")
     parser.add_argument("--stages", nargs="*", default=None, help="Target stage(s) to restrict the execution plan to (STAGES)")
+    parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
+                        help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
 
     args = parser.parse_args()
 
@@ -1295,7 +1297,10 @@ if __name__ == '__main__':
         parser.error("the following arguments are required: repo, branch (or provide --attach <job_id>)")
 
     env_vars = {}
-    
+
+    if args.skip_code_invalidation:
+        env_vars["SKIP_CODE_INVALIDATION"] = "1"
+
     # Process explicit -e flags
     for e in args.env:
         if "=" in e:

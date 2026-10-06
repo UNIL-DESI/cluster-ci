@@ -22,7 +22,13 @@ on:
   push:
     tags:
       - 'cluster-run'
+      - 'cluster-run-skip-code'
   workflow_dispatch:
+    inputs:
+      skip_code_invalidation:
+        description: 'Realign dvc.lock for code-only changes without invalidating stages'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.actor }}-${{ github.ref_name }}
@@ -55,4 +61,5 @@ jobs:
       - name: Run Orchestrator
         env:
           ALL_GITHUB_SECRETS: ${{ toJSON(secrets) }}
+          SKIP_CODE_INVALIDATION: ${{ github.event.inputs.skip_code_invalidation == 'true' && '1' || '' }}
         run: /usr/local/bin/cluster-ci-run "${{ github.repository }}" "${{ github.head_ref || github.ref_name }}" "${{ secrets.GITHUB_TOKEN }}"

@@ -48,7 +48,11 @@ export CALLER_COMMIT_SHA
 CALLER_WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
 export CALLER_WORKSPACE_DIR
 
-if [ "$CLI_TARGET_BRANCH" = "cluster-run" ] && [ "$CLUSTER_CI_SUBMITTED_LOCAL" != "1" ]; then
+if { [ "$CLI_TARGET_BRANCH" = "cluster-run" ] || [ "$CLI_TARGET_BRANCH" = "cluster-run-skip-code" ]; } && [ "$CLUSTER_CI_SUBMITTED_LOCAL" != "1" ]; then
+    if [ "$CLI_TARGET_BRANCH" = "cluster-run-skip-code" ]; then
+        log_info "Detected trigger tag cluster-run-skip-code. Enabling SKIP_CODE_INVALIDATION=1."
+        export SKIP_CODE_INVALIDATION=1
+    fi
     log_info "Detecting origin branch for tag cluster-run..."
     git fetch origin "+refs/heads/*:refs/remotes/origin/*" --quiet || true
     
@@ -69,6 +73,12 @@ if [ "$CLI_TARGET_BRANCH" = "cluster-run" ] && [ "$CLUSTER_CI_SUBMITTED_LOCAL" !
             CLI_TARGET_BRANCH="main"
         fi
     fi
+fi
+
+# Detect commit message tag [skip-code-invalidation]
+if git log -1 --format=%B 2>/dev/null | grep -q "\[skip-code-invalidation\]"; then
+    log_info "Detected [skip-code-invalidation] in commit message. Enabling SKIP_CODE_INVALIDATION=1."
+    export SKIP_CODE_INVALIDATION=1
 fi
 
 # Go to cluster-ci project root
@@ -891,8 +901,14 @@ if [ "$IS_LOCAL" != "1" ] && [ -n "$DVC_REMOTE_P2P_URL" ]; then
     fi
 fi
 
-log_info "AST analysis via dvc-viewer..."
-docker_exec "dvc-viewer hash"
+if [ "${SKIP_CODE_INVALIDATION:-0}" = "1" ]; then
+    log_info "Skip-code mode active: Realigning dvc.lock for code-only changes..."
+    docker_exec "python3 -u /cluster-ci/src/runner/dvc_realign.py --repo-dir . --commit" || log_warning "dvc_realign completed with warnings."
+    log_info "Skipping dvc-viewer hash (code changes preserved without stage invalidation)."
+else
+    log_info "AST analysis via dvc-viewer..."
+    docker_exec "dvc-viewer hash"
+fi
 
 if [ -n "$EXPOSED_PORT" ]; then
     log_info "Skipping secondary dvc-viewer container (Main container handles web application on port $VIEWER_PORT)."
