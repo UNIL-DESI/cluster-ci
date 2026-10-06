@@ -24,7 +24,62 @@ import json
 import math
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
+
+# Re-export host memory guard functions and defaults (Bug 8 Grace-Blackwell GB10 Guard)
+from src.runner.host_memory_guard import (
+    DEFAULT_HOST_MEMORY_RESERVE_GB,
+    DEFAULT_MARKER_FILE_NAME,
+    DEFAULT_POLL_INTERVAL_SEC,
+    ENV_HOST_GUARD_MARKER_FILE,
+    ENV_HOST_MEMORY_RESERVE_GB,
+    ENV_WATCHDOG_POLL_INTERVAL,
+    check_host_memory_headroom,
+    format_kill_message,
+    get_configured_reserve_gb,
+    kill_container_process,
+    parse_meminfo_content,
+    read_host_meminfo,
+    run_host_memory_watchdog,
+    write_host_guard_marker,
+)
+
+__all__ = [
+    "DEFAULT_CONTAINER_OOM_SCORE_ADJ",
+    "DEFAULT_CONTAINER_PIDS_LIMIT",
+    "DEFAULT_HEADNODE_CGROUP_PARENT",
+    "DEFAULT_HEADNODE_CPU_RESERVE",
+    "DEFAULT_HEADNODE_DISK_RESERVE_GB",
+    "DEFAULT_HEADNODE_RAM_RESERVE_GB",
+    "DEFAULT_HOST_MEMORY_RESERVE_GB",
+    "DEFAULT_MARKER_FILE_NAME",
+    "DEFAULT_PLACEMENT_PRIORITY",
+    "DEFAULT_POLL_INTERVAL_SEC",
+    "DEFAULT_RAM_MARGIN_GB",
+    "ENV_HOST_GUARD_MARKER_FILE",
+    "ENV_HOST_MEMORY_RESERVE_GB",
+    "ENV_WATCHDOG_POLL_INTERVAL",
+    "HEADNODE_PLACEMENT_PRIORITY",
+    "PRIORITY_DEDICATED_DISCRETE",
+    "PRIORITY_DEFAULT_WORKER",
+    "PRIORITY_HEADNODE_LAST",
+    "check_cgroup_memory_limit",
+    "check_host_memory_headroom",
+    "docker_resource_args",
+    "docker_resource_args_string",
+    "format_kill_message",
+    "format_memory_value",
+    "get_configured_reserve_gb",
+    "get_headnode_safe_capacities",
+    "is_headnode_host",
+    "is_unified_memory_host",
+    "kill_container_process",
+    "parse_meminfo_content",
+    "placement_priority",
+    "read_host_meminfo",
+    "run_host_memory_watchdog",
+    "write_host_guard_marker",
+]
 
 # Defaults & Constants
 DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
@@ -337,6 +392,12 @@ def docker_resource_args(
             else:
                 raise ValueError(f"req_gpus={req_gpus} requested but no gpu_ids assigned")
 
+    # 8. PyTorch Allocator Config for Unified Memory / GPU (Bug 8 / Grace-Blackwell GB10)
+    # Prevents aggressive CUDA virtual memory fragmentation and runaway physical allocations
+    # bypassing Docker cgroups on unified memory architectures (NVLink-C2C).
+    if unified or ("gpus" in node_resources and int(node_resources.get("gpus") or 0) > 0):
+        args.append("-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+
     return args
 
 
@@ -442,8 +503,49 @@ def main() -> None:
         action="store_false",
         help="Explicitly disable container memory limits (deprecated: limits are now unconditional)",
     )
+    parser.add_argument(
+        "--watchdog",
+        type=str,
+        default=None,
+        metavar="CONTAINER_NAME",
+        help="Run host memory watchdog loop on specified container name",
+    )
+    parser.add_argument(
+        "--reserve-gb",
+        type=float,
+        default=None,
+        help="Safety memory reserve in GiB (default: 12.0 GiB or HOST_MEMORY_RESERVE_GB)",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="Polling interval in seconds (default: 1.0s or WATCHDOG_POLL_INTERVAL)",
+    )
+    parser.add_argument(
+        "--marker-file",
+        type=str,
+        default=None,
+        help="Path to marker file written upon termination",
+    )
+    parser.add_argument(
+        "--meminfo-path",
+        type=str,
+        default="/proc/meminfo",
+        help="Path to meminfo file (default: /proc/meminfo)",
+    )
 
     args = parser.parse_args()
+
+    if args.watchdog:
+        exit_code = run_host_memory_watchdog(
+            args.watchdog,
+            reserve_gb=args.reserve_gb,
+            poll_interval_sec=args.poll_interval,
+            marker_file=args.marker_file,
+            meminfo_path=args.meminfo_path,
+        )
+        sys.exit(exit_code)
 
     # Load host profile
     host_profile: Dict[str, Any] = {}
