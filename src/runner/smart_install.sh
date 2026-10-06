@@ -121,8 +121,17 @@ if command -v flock >/dev/null 2>&1; then
         flock -u 200 2>/dev/null || true
         exec 200>&- 2>/dev/null || true
     }
-    trap release_install_lock EXIT
 fi
+
+cleanup_smart_install() {
+    if [ -f "pyproject.toml.cluster-ci-bak" ]; then
+        mv -f "pyproject.toml.cluster-ci-bak" "pyproject.toml" 2>/dev/null || true
+    fi
+    if type release_install_lock >/dev/null 2>&1; then
+        release_install_lock
+    fi
+}
+trap cleanup_smart_install EXIT
 
 # Migration: migrate legacy ~/.local/local (from previous pip --prefix installs) to standard user-site ~/.local
 if [ -d "$USER_BASE/local" ]; then
@@ -565,7 +574,7 @@ fi
 
 # Restore original pyproject.toml if temporarily stripped
 if [ -f "pyproject.toml.cluster-ci-bak" ]; then
-    mv pyproject.toml.cluster-ci-bak pyproject.toml
+    mv -f pyproject.toml.cluster-ci-bak pyproject.toml 2>/dev/null || true
 fi
 
 # Post-install: ALWAYS purge any PyPI-downloaded NVIDIA/PyTorch/vLLM packages that would
