@@ -15,6 +15,7 @@ import shutil
 import io
 import tarfile
 from pathlib import Path
+from typing import List, Optional
 
 if sys.platform.startswith("win"):
     try:
@@ -599,7 +600,10 @@ def _get_git_env():
         env["PYTHONPATH"] = f"{cluster_ci_root}{os.pathsep}{current_pypath}" if current_pypath else cluster_ci_root
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    env["LC_ALL"] = "C"
+    env["LANG"] = "C"
     return env
+
 
 def _get_current_branch(cwd=None):
     try:
@@ -1043,7 +1047,32 @@ def push_with_retries(
             if res_rebase.returncode != 0 or autostash_conflict:
                 rebase_err = res_rebase.stderr.strip() if res_rebase.stderr else (res_rebase.stdout.strip() if res_rebase.stdout else "Rebase failed")
                 log_warn(f"Rebase conflict or failure: {rebase_err}")
-                subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
+
+                # Check if a rebase is actively in progress before aborting (avoids futile 'No rebase in progress' error)
+                git_dir_res = subprocess.run(['git', 'rev-parse', '--git-dir'], cwd=cwd, capture_output=True, text=True, env=env)
+                gdir = git_dir_res.stdout.strip() if git_dir_res.returncode == 0 else ".git"
+                if not os.path.isabs(gdir):
+                    gdir = os.path.join(cwd, gdir)
+                is_rebase_active = os.path.exists(os.path.join(gdir, 'rebase-merge')) or os.path.exists(os.path.join(gdir, 'rebase-apply'))
+                if is_rebase_active:
+                    subprocess.run(['git', 'rebase', '--abort'], cwd=cwd, capture_output=True, env=env)
+
+                if autostash_conflict:
+                    stash_ref = "stash@{0}"
+                    stash_list_res = subprocess.run(
+                        ['git', 'stash', 'list', '-n', '1'],
+                        cwd=cwd, capture_output=True, text=True, encoding='utf-8', errors='replace', env=env
+                    )
+                    if stash_list_res.returncode == 0 and stash_list_res.stdout.strip():
+                        first_line = stash_list_res.stdout.strip().splitlines()[0]
+                        if "stash@{" in first_line:
+                            stash_ref = first_line.split(":", 1)[0].strip()
+                    raise RuntimeError(
+                        f"Reconciliation failed during pull --rebase on branch '{current_branch}'. "
+                        f"Applying autostash resulted in conflicts (preserved in {stash_ref}). "
+                        f"Unresolvable conflict encountered: {rebase_err}"
+                    )
+
                 raise RuntimeError(
                     f"Reconciliation failed during pull --rebase on branch '{current_branch}'. "
                     f"Unresolvable conflict encountered: {rebase_err}"
@@ -1181,6 +1210,8 @@ def push_with_retries(
                         ["git", "hash-object", "-w", merged_lock_path],
                         cwd=cwd, env=temp_env, capture_output=True, text=True
                     )
+                    if res_hash.returncode != 0:
+                        raise RuntimeError(f"git hash-object failed for {merged_lock_path}: {res_hash.stderr.strip()}")
                     obj_sha = res_hash.stdout.strip() if isinstance(res_hash.stdout, str) else ""
                     if obj_sha:
                         subprocess.run(
@@ -1192,6 +1223,8 @@ def push_with_retries(
                         ["git", "hash-object", "-w", full_f],
                         cwd=cwd, env=temp_env, capture_output=True, text=True
                     )
+                    if res_hash.returncode != 0:
+                        raise RuntimeError(f"git hash-object failed for {full_f}: {res_hash.stderr.strip()}")
                     obj_sha = res_hash.stdout.strip() if isinstance(res_hash.stdout, str) else ""
                     if obj_sha:
                         mode = "100755" if os.access(full_f, os.X_OK) else "100644"
@@ -1214,6 +1247,8 @@ def push_with_retries(
                 ["git", "rev-parse", f"{remote_tip}^{{tree}}"],
                 cwd=cwd, env=temp_env, capture_output=True, text=True
             )
+            if res_tree.returncode != 0:
+                raise RuntimeError(f"git rev-parse tree failed for {remote_tip}: {res_tree.stderr.strip()}")
             remote_tree = res_tree.stdout.strip() if isinstance(res_tree.stdout, str) else ""
 
             if new_tree and remote_tree and new_tree == remote_tree:
