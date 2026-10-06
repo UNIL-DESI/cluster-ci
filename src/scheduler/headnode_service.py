@@ -818,6 +818,12 @@ def submit_job():
         except Exception:
             env_vars = None
 
+    skip_code_val = data.get('skip_code_invalidation')
+    if skip_code_val and str(skip_code_val).lower() in ['true', '1']:
+        if not isinstance(env_vars, dict):
+            env_vars = {}
+        env_vars["SKIP_CODE_INVALIDATION"] = "1"
+
     plan = data.get('plan')
     parallel_mode_flag = data.get('parallel_mode')
     parallel_stages_flag = str(data.get('PARALLEL_STAGES', '')).lower() in ['true', '1']

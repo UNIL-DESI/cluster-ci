@@ -555,6 +555,10 @@ fi
 if [ -n "$CLUSTER_CI_SECRETS_FILE" ] && [ -f "$CLUSTER_CI_SECRETS_FILE" ]; then
     log_info "Injecting secure job secrets from $CLUSTER_CI_SECRETS_FILE"
     ENV_FILE_FLAG="$ENV_FILE_FLAG --env-file $CLUSTER_CI_SECRETS_FILE"
+    # Source secrets on host to expose runtime configuration (e.g., SKIP_CODE_INVALIDATION)
+    set -a
+    . "$CLUSTER_CI_SECRETS_FILE"
+    set +a
 fi
 
 # Create a volume for the user's home to avoid redownloading dvc every time and to keep uv/pip caches

@@ -1402,10 +1402,12 @@ def shadow_run(skip_code: bool = False):
         print("❌ Error: Failed to create shadow commit.", file=sys.stderr)
         sys.exit(1)
 
+    target_tag = "cluster-run-skip-code" if skip_code else "cluster-run"
+
     # Detect the last active GHA run ID before pushing to avoid checking a stale run
     last_known_run_id = None
     try:
-        res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        res = subprocess.run(["gh", "run", "list", "--branch", target_tag, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode == 0:
             runs = json.loads(res.stdout)
             if runs:
@@ -1413,12 +1415,9 @@ def shadow_run(skip_code: bool = False):
     except Exception:
         pass
 
-    print(f"🚀 Shadow pushing to origin/{BRANCH} and triggering CI via tag cluster-run...")
+    print(f"🚀 Shadow pushing to origin/{BRANCH} and triggering CI via tag {target_tag}...")
     subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/heads/{BRANCH}", "--force", "--quiet"], check=True)
-    subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/cluster-run", "--force", "--quiet"], check=True)
-    if skip_code:
-        print("🏷️ Triggering skip-code CI via tag cluster-run-skip-code...")
-        subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/cluster-run-skip-code", "--force", "--quiet"], check=True)
+    subprocess.run(["git", "push", "origin", f"{commit_sha}:refs/tags/{target_tag}", "--force", "--quiet"], check=True)
 
     # Find the triggered GHA run
     print("⏳ Waiting for GitHub Actions to trigger...")
@@ -1427,7 +1426,7 @@ def shadow_run(skip_code: bool = False):
     
     for attempt in range(30):
         try:
-            res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId,status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "list", "--branch", target_tag, "--limit", "1", "--json", "databaseId,status"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
                 runs = json.loads(res.stdout)
                 if runs:
@@ -1443,7 +1442,7 @@ def shadow_run(skip_code: bool = False):
     # Fallback to the latest run on the tag if we couldn't find a freshly triggered one
     if not run_id:
         try:
-            res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            res = subprocess.run(["gh", "run", "list", "--branch", target_tag, "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             if res.returncode == 0:
                 runs = json.loads(res.stdout)
                 if runs and runs[0].get("databaseId") != last_known_run_id:
@@ -2307,6 +2306,11 @@ def local_run(skip_code: bool = False):
         payload["storage_gb"] = config["storage_gb"]
     if plan is not None:
         payload["plan"] = plan
+    if skip_code:
+        payload["skip_code_invalidation"] = True
+        if "env_vars" not in payload:
+            payload["env_vars"] = {}
+        payload["env_vars"]["SKIP_CODE_INVALIDATION"] = "1"
 
     submit_url = f"{headnode_url}/submit_job"
     data_bytes = json.dumps(payload).encode("utf-8")
