@@ -6,6 +6,7 @@ contrat CLUSTER_CI_NODE_ATTEMPT (1..N) et propagation des env_vars,
 observabilité API étendue dans /job_status.
 """
 
+from pathlib import Path
 import os
 import sys
 import uuid
@@ -266,3 +267,141 @@ def test_bug12_branch_executor_injection(monkeypatch, tmp_path):
     assert mock_docker.last_exec_env.get("CLUSTER_CI_NODE_ATTEMPT") == "2"
     assert mock_docker.last_exec_env.get("FAIL_STAGE") == "test_node"
     assert mock_docker.last_exec_env.get("TOY_DURATION_SEC") == "3"
+
+
+def test_bug12_branch_executor_watchdog_lifecycle(monkeypatch, tmp_path):
+    """
+    Prouve le démarrage et l'arrêt propre de gpu_watchdog.sh (GB10 Guard)
+    pendant l'exécution d'un nœud conteneurisé.
+    """
+    from unittest.mock import MagicMock
+    from src.runner.branch_executor import BranchExecutor, DockerRunner
+    import subprocess
+
+    class MockDocker(DockerRunner):
+        def exec_in_container(self, container_name, command, env=None, user=None, stream_prefix=None):
+            return 0, "mock output"
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # Processus actif
+    mock_popen = MagicMock(return_value=mock_proc)
+    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+    monkeypatch.setattr("sys.platform", "linux")
+
+    # Créer le script fictif gpu_watchdog.sh
+    watchdog_script = Path(__file__).parent.parent / "src" / "runner" / "gpu_watchdog.sh"
+    watchdog_created = False
+    if not watchdog_script.exists():
+        watchdog_script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        watchdog_created = True
+
+    try:
+        executor = BranchExecutor(
+            headnode_url="http://mock-hn",
+            job_id="job-watchdog",
+            runner_id="runner-wd",
+            worker_id="worker-wd",
+            repo_dir=str(tmp_path),
+            target_repo="test/repo",
+            target_branch="main",
+            start_commit="abc",
+            docker=MockDocker(),
+        )
+        executor.current_container = "test-watchdog-container"
+
+        code, _ = executor.execute_node_in_container(
+            node="train",
+            attempt=1,
+            resources={"vram_gb": 16.0},
+        )
+
+        assert code == 0
+        assert mock_popen.called
+        # Vérifie que le watchdog a été démarré avec les arguments conteneur et vram
+        popen_args, popen_kwargs = mock_popen.call_args
+        assert popen_args[0][0] == "bash"
+        assert "test-watchdog-container" in popen_args[0]
+        assert "16" in popen_args[0]
+        assert popen_kwargs["env"]["HOST_GUARD_MARKER_FILE"] == "host_guard_killed.marker"
+
+        # Prouve que l'arrêt propre (terminate) a été exécuté dans le bloc finally
+        assert mock_proc.terminate.called
+        assert mock_proc.wait.called
+    finally:
+        if watchdog_created and watchdog_script.exists():
+            watchdog_script.unlink()
+
+
+def test_bug9_branch_executor_sanitizer_failure(monkeypatch, tmp_path):
+    """
+    Prouve que l'échec de workspace_sanitizer (WorkspaceSanitizerError) avant un nœud
+    provoque l'échec immédiat du nœud avec failure_reason='WorkspaceSanitizerError'.
+    """
+    from src.runner.branch_executor import BranchExecutor, DockerRunner
+    from src.runner.workspace_sanitizer import WorkspaceSanitizerError
+
+    reported_status = []
+
+    def mock_call_next_node(self, node=None, status=None, duration_s=0.0, exit_code=None,
+                            error_message=None, failure_reason=None, cas_transfers=None,
+                            missing_deps=None, outputs=None):
+        if status:
+            reported_status.append({
+                "node": node,
+                "status": status,
+                "exit_code": exit_code,
+                "error_message": error_message,
+                "failure_reason": failure_reason,
+            })
+            return {"action": "finish"}
+        return {
+            "action": "run",
+            "node": "faulty_node",
+            "image": "python:3.11",
+            "attempt": 1,
+        }
+
+    monkeypatch.setattr(BranchExecutor, "call_next_node", mock_call_next_node)
+    monkeypatch.setattr("src.runner.branch_executor.sync_before_node", lambda **kw: None)
+
+    def mock_sanitizer(ws):
+        raise WorkspaceSanitizerError("Hash mismatch on dvc.lock output: data/model.bin")
+
+    monkeypatch.setattr("src.runner.workspace_sanitizer.sanitize_workspace", mock_sanitizer)
+
+    class MockSanitizerDocker(DockerRunner):
+        def create_volume(self, volume_name):
+            return 0
+        def run_container(self, *args, **kwargs):
+            return 0
+        def exec_in_container(self, *args, **kwargs):
+            return 0, ""
+        def stop_container(self, *args, **kwargs):
+            return 0
+        def remove_container(self, *args, **kwargs):
+            return 0
+
+    executor = BranchExecutor(
+        headnode_url="http://mock-hn",
+        job_id="job-sanitizer",
+        runner_id="runner-san",
+        worker_id="worker-san",
+        repo_dir=str(tmp_path),
+        target_repo="test/repo",
+        target_branch="main",
+        start_commit="abc",
+        docker=MockSanitizerDocker(),
+    )
+    executor.current_container = "test-san-container"
+    executor.current_image = "python:3.11"
+
+    ret = executor.run()
+    assert ret == 0  # run s'arrête sur 'finish'
+    assert len(reported_status) == 1
+    report = reported_status[0]
+    assert report["node"] == "faulty_node"
+    assert report["status"] == "failed"
+    assert report["exit_code"] == 1
+    assert report["failure_reason"] == "WorkspaceSanitizerError"
+    assert "Hash mismatch on dvc.lock output" in report["error_message"]
+

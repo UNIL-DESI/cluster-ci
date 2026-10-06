@@ -1162,6 +1162,21 @@ class BranchExecutor:
                 # 1. Sync amont avant exécution via W5
                 sync_before_node(repo_dir=self.repo_dir, branch=self.target_branch, start_commit=self.start_commit)
 
+                # 1.bis Assainissement du workspace (Bug 9)
+                from src.runner.workspace_sanitizer import sanitize_workspace, WorkspaceSanitizerError
+                try:
+                    sanitize_workspace(self.repo_dir)
+                except WorkspaceSanitizerError as err:
+                    logger.error("Workspace sanitation failed before node %s: %s", target_node, err)
+                    node_for_req = target_node
+                    status_for_req = "failed"
+                    duration_for_req = time.time() - node_start_time
+                    exit_code_for_req = 1
+                    error_message_for_req = str(err)
+                    failure_reason_for_req = "WorkspaceSanitizerError"
+                    self.current_node = None
+                    continue
+
                 # 2. Vérification et rapatriement des dep_paths via W6
                 missing = self.fetch_missing_deps(
                     node=target_node,
