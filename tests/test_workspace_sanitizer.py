@@ -26,10 +26,11 @@ def temp_workspace():
     """Create a temporary Git workspace with dummy dvc.lock, cache and residual files."""
     d = tempfile.mkdtemp(prefix="test_sanitizer_ws_")
     try:
-        # Initialize dummy git repo
+        # Initialize dummy git and dvc repo
         subprocess.run(["git", "init"], cwd=d, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "Tester"], cwd=d, check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=d, check=True)
+        os.makedirs(os.path.join(d, ".dvc"), exist_ok=True)
 
         # Create valid output matching dvc.lock
         data_dir = os.path.join(d, "data")

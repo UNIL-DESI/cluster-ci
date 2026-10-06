@@ -248,7 +248,26 @@ def sanitize_workspace(
                     except OSError as e:
                         raise WorkspaceSanitizerError(f"Failed to remove stale directory '{target_dir}': {e}") from e
 
-    # 2. Clean declared DVC outputs exclusively
+    # 2. Check if workspace is an initialized DVC repository with dvc.lock
+    has_dvc_dir = os.path.isdir(os.path.join(abs_ws, ".dvc"))
+    has_dvc_lock = os.path.isfile(os.path.join(abs_ws, "dvc.lock"))
+
+    if not (has_dvc_dir and has_dvc_lock):
+        print(
+            f"ℹ️ [Workspace Sanitizer] Workspace '{abs_ws}' is not an initialized DVC repository with dvc.lock "
+            f"(.dvc: {has_dvc_dir}, dvc.lock: {has_dvc_lock}). Skipping DVC checkout and outputs verification.",
+            file=sys.stderr,
+        )
+        return {
+            "workspace": abs_ws,
+            "purged_files": purged_files,
+            "checked_outputs": 0,
+            "missing_outputs": [],
+            "mismatches": [],
+            "dvc_skipped": True,
+        }
+
+    # 3. Clean declared DVC outputs exclusively
     declared_outs = _get_declared_dvc_outputs(abs_ws)
 
     for out_rel, out_info in declared_outs.items():
