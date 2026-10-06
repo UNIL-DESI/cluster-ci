@@ -525,6 +525,97 @@ def test_purge_host_guard_marker(tmp_path):
     assert purge_host_guard_marker(workspace_dir=ws) is False
 
 
+def test_wait_for_job_host_memory_guard_detection(capsys, monkeypatch):
+    """Vérifie que submit_job détecte Host Memory Guard via failure_reason structuré ou logs accumulés."""
+    from unittest.mock import Mock
+    from src.scheduler import submit_job
+
+    # Cas 1 : failure_reason structuré au niveau du nœud DAG
+    job_status_resp = Mock()
+    job_status_resp.status_code = 200
+    job_status_resp.json.return_value = {
+        "status": "failed",
+        "exit_code": 137,
+        "nodes": [
+            {
+                "name": "train",
+                "status": "failed",
+                "failure_reason": "HostMemoryPressureExceeded",
+                "error_message": "HostMemoryPressureExceeded: Container killed",
+            }
+        ],
+    }
+
+    logs_resp = Mock()
+    logs_resp.status_code = 200
+    logs_resp.json.return_value = {"logs": "", "offset": 0}
+
+    def mock_get(url, *args, **kwargs):
+        if "job_status" in url:
+            return job_status_resp
+        return logs_resp
+
+    monkeypatch.setattr(submit_job.requests, "get", mock_get)
+
+    code = submit_job.wait_for_job("http://127.0.0.1:8000", "job-test-1")
+    assert code == 137
+    captured = capsys.readouterr()
+    assert "Job was terminated by Host Memory Guard" in captured.out
+    assert "OOM Killer" not in captured.out
+
+    # Cas 2 : Standard OOM (pas de Host Memory Guard)
+    job_status_resp.json.return_value = {
+        "status": "failed",
+        "exit_code": 137,
+        "nodes": [{"name": "train", "status": "failed", "error_message": "Exit code 137"}],
+    }
+    submit_job.wait_for_job("http://127.0.0.1:8000", "job-test-2")
+    captured = capsys.readouterr()
+    assert "killed by system (OOM Killer)" in captured.out
+    assert "Host Memory Guard" not in captured.out
+
+    # Cas 3 : Host Memory Guard vu dans un chunk de log antérieur (pas dans le dernier chunk vide)
+    chunk1_logs = Mock()
+    chunk1_logs.status_code = 200
+    chunk1_logs.json.return_value = {"logs": "❌ Error: Host Memory Guard triggered\n", "offset": 40}
+
+    chunk2_logs = Mock()
+    chunk2_logs.status_code = 200
+    chunk2_logs.json.return_value = {"logs": "", "offset": 40}
+
+    status_running = Mock()
+    status_running.status_code = 200
+    status_running.json.return_value = {"status": "running"}
+
+    status_failed = Mock()
+    status_failed.status_code = 200
+    status_failed.json.return_value = {"status": "failed", "exit_code": 137}
+
+    call_count = {"status": 0, "logs": 0}
+
+    def mock_get_multi(url, *args, **kwargs):
+        if "job_status" in url:
+            call_count["status"] += 1
+            if call_count["status"] == 1:
+                return status_running
+            return status_failed
+        else:
+            call_count["logs"] += 1
+            if call_count["logs"] == 1:
+                return chunk1_logs
+            return chunk2_logs
+
+    monkeypatch.setattr(submit_job.requests, "get", mock_get_multi)
+    monkeypatch.setattr(submit_job.time, "sleep", lambda s: None)
+
+    code = submit_job.wait_for_job("http://127.0.0.1:8000", "job-test-3")
+    assert code == 137
+    captured = capsys.readouterr()
+    assert "Job was terminated by Host Memory Guard" in captured.out
+    assert "killed by system (OOM Killer)" not in captured.out
+
+
+
 
 
 

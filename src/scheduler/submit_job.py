@@ -878,6 +878,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
     log_offset = 0
     status_printed = False
     oom_detected = False
+    host_guard_detected = False
     fallback_warned = False
     last_queue_check = 0
     last_status = None
@@ -1115,8 +1116,10 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     new_logs = logs_data.get('logs', '')
                     if new_logs:
                         import re
-                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Host Memory Guard|tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Host Memory Guard|HostMemoryPressureExceeded|tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
                             oom_detected = True
+                        if "Host Memory Guard" in new_logs or "HostMemoryPressureExceeded" in new_logs:
+                            host_guard_detected = True
                         if not status_printed:
                             print(f"\n\n[Streaming logs for job {job_id}]")
                             status_printed = True
@@ -1206,7 +1209,23 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         except Exception:
                             pass
                 elif exit_code == 137 or oom_detected:
-                    if oom_detected and "Host Memory Guard" in (new_logs if 'new_logs' in locals() else ''):
+                    is_host_guard = (
+                        host_guard_detected
+                        or job.get("failure_reason") == "HostMemoryPressureExceeded"
+                        or (
+                            bool(nodes_data)
+                            and any(
+                                isinstance(n, dict)
+                                and (
+                                    n.get("failure_reason") == "HostMemoryPressureExceeded"
+                                    or "Host Memory Guard" in str(n.get("error_message") or "")
+                                    or "HostMemoryPressureExceeded" in str(n.get("error_message") or "")
+                                )
+                                for n in nodes_data
+                            )
+                        )
+                    )
+                    if is_host_guard:
                         print(f"\n❌ Error: Job was terminated by Host Memory Guard (host RAM/MemAvailable reserve breached). Please check host memory pressure or decrease memory requirements.")
                     else:
                         print(f"\n❌ Error: Job exceeded allocated REQUIRED_RAM limit ({ram_required} GB) and was killed by system (OOM Killer). Please increase this limit in .cluster-ci")
