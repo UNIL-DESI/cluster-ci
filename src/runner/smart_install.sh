@@ -105,6 +105,25 @@ EOF_UC_R2
     done
 }
 
+# Concurrency control: acquire exclusive flock on shared installation volume
+LOCK_FILE="${CLUSTER_CI_LOCK_FILE:-$USER_BASE/.cluster-ci-install.lock}"
+LOCK_TIMEOUT="${SMART_INSTALL_LOCK_TIMEOUT:-600}"
+
+mkdir -p "$(dirname "$LOCK_FILE")"
+
+if command -v flock >/dev/null 2>&1; then
+    exec 200>"$LOCK_FILE"
+    if ! flock -w "$LOCK_TIMEOUT" 200; then
+        echo "❌ [Cluster-CI] Timeout: Failed to acquire installation lock on '$LOCK_FILE' within ${LOCK_TIMEOUT}s. Another installation process is running or stalled." >&2
+        exit 1
+    fi
+    release_install_lock() {
+        flock -u 200 2>/dev/null || true
+        exec 200>&- 2>/dev/null || true
+    }
+    trap release_install_lock EXIT
+fi
+
 # Migration: migrate legacy ~/.local/local (from previous pip --prefix installs) to standard user-site ~/.local
 if [ -d "$USER_BASE/local" ]; then
     echo "📦 [Cluster-CI] Migrating legacy packages from $USER_BASE/local to user-site..."
@@ -142,8 +161,8 @@ DEPS_HASH=$(compute_deps_hash)
 CACHED_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
 if [ "$DEPS_HASH" = "$CACHED_HASH" ]; then
-    # Quick sanity check: verify that packages exist if pyproject.toml is present
-    if [ ! -f "pyproject.toml" ] || find "$USER_BASE" -path '*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
+    # Quick sanity check: verify that packages exist if pyproject.toml or requirements.txt is present
+    if { [ ! -f "pyproject.toml" ] && [ ! -f "requirements.txt" ]; } || find "$USER_BASE" -path '*/site-packages/*.dist-info' 2>/dev/null | head -1 | grep -q .; then
         echo "✅ [Cluster-CI] Dependencies unchanged (cached). Skipping install."
         ensure_usercustomize "$RUNTIME_MODE"
         if [ -f "/cluster-ci/src/runner/verify_packages.py" ]; then
@@ -222,10 +241,14 @@ run_pip_silently() {
 if [ "$RUNTIME_MODE" = "r1" ]; then
     echo "⚡ [Cluster-CI] Specialized Runtime Image (R1): Image environment WINS entirely."
 
-    # Parse pyproject.toml against clean stage image distributions (R3)
-    ANALYSIS_FILE="/tmp/cluster-ci-r1-analysis.txt"
-    PYTHONNOUSERSITE=1 "$STAGE_PYTHON" -s -c "
-import sys, re
+    # Parse project dependencies (pyproject.toml / requirements.txt) against clean stage image distributions (R3)
+    ANALYSIS_FILE="/tmp/cluster-ci-r1-analysis-$$.txt"
+    ANALYSIS_ERR="/tmp/cluster-ci-r1-analysis-$$.err"
+    ABSENT_DEPS_FILE="/tmp/cluster-ci-absent-deps-$$.txt"
+    CONSTRAINTS_FILE="/tmp/cluster-ci-img-constraints-$$.txt"
+
+    if ! PYTHONNOUSERSITE=1 "$STAGE_PYTHON" -s -c "
+import sys, os, re
 try:
     from packaging.requirements import Requirement
 except ImportError:
@@ -249,7 +272,7 @@ try:
     import tomllib
     with open('pyproject.toml', 'rb') as f:
         data = tomllib.load(f)
-    deps = data.get('project', {}).get('dependencies', [])
+    deps = list(data.get('project', {}).get('dependencies', []))
 except Exception:
     pass
 
@@ -272,6 +295,19 @@ if not deps:
     except Exception:
         pass
 
+if os.path.isfile('requirements.txt'):
+    try:
+        with open('requirements.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                line_s = line.strip()
+                if not line_s or line_s.startswith('#') or line_s.startswith('-'):
+                    continue
+                req_val = line_s.split('#')[0].strip()
+                if req_val and req_val not in deps:
+                    deps.append(req_val)
+    except Exception:
+        pass
+
 conflicts = []
 absent = []
 satisfied = []
@@ -286,8 +322,10 @@ for dep_str in deps:
             inst_ver = installed[norm_name]
             try:
                 sat = req.specifier.contains(inst_ver, prereleases=True)
-            except Exception:
-                sat = True
+            except Exception as spec_err:
+                sat = False
+                conflicts.append((req.name, f'{req.specifier} (invalid specifier or evaluation error: {spec_err})', inst_ver))
+                continue
             if sat:
                 satisfied.append((req.name, inst_ver))
             else:
@@ -295,7 +333,7 @@ for dep_str in deps:
         else:
             absent.append(dep_str)
     except Exception as exc:
-        absent.append(dep_str)
+        conflicts.append((dep_str, f'unparseable dependency specification: {exc}', 'none'))
 
 if conflicts:
     print('STATUS:CONFLICT')
@@ -308,7 +346,22 @@ for a in absent:
     print(f'ABSENT:{a}')
 for s_name, s_ver in satisfied:
     print(f'SATISFIED:{s_name}:{s_ver}')
-" > "$ANALYSIS_FILE" 2>/dev/null || true
+" > "$ANALYSIS_FILE" 2> "$ANALYSIS_ERR"; then
+        echo "❌ [Cluster-CI] Error: Dependency analysis against specialized runtime image failed." >&2
+        if [ -s "$ANALYSIS_ERR" ]; then
+            cat "$ANALYSIS_ERR" >&2
+        fi
+        rm -f "$ANALYSIS_ERR" "$ANALYSIS_FILE"
+        exit 1
+    fi
+    rm -f "$ANALYSIS_ERR"
+
+    if ! grep -q "^STATUS:" "$ANALYSIS_FILE"; then
+        echo "❌ [Cluster-CI] Error: Dependency analysis produced invalid output (missing STATUS header)." >&2
+        cat "$ANALYSIS_FILE" >&2
+        rm -f "$ANALYSIS_FILE"
+        exit 1
+    fi
 
     if grep -q "^STATUS:CONFLICT" "$ANALYSIS_FILE"; then
         echo "❌ [Cluster-CI] Error: Project requirements conflict with specialized runtime image." >&2
@@ -317,6 +370,7 @@ for s_name, s_ver in satisfied:
         done
         echo "   In specialized runtime images (vLLM / NeMo), the image environment must win entirely to prevent regressions." >&2
         echo "   Please adjust your project requirements to match the image version or use a compatible runtime image." >&2
+        rm -f "$ANALYSIS_FILE"
         exit 1
     fi
 
@@ -324,6 +378,7 @@ for s_name, s_ver in satisfied:
     grep "^ABSENT:" "$ANALYSIS_FILE" | cut -d: -f2- > "$ABSENT_DEPS_FILE" || true
     ABSENT_COUNT=$(wc -l < "$ABSENT_DEPS_FILE" 2>/dev/null || echo 0)
     echo "📋 [Cluster-CI] Specialized image analysis: $(grep -c '^SATISFIED:' "$ANALYSIS_FILE" 2>/dev/null || echo 0) dependencies satisfied by image, $ABSENT_COUNT absent dependencies to install."
+    rm -f "$ANALYSIS_FILE"
 
     # Freeze clean system packages as strict constraints
     PYTHONNOUSERSITE=1 "$STAGE_PYTHON" -s -m pip freeze --all 2>/dev/null \
@@ -337,21 +392,25 @@ for s_name, s_ver in satisfied:
             [ -z "$dep" ] && continue
             echo "   -> Installing: $dep"
             if ! run_pip_silently --progress-bar off --break-system-packages --user -c "$CONSTRAINTS_FILE" "$dep"; then
-                echo "⚠️  [Cluster-CI] Constrained install failed for $dep, retrying with --no-deps..."
-                run_pip_silently --progress-bar off --break-system-packages --user --no-deps "$dep" || {
-                    echo "❌ [Cluster-CI] Failed to install absent dependency: $dep" >&2
-                    exit 1
-                }
+                echo "❌ [Cluster-CI] Failed to install absent dependency under specialized runtime image constraints: $dep" >&2
+                echo "   Specialized runtime images (vLLM / NeMo) lock preinstalled system packages." >&2
+                echo "   Package '$dep' or its transitive dependencies conflict with the frozen image environment." >&2
+                echo "   Silent --no-deps fallback is disabled. Adjust project requirements or use a compatible runtime image." >&2
+                rm -f "$ABSENT_DEPS_FILE" "$CONSTRAINTS_FILE"
+                exit 1
             fi
         done < "$ABSENT_DEPS_FILE"
     fi
+    rm -f "$ABSENT_DEPS_FILE" "$CONSTRAINTS_FILE"
 
-    # Install project itself into user-site with --no-deps
-    echo "📦 [Cluster-CI] Installing project in editable mode (--no-deps)..."
-    run_pip_silently --progress-bar off --break-system-packages --user --no-deps -e . || {
-        echo "❌ [Cluster-CI] Failed to install project in editable mode." >&2
-        exit 1
-    }
+    # Install project itself into user-site with --no-deps if project definition exists
+    if [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+        echo "📦 [Cluster-CI] Installing project in editable mode (--no-deps)..."
+        run_pip_silently --progress-bar off --break-system-packages --user --no-deps -e . || {
+            echo "❌ [Cluster-CI] Failed to install project in editable mode." >&2
+            exit 1
+        }
+    fi
 
     # Post-install purge in R1: remove any package from user-site that exists in the image environment
     echo "🧹 [Cluster-CI] Post-install R1 hygiene: purging any image distributions from user-site..."
@@ -375,11 +434,11 @@ for sp in [os.path.join(user_base, 'lib', d, 'site-packages') for d in os.listdi
 else
     echo "⚡ [Cluster-CI] Generic Image (R2): Pure-Python upgrades allowed, core heavy pinned."
 
-    # Extract project dependency names from pyproject.toml that conflict with container packages
+    # Extract project dependency names from pyproject.toml / requirements.txt that conflict with container packages
     PROJECT_DEPS=""
-    if [ -f "pyproject.toml" ]; then
+    if [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
         PROJECT_DEPS=$("$STAGE_PYTHON" -c "
-import sys, re
+import sys, os, re
 try:
     from packaging.requirements import Requirement
 except ImportError:
@@ -390,7 +449,7 @@ try:
     import tomllib
     with open('pyproject.toml', 'rb') as f:
         data = tomllib.load(f)
-    deps = data.get('project', {}).get('dependencies', [])
+    deps = list(data.get('project', {}).get('dependencies', []))
 except Exception:
     pass
 
@@ -410,6 +469,19 @@ if not deps:
                 m = re.match(r'^\s*[\"\']([^\"\']+)[\"\']', line)
                 if m:
                     deps.append(m.group(1))
+    except Exception:
+        pass
+
+if os.path.isfile('requirements.txt'):
+    try:
+        with open('requirements.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                line_s = line.strip()
+                if not line_s or line_s.startswith('#') or line_s.startswith('-'):
+                    continue
+                req_val = line_s.split('#')[0].strip()
+                if req_val and req_val not in deps:
+                    deps.append(req_val)
     except Exception:
         pass
 
@@ -478,10 +550,17 @@ for name in sorted(conflicting):
         echo "📋 [Cluster-CI] System constraints: $(wc -l < "$CONSTRAINTS_FILE") packages pinned"
     fi
 
-    run_pip_silently --progress-bar off --break-system-packages --user -c "$CONSTRAINTS_FILE" -e . || {
-        echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
-        run_pip_silently --progress-bar off --break-system-packages --ignore-installed --user -e .
-    }
+    if [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+        run_pip_silently --progress-bar off --break-system-packages --user -c "$CONSTRAINTS_FILE" -e . || {
+            echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
+            run_pip_silently --progress-bar off --break-system-packages --ignore-installed --user -e .
+        }
+    elif [ -f "requirements.txt" ]; then
+        run_pip_silently --progress-bar off --break-system-packages --user -c "$CONSTRAINTS_FILE" -r requirements.txt || {
+            echo "⚠️  [Cluster-CI] Constrained install failed, falling back with --ignore-installed..."
+            run_pip_silently --progress-bar off --break-system-packages --ignore-installed --user -r requirements.txt
+        }
+    fi
 fi
 
 # Restore original pyproject.toml if temporarily stripped

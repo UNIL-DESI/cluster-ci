@@ -63,17 +63,17 @@ logger = logging.getLogger("branch_executor")
 # Fonctions Git / DVC directes (W5)
 # =====================================================================
 
-def sync_before_node(repo_dir: str, branch: str) -> None:
+def sync_before_node(repo_dir: str, branch: str, start_commit: Optional[str] = None) -> None:
     """
-    Synchronisation amont avant exécution d'un nœud via W5 dvc_git_helper.
-    Installe le pilote de fusion dvc.lock et effectue git pull --rebase origin <branch>.
+    Synchronisation amont ciblée avant exécution d'un nœud via W5 dvc_git_helper.
+    Restaure uniquement dvc.lock et les sorties suivies par git (outs, metrics, plots)
+    depuis la pointe distante sans déplacer HEAD du code.
     """
-    logger.info("Synchronisation amont via W5 sync_before_node sur %s...", branch)
-    if dvc_git_helper is not None:
-        dvc_git_helper.sync_before_node(current_branch=branch, cwd=repo_dir)
-    else:
-        from src.runner import dvc_git_helper as dgh
-        dgh.sync_before_node(current_branch=branch, cwd=repo_dir)
+    logger.info("Synchronisation amont ciblée via W5 sync_before_node sur %s...", branch)
+    helper = dvc_git_helper
+    if helper is None:
+        from src.runner import dvc_git_helper as helper
+    helper.sync_before_node(current_branch=branch, cwd=repo_dir, start_commit=start_commit)
 
 
 def commit_and_push_node(
@@ -81,19 +81,21 @@ def commit_and_push_node(
     node: str,
     branch: str,
     out_paths: Optional[List[Any]] = None,
+    start_commit: Optional[str] = None,
 ) -> bool:
     """
-    Commit et push (dvc.lock + sorties non cachées du nœud) avec W5 push_with_retries.
+    Commit et push ciblé (dvc.lock + sorties non cachées du nœud) avec W5 push_with_retries.
+    Construit un commit partant de la pointe distante sans toucher à HEAD ni écraser le code.
     """
     if os.environ.get("IS_LOCAL") == "1":
         logger.info("IS_LOCAL=1: keeping node %s outputs local; skipping Git staging and push.", node)
         return True
 
+    uncached_outs: List[str] = []
     dvc_lock = os.path.join(repo_dir, "dvc.lock")
     if os.path.exists(dvc_lock):
-        subprocess.run(["git", "add", "dvc.lock"], cwd=repo_dir, check=False)
+        uncached_outs.append("dvc.lock")
 
-    uncached_outs: List[str] = []
     if out_paths:
         for item in out_paths:
             p = item if isinstance(item, str) else item.get("path")
@@ -116,6 +118,14 @@ def commit_and_push_node(
     except Exception as exc:
         logger.debug("Extraction des sorties non-cachées pour %s impossible: %s", node, exc)
 
+    files_to_sync: List[str] = []
+    for p in uncached_outs:
+        norm = Path(p).as_posix().lstrip("./")
+        if norm not in files_to_sync:
+            files_to_sync.append(norm)
+
+    commit_msg = f"chore(ci): complete node {node} [skip ci]"
+
     for p in uncached_outs:
         full_p = os.path.join(repo_dir, p)
         if os.path.exists(full_p):
@@ -127,30 +137,23 @@ def commit_and_push_node(
         capture_output=True,
         text=True,
     )
-    if not status.stdout.strip():
-        logger.info("No modified files to commit for node %s.", node)
-        return True
+    if status.stdout.strip():
+        subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
+        subprocess.run(["git", "config", "user.email", "bot@cluster-ci.io"], cwd=repo_dir, check=False)
+        subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_dir, capture_output=True, text=True)
 
-    subprocess.run(["git", "config", "user.name", "cluster-ci-bot"], cwd=repo_dir, check=False)
-    subprocess.run(["git", "config", "user.email", "bot@cluster-ci.io"], cwd=repo_dir, check=False)
-    commit_msg = f"chore(ci): complete node {node} [skip ci]"
-    commit_res = subprocess.run(
-        ["git", "commit", "-m", commit_msg],
+    logger.info("Pushing changes for node %s via W5 push_with_retries (%s)...", node, files_to_sync)
+    helper = dvc_git_helper
+    if helper is None:
+        from src.runner import dvc_git_helper as helper
+
+    return helper.push_with_retries(
+        current_branch=branch,
         cwd=repo_dir,
-        capture_output=True,
-        text=True,
+        files_to_commit=files_to_sync,
+        commit_msg=commit_msg,
+        start_commit=start_commit,
     )
-    if commit_res.returncode != 0:
-        logger.warning("git commit failed: %s", commit_res.stderr)
-        return False
-
-    logger.info("Pushing changes for node %s via W5 push_with_retries...", node)
-    if dvc_git_helper is not None:
-        dvc_git_helper.push_with_retries(current_branch=branch, cwd=repo_dir)
-    else:
-        from src.runner import dvc_git_helper as dgh
-        dgh.push_with_retries(current_branch=branch, cwd=repo_dir)
-    return True
 
 
 # =====================================================================
@@ -322,6 +325,7 @@ class BranchExecutor:
         current_container: Optional[str] = None,
         current_image: Optional[str] = None,
         container_prefix: Optional[str] = None,
+        start_commit: Optional[str] = None,
     ):
         self.headnode_url = headnode_url.rstrip("/") if headnode_url else ""
         self.job_id = job_id
@@ -338,6 +342,40 @@ class BranchExecutor:
         self.poll_interval = poll_interval
         self.heartbeat_interval = heartbeat_interval
         self.container_prefix = container_prefix or os.environ.get("CLUSTER_CI_CONTAINER_PREFIX", "cluster-job-")
+
+        # Résolution du commit de départ figé (Henri - gel du code de départ)
+        if start_commit:
+            self.start_commit = start_commit
+        else:
+            helper = dvc_git_helper
+            if helper is None:
+                from src.runner import dvc_git_helper as helper
+            self.start_commit = helper._get_start_commit(self.repo_dir)
+
+        if self.start_commit and self.start_commit != "HEAD":
+            git_dir = os.path.join(self.repo_dir, ".git")
+            target_git_file = None
+            if os.path.isdir(git_dir):
+                target_git_file = os.path.join(git_dir, "cluster-ci-start-commit")
+            elif os.path.isfile(git_dir):
+                try:
+                    with open(git_dir, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content.startswith("gitdir:"):
+                        actual_git_dir = content.split(":", 1)[1].strip()
+                        if not os.path.isabs(actual_git_dir):
+                            actual_git_dir = os.path.normpath(os.path.join(self.repo_dir, actual_git_dir))
+                        target_git_file = os.path.join(actual_git_dir, "cluster-ci-start-commit")
+                except Exception:
+                    pass
+            if target_git_file:
+                try:
+                    with open(target_git_file, "w", encoding="utf-8") as f:
+                        f.write(self.start_commit + "\n")
+                except Exception:
+                    pass
+
+
 
         # Résolution du dossier racine de cluster-ci
         if base_dir:
@@ -1030,7 +1068,7 @@ class BranchExecutor:
                 node_start_time = time.time()
 
                 # 1. Sync amont avant exécution via W5
-                sync_before_node(repo_dir=self.repo_dir, branch=self.target_branch)
+                sync_before_node(repo_dir=self.repo_dir, branch=self.target_branch, start_commit=self.start_commit)
 
                 # 2. Vérification et rapatriement des dep_paths via W6
                 missing = self.fetch_missing_deps(
@@ -1071,6 +1109,7 @@ class BranchExecutor:
                         node=target_node,
                         branch=self.target_branch,
                         out_paths=out_paths,
+                        start_commit=self.start_commit,
                     )
                     node_for_req = target_node
                     status_for_req = "done"
@@ -1138,6 +1177,7 @@ def main() -> None:
     parser.add_argument("--current-container", default=None)
     parser.add_argument("--current-image", default=None)
     parser.add_argument("--container-prefix", default=None, help="Prefix for container names (default: CLUSTER_CI_CONTAINER_PREFIX or cluster-job-)")
+    parser.add_argument("--start-commit", default=os.environ.get("CALLER_COMMIT_SHA", os.environ.get("JOB_START_COMMIT", None)), help="Frozen starting commit hash of the job")
 
     args = parser.parse_args()
 
@@ -1157,6 +1197,7 @@ def main() -> None:
         current_container=args.current_container,
         current_image=args.current_image,
         container_prefix=args.container_prefix,
+        start_commit=args.start_commit,
     )
 
     exit_code = executor.run()
