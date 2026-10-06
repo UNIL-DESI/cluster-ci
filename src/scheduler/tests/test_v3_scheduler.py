@@ -15,6 +15,9 @@ Couvre :
 import os
 import sys
 import json
+import hashlib
+import io
+import tarfile
 import uuid
 import tempfile
 import pytest
@@ -34,6 +37,7 @@ def isolated_db(tmp_path, monkeypatch):
     """Initialise une base SQLite temporaire et isolée pour chaque test."""
     db_file = str(tmp_path / f"test_cluster_{uuid.uuid4().hex[:8]}.db")
     monkeypatch.setenv("CLUSTER_DB_PATH", db_file)
+    monkeypatch.setattr(headnode_service, 'REPOS_DIR', str(tmp_path / 'repositories'))
     persistence.DB_PATH = db_file
     persistence.init_db()
     yield db_file
@@ -53,6 +57,36 @@ def client(monkeypatch):
     with headnode_service.app.test_client() as c:
         c.environ_base["HTTP_AUTHORIZATION"] = "Bearer scheduler-test-token"
         yield c
+
+
+def _submit_test_job(client, *, json):
+    """Use the real authenticated archive protocol for synthetic local jobs."""
+    payload = dict(json)
+    if payload.get('is_local'):
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+            content = b'synthetic scheduler fixture\n'
+            entry = tarfile.TarInfo('README.txt')
+            entry.size = len(content)
+            tar.addfile(entry, io.BytesIO(content))
+        body = archive.getvalue()
+        digest = hashlib.sha256(body).hexdigest()
+        create = client.post('/api/local_transfers', json={
+            'purpose': 'source', 'total_size': len(body), 'sha256': digest})
+        assert create.status_code == 201, create.get_json()
+        transfer = create.get_json()
+        tid = transfer['transfer_id']
+        size = transfer['chunk_size']
+        for index, offset in enumerate(range(0, len(body), size)):
+            chunk = body[offset:offset + size]
+            response = client.put(f'/api/local_transfers/{tid}/chunks/{index}',
+                data=chunk, headers={'X-Chunk-SHA256': hashlib.sha256(chunk).hexdigest()})
+            assert response.status_code == 200, response.get_json()
+        complete = client.post(f'/api/local_transfers/{tid}/complete', json={})
+        assert complete.status_code == 200, complete.get_json()
+        payload['source_transfer_id'] = tid
+        payload['username'] = 'test-' + payload['repo'].replace('/', '-')
+    return client.post('/submit_job', json=payload)
 
 
 # =========================================================================
@@ -123,7 +157,8 @@ def test_plan_validation_cycle_detection(client):
 # 2. DAG 2 branches + jonction sur 2 workers fictifs
 # =========================================================================
 
-def test_dag_two_branches_and_join_execution(client):
+@pytest.mark.parametrize("is_local", [False, True])
+def test_dag_two_branches_and_join_execution(client, is_local):
     """
     DAG :
       prep_data (racine)
@@ -156,7 +191,7 @@ def test_dag_two_branches_and_join_execution(client):
         ]
     }
 
-    resp = client.post("/submit_job", json={"repo": "owner/repo", "branch": "feat", "plan": plan})
+    resp = _submit_test_job(client, json={"repo": "owner/repo", "branch": "feat", "plan": plan, "is_local": is_local})
     assert resp.status_code == 200
     job_id = resp.get_json()["job_id"]
 
@@ -167,6 +202,7 @@ def test_dag_two_branches_and_join_execution(client):
     poll_resp = client.get("/worker_poll/W1_GB10").get_json()
     assert poll_resp["status"] == "assigned"
     assert poll_resp["parallel_mode"] == 1
+    assert poll_resp["is_local"] == int(is_local)
     assert poll_resp["role"] == "executor"
     assert poll_resp["is_home_worker"] is True
 
@@ -198,6 +234,7 @@ def test_dag_two_branches_and_join_execution(client):
     poll_w2 = client.get("/worker_poll/W2_DISC").get_json()
     assert poll_w2["status"] == "assigned"
     assert poll_w2["is_home_worker"] is False
+    assert poll_w2["is_local"] == int(is_local)
 
     step_w2 = client.post(f"/api/jobs/{job_id}/next_node", json={
         "runner_id": "runner_w2",
@@ -266,7 +303,8 @@ def test_dag_two_branches_and_join_execution(client):
 # 3. Équité multi-jobs & Anti ping-pong (Amendement A1)
 # =========================================================================
 
-def test_fairness_anti_ping_pong_rule_a1(client):
+@pytest.mark.parametrize("is_local", [False, True])
+def test_fairness_anti_ping_pong_rule_a1(client, is_local):
     """
     Scénario :
     - 3 machines : W1, W2, W3
@@ -301,7 +339,7 @@ def test_fairness_anti_ping_pong_rule_a1(client):
         ]
     }
 
-    job_a_id = client.post("/submit_job", json={"repo": "owner/repoA", "branch": "main", "plan": plan_a}).get_json()["job_id"]
+    job_a_id = _submit_test_job(client, json={"repo": "owner/repoA", "branch": "main", "plan": plan_a, "is_local": is_local}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
     # Vérifier que A a pris W1 comme home et W2, W3 comme supplémentaires
@@ -312,7 +350,7 @@ def test_fairness_anti_ping_pong_rule_a1(client):
         assert len(a_workers) == 3
 
     # Job B arrive
-    job_b_id = client.post("/submit_job", json={"repo": "owner/repoB", "branch": "main", "plan": plan_b}).get_json()["job_id"]
+    job_b_id = _submit_test_job(client, json={"repo": "owner/repoB", "branch": "main", "plan": plan_b}).get_json()["job_id"]
 
     # W2 (supplémentaire de A) termine un nœud
     # Actuellement : A a 3 machines, B a 0 machine. (0 + 1 < 3 -> Cession requise)
@@ -353,7 +391,8 @@ def test_fairness_anti_ping_pong_rule_a1(client):
 # 4. Cession d'une machine supplémentaire à un job classique (Amendement A2)
 # =========================================================================
 
-def test_additional_machine_yield_to_classic_job_a2(client):
+@pytest.mark.parametrize("is_local", [False, True])
+def test_additional_machine_yield_to_classic_job_a2(client, is_local):
     """
     Un job classique en attente compte comme un job concurrent qui détient 0 machine.
     Les machines supplémentaires d'un job parallèle lui sont cédées à la frontière de nœud.
@@ -369,11 +408,11 @@ def test_additional_machine_yield_to_classic_job_a2(client):
 
     # Job A (parallèle) prend W1 et W2
     plan_a = {"version": "3.0", "nodes": [{"name": f"n{i}", "deps": [], "stale": True} for i in range(5)]}
-    job_a_id = client.post("/submit_job", json={"repo": "owner/repoA", "branch": "main", "plan": plan_a}).get_json()["job_id"]
+    job_a_id = _submit_test_job(client, json={"repo": "owner/repoA", "branch": "main", "plan": plan_a, "is_local": is_local}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
     # Job classique sans plan (parallel_mode = 0)
-    job_classic_id = client.post("/submit_job", json={
+    job_classic_id = _submit_test_job(client, json={
         "repo": "owner/repoClassic",
         "branch": "main",
         "ram_required_gb": 10.0
@@ -936,7 +975,8 @@ def test_concurrent_next_node_race_condition(client):
 # 15. Packing A11 : 2 nœuds de 2 jobs différents sur la même machine
 # =========================================================================
 
-def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client):
+@pytest.mark.parametrize("job_modes", [(False, False), (True, False), (False, True), (True, True)])
+def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client, job_modes):
     """
     Packing A11 :
     - 1 seule machine (RAM 32 Go, max utilisable 24 Go avec OS headroom 8 Go).
@@ -957,8 +997,8 @@ def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client):
     plan_j2 = {"version": "3.0", "nodes": [{"name": "n2", "deps": [], "resources": {"ram_gb": 10.0, "cpus": 2}}]}
     plan_j3 = {"version": "3.0", "nodes": [{"name": "n3", "deps": [], "resources": {"ram_gb": 10.0, "cpus": 2}}]}
 
-    j1_id = client.post("/submit_job", json={"repo": "o/j1", "branch": "main", "plan": plan_j1}).get_json()["job_id"]
-    j2_id = client.post("/submit_job", json={"repo": "o/j2", "branch": "main", "plan": plan_j2}).get_json()["job_id"]
+    j1_id = _submit_test_job(client, json={"repo": "o/j1", "branch": "main", "plan": plan_j1, "is_local": job_modes[0]}).get_json()["job_id"]
+    j2_id = _submit_test_job(client, json={"repo": "o/j2", "branch": "main", "plan": plan_j2, "is_local": job_modes[1]}).get_json()["job_id"]
 
     scheduler_loop.schedule_iteration()
 
@@ -980,7 +1020,7 @@ def test_packing_two_nodes_two_jobs_same_machine_admit_and_reject(client):
 
     # Maintenant que n1 et n2 sont 'running' sur W_PACK_1, la RAM allouée est 20 Go.
     # Soumission Job 3 : 10 Go supplémentaires ne tiennent pas dans 24 Go max (20 + 10 = 30 > 24)
-    j3_id = client.post("/submit_job", json={"repo": "o/j3", "branch": "main", "plan": plan_j3}).get_json()["job_id"]
+    j3_id = _submit_test_job(client, json={"repo": "o/j3", "branch": "main", "plan": plan_j3}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
     with persistence.get_db_conn() as conn:
@@ -1046,7 +1086,8 @@ def test_packing_two_branches_same_job_same_machine(client):
 # 17. Packing A11 : GPU discrets attribués sans dépassement (Best Fit)
 # =========================================================================
 
-def test_discrete_gpus_allocated_without_overcommit(client):
+@pytest.mark.parametrize("job_modes", [(False, False), (True, False), (False, True), (True, True)])
+def test_discrete_gpus_allocated_without_overcommit(client, job_modes):
     """
     Packing A11 : Sur isipol09 (2 GPUs discrets), 2 nœuds gpus:1 de DEUX JOBS DIFFÉRENTS
     reçoivent des gpu_ids différents sans overcommit. Un 3e job est mis en attente ('wait').
@@ -1073,8 +1114,8 @@ def test_discrete_gpus_allocated_without_overcommit(client):
             {"name": "gpu_node_2", "deps": [], "resources": {"ram_gb": 4.0, "gpus": 1, "vram_gb": 12.0}}
         ]
     }
-    j1_id = client.post("/submit_job", json={"repo": "o/gpu_pack1", "branch": "main", "plan": plan_1}).get_json()["job_id"]
-    j2_id = client.post("/submit_job", json={"repo": "o/gpu_pack2", "branch": "main", "plan": plan_2}).get_json()["job_id"]
+    j1_id = _submit_test_job(client, json={"repo": "o/gpu_pack1", "branch": "main", "plan": plan_1, "is_local": job_modes[0]}).get_json()["job_id"]
+    j2_id = _submit_test_job(client, json={"repo": "o/gpu_pack2", "branch": "main", "plan": plan_2, "is_local": job_modes[1]}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
     # Nœud 1 du Job 1 sur ISIPOL09
@@ -1098,7 +1139,8 @@ def test_discrete_gpus_allocated_without_overcommit(client):
 # 18. Packing A11 : Job classique empilé avec un nœud v3
 # =========================================================================
 
-def test_classic_job_packing_with_v3(client):
+@pytest.mark.parametrize("is_local", [False, True])
+def test_classic_job_packing_with_v3(client, is_local):
     """
     Packing A11 : Un job classique sans parallel_mode est empilé sur une machine
     déjà occupée par un job v3 si les ressources cumulées le permettent.
@@ -1113,7 +1155,7 @@ def test_classic_job_packing_with_v3(client):
 
     # Job v3 prenant 8 Go de RAM
     plan_v3 = {"version": "3.0", "nodes": [{"name": "v3_task", "deps": [], "resources": {"ram_gb": 8.0, "cpus": 2}}]}
-    j_v3_id = client.post("/submit_job", json={"repo": "o/v3", "branch": "main", "plan": plan_v3}).get_json()["job_id"]
+    j_v3_id = _submit_test_job(client, json={"repo": "o/v3", "branch": "main", "plan": plan_v3, "is_local": is_local}).get_json()["job_id"]
     scheduler_loop.schedule_iteration()
 
     step_v3 = client.post(f"/api/jobs/{j_v3_id}/next_node", json={"runner_id": "r_v3", "worker": "W_HYBRID"}).get_json()
@@ -1601,7 +1643,6 @@ def test_headnode_placement_priority_last_resort_a13(client):
     }).get_json()
     assert step_resp["action"] in ("run", "switch_image")
     assert step_resp["node"] == "prep"
-
 
 
 

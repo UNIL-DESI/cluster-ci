@@ -371,7 +371,8 @@ def test_status_apis_expose_gpu_accounting(client):
 # =========================================================================
 # Scenario 8: Container Reuse vs Recreation on Resource Change (A)
 # =========================================================================
-def test_branch_executor_container_recreation_on_resource_change(tmp_path):
+@pytest.mark.parametrize("is_local", [False, True])
+def test_branch_executor_container_recreation_on_resource_change(tmp_path, monkeypatch, is_local):
     """
     Scenario 8 (A): Ne réutiliser le conteneur que si l'image ET TOUS les arguments de ressources
     (memory, cpus, gpu_ids, shm, cgroup-parent) sont identiques.
@@ -382,6 +383,7 @@ def test_branch_executor_container_recreation_on_resource_change(tmp_path):
     from unittest.mock import MagicMock
     from src.runner.branch_executor import BranchExecutor, DockerRunner
 
+    monkeypatch.setenv("IS_LOCAL", "1" if is_local else "0")
     repo_dir = str(tmp_path / "repo")
     os.makedirs(repo_dir, exist_ok=True)
 
@@ -432,6 +434,7 @@ def test_branch_executor_container_recreation_on_resource_change(tmp_path):
 
     # Vérifier les arguments passés à run_container pour le 2ème nœud
     last_call_kwargs = mock_docker.run_container.call_args[1]
+    assert last_call_kwargs["env"]["IS_LOCAL"] == ("1" if is_local else "0")
     assert last_call_kwargs["resources"]["gpus"] == 1
     assert last_call_kwargs["resources"]["gpu_ids"] == [0]
 

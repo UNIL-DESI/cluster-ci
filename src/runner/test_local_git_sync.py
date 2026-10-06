@@ -125,6 +125,11 @@ def test_local_metrics_keep_existing_http_transport(monkeypatch):
 
 def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypatch):
     repo, remote = repositories
+    # The current runner sanitizes through DVC before each node; use a real
+    # initialized DVC workspace while retaining the local Git/no-push assertions.
+    from src.runner.fetch_cas_dependencies import get_dvc_command
+    subprocess.run([*get_dvc_command(), 'init', '--no-scm'], cwd=repo,
+                   check=True, capture_output=True, text=True)
     before_head = git(repo, "rev-parse", "HEAD")
     monkeypatch.setenv("IS_LOCAL", "1")
     docker = Mock(spec=branch.DockerRunner)
