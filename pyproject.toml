@@ -12,7 +12,10 @@ dependencies = [
     "requests",
     "authlib",
     "python-dotenv",
-    "pyyaml"
+    "pyyaml",
+    "networkx>=3.0",
+    "dvc==3.67.1",
+    "ruamel.yaml>=0.18.0",
 ]
 
 [project.optional-dependencies]
