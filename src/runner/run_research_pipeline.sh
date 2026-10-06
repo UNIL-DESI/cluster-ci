@@ -128,12 +128,12 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     touch "$LOG_FILE"
     mkfifo "$STREAM_PIPE"
 
-    # Start curl reading from the pipe
-    curl -s -X POST -H "Content-Type: text/plain" -T "$STREAM_PIPE" -N "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null &
+    # Start curl reading from the pipe with connection timeout and keepalive
+    curl -s -X POST -H "Content-Type: text/plain" -T "$STREAM_PIPE" -N --connect-timeout 10 --keepalive-time 10 "https://ppng.io/cluster-ci-log-${CALLER_COMMIT_SHA}" >/dev/null 2>&1 &
     CURL_PID=$!
 
     # Start tail pushing logs to the pipe
-    tail -f "$LOG_FILE" > "$STREAM_PIPE" &
+    tail -f "$LOG_FILE" > "$STREAM_PIPE" 2>/dev/null &
     TAIL_PID=$!
 
     # Start heartbeat pushing to the pipe
@@ -142,14 +142,22 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
             sleep 10
             echo "♥" 2>/dev/null || break
         done
-    ) > "$STREAM_PIPE" &
+    ) > "$STREAM_PIPE" 2>/dev/null &
     HEARTBEAT_PID=$!
 
     cleanup_delegation() {
         echo "Cleaning up delegation resources..."
-        if [ -n "$TAIL_PID" ]; then kill "$TAIL_PID" 2>/dev/null || true; fi
-        if [ -n "$HEARTBEAT_PID" ]; then kill "$HEARTBEAT_PID" 2>/dev/null || true; fi
-        if [ -n "$CURL_PID" ]; then kill "$CURL_PID" 2>/dev/null || true; fi
+        for pid in "$TAIL_PID" "$HEARTBEAT_PID" "$CURL_PID"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+            fi
+        done
+        sleep 0.5
+        for pid in "$TAIL_PID" "$HEARTBEAT_PID" "$CURL_PID"; do
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
         rm -f "$LOG_FILE" "$STREAM_PIPE" 2>/dev/null || true
     }
     trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT

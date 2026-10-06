@@ -23,6 +23,7 @@ import tarfile
 import hashlib
 import zipfile
 import shutil
+from typing import List
 
 # Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
 try:
@@ -836,32 +837,54 @@ def stream_logs(run_id, commit_sha, branch=None):
     try:
         q = queue.Queue()
         proc = None
+        current_proc = [None]
+        stream_active = [False]
+        reconnect_attempts = 0
+        last_reconnect_time = 0.0
+        recent_lines_history: List[str] = []
+        recent_lines_max = 2000
+        in_reconnect_sync = False
         received_data = False
 
-        if has_curl and commit_sha:
-            proc = subprocess.Popen(
-                ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
-                stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
-            )
-            
-            def log_reader_thread():
-                buffer = []
-                while True:
-                    try:
-                        char = proc.stdout.read(1)
-                    except Exception:
-                        char = None
-                    if not char:
-                        if buffer:
+        def start_stream_proc():
+            nonlocal proc
+            if not (has_curl and commit_sha):
+                return None
+            try:
+                p = subprocess.Popen(
+                    ["curl", "-s", "-N", "--keepalive-time", "10", f"https://ppng.io/cluster-ci-log-{commit_sha}"],
+                    stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1
+                )
+                current_proc[0] = p
+                proc = p
+                stream_active[0] = True
+
+                def log_reader_thread():
+                    buffer = []
+                    while True:
+                        try:
+                            char = p.stdout.read(1)
+                        except Exception:
+                            char = None
+                        if not char:
+                            if buffer:
+                                q.put("".join(buffer))
+                            break
+                        buffer.append(char)
+                        if char in ('\n', '\r'):
                             q.put("".join(buffer))
-                        break
-                    buffer.append(char)
-                    if char in ('\n', '\r'):
-                        q.put("".join(buffer))
-                        buffer = []
-                    
-            reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
-            reader_thread.start()
+                            buffer = []
+                    stream_active[0] = False
+
+                reader_thread = threading.Thread(target=log_reader_thread, daemon=True)
+                reader_thread.start()
+                return p
+            except Exception:
+                stream_active[0] = False
+                return None
+
+        if has_curl and commit_sha:
+            start_stream_proc()
 
         last_sync_time = time.time()
         last_synced_sha = commit_sha
@@ -882,16 +905,33 @@ def stream_logs(run_id, commit_sha, branch=None):
                 if "has been established already" in line_stripped:
                     continue
                 
-                if not received_data:
-                    print("\n🟢 Live stream connected.")
-                    received_data = True
-                
                 # Heartbeat filtering: server sends ♥ every 10s to keep channel alive.
                 # Update the poll timer (proof of life) but don't display or log.
                 if line_stripped.strip() == "♥":
                     last_gha_poll_time = time.time()
                     continue
-                
+
+                if not received_data:
+                    print("\n🟢 Live stream connected.")
+                    received_data = True
+
+                # Deduplication logic upon reconnection (Issue #111)
+                if in_reconnect_sync and line_stripped:
+                    # Check recent tail of displayed lines
+                    recent_tail = recent_lines_history[-300:] if len(recent_lines_history) > 300 else recent_lines_history
+                    if line_stripped in recent_tail:
+                        # Skip replayed line
+                        last_gha_poll_time = time.time()
+                        continue
+                    else:
+                        # Fresh new line received: reconnection catch-up complete
+                        in_reconnect_sync = False
+                        reconnect_attempts = 0
+
+                recent_lines_history.append(line_stripped)
+                if len(recent_lines_history) > recent_lines_max:
+                    recent_lines_history.pop(0)
+
                 print_line(line_stripped, force=True)
                 
                 # Immediate sync trigger: when DVC-Git-Helper pushes metrics/plots on the cluster,
@@ -1070,6 +1110,19 @@ def stream_logs(run_id, commit_sha, branch=None):
                         if not display_clean_queue_status(run_id):
                             print("\n⏳ Waiting for GitHub Actions runner allocation...")
                     
+                    # Resilient reconnect (Chantier 17 - Issue #111)
+                    # If job is still active on cluster/GHA but curl stream process died, reconnect!
+                    if has_curl and commit_sha and not gha_completed:
+                        proc_dead = current_proc[0] is None or current_proc[0].poll() is not None or not stream_active[0]
+                        if proc_dead:
+                            now = time.time()
+                            backoff = min(10.0, 1.0 * (1.5 ** min(reconnect_attempts, 6)))
+                            if now - last_reconnect_time >= backoff:
+                                reconnect_attempts += 1
+                                last_reconnect_time = now
+                                in_reconnect_sync = True
+                                start_stream_proc()
+
                     last_gha_poll_time = time.time()
 
     except KeyboardInterrupt:
