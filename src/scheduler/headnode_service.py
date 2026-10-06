@@ -1101,8 +1101,20 @@ def job_status(job_id):
             return jsonify({"error": "Job not found"}), 404
 
         job_dict = dict(job)
-        cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ?', (job_id,))
-        has_dag_nodes = cursor.fetchone()[0] > 0
+        cursor.execute('SELECT COUNT(*) AS cnt FROM job_nodes WHERE job_id = ?', (job_id,))
+        count_row = cursor.fetchone()
+        has_dag_nodes = False
+        if count_row:
+            if isinstance(count_row, dict):
+                has_dag_nodes = bool(count_row.get("cnt", 0) > 0)
+            else:
+                try:
+                    has_dag_nodes = bool(count_row["cnt"] > 0)
+                except (KeyError, TypeError, IndexError):
+                    try:
+                        has_dag_nodes = bool(count_row[0] > 0)
+                    except (KeyError, TypeError, IndexError):
+                        has_dag_nodes = False
         if job_dict.get("parallel_mode") == 1 or has_dag_nodes:
             agg_status = get_aggregated_job_status(job_id)
             if agg_status:
