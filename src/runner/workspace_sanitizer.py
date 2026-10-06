@@ -165,6 +165,21 @@ def _find_dir_cache_manifest(workspace_dir: str, dir_md5: str) -> Optional[str]:
     return None
 
 
+def _is_hash_in_local_cache(workspace_dir: str, md5_hash: str) -> bool:
+    """Check whether a content hash exists in local DVC cache storage."""
+    if not md5_hash or len(md5_hash) < 4:
+        return False
+    clean_hash = md5_hash[:-4] if md5_hash.endswith(".dir") else md5_hash
+    candidates = [
+        os.path.join(workspace_dir, ".dvc", "cache", "files", "md5", clean_hash[:2], clean_hash[2:]),
+        os.path.join(workspace_dir, ".dvc", "cache", clean_hash[:2], clean_hash[2:]),
+        os.path.join(workspace_dir, ".dvc", "cache", "files", "md5", clean_hash[:2], clean_hash[2:] + ".dir"),
+        os.path.join(workspace_dir, ".dvc", "cache", clean_hash[:2], clean_hash[2:] + ".dir"),
+    ]
+    return any(os.path.isfile(c) for c in candidates)
+
+
+
 def sanitize_workspace(
     workspace_dir: str = ".",
     *,
@@ -349,14 +364,19 @@ def sanitize_workspace(
                                     else:
                                         act_sub_md5 = _compute_file_md5(sub_p)
                                         if act_sub_md5 != item_md5:
-                                            mismatches.append(
-                                                {
-                                                    "path": _norm(os.path.join(out_rel, item_rel)),
-                                                    "expected": item_md5,
-                                                    "actual": act_sub_md5,
-                                                    "stage": out_info["stage"],
-                                                }
-                                            )
+                                            if _is_hash_in_local_cache(abs_ws, act_sub_md5):
+                                                # Stale residue from earlier commit already saved in local cache: purge to prevent leak
+                                                os.remove(sub_p)
+                                                purged_files.append(_norm(os.path.join(out_rel, item_rel)))
+                                            else:
+                                                mismatches.append(
+                                                    {
+                                                        "path": _norm(os.path.join(out_rel, item_rel)),
+                                                        "expected": item_md5,
+                                                        "actual": act_sub_md5,
+                                                        "stage": out_info["stage"],
+                                                    }
+                                                )
                     except Exception as e:
                         raise WorkspaceSanitizerError(f"Failed verifying directory cache manifest for '{out_rel}': {e}") from e
                 # Note: if directory manifest is not locally in cache, we do NOT compute a naive file MD5 on the dir.
@@ -365,14 +385,20 @@ def sanitize_workspace(
                 if os.path.isfile(full_out_path):
                     actual_md5 = _compute_file_md5(full_out_path)
                     if actual_md5 != expected_md5:
-                        mismatches.append(
-                            {
-                                "path": out_rel,
-                                "expected": expected_md5,
-                                "actual": actual_md5,
-                                "stage": out_info["stage"],
-                            }
-                        )
+                        if _is_hash_in_local_cache(abs_ws, actual_md5):
+                            # Stale output from earlier run already saved in local cache: purge to prevent leak and mark missing
+                            os.remove(full_out_path)
+                            purged_files.append(out_rel)
+                            missing_outputs.append(out_rel)
+                        else:
+                            mismatches.append(
+                                {
+                                    "path": out_rel,
+                                    "expected": expected_md5,
+                                    "actual": actual_md5,
+                                    "stage": out_info["stage"],
+                                }
+                            )
 
         if mismatches:
             lines = [f"  - {m['path']} (stage '{m['stage']}'): attendu {m['expected']}, obtenu {m['actual']}" for m in mismatches]

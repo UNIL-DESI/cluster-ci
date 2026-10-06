@@ -311,3 +311,55 @@ def test_empty_cache_no_exception_listed_as_missing():
     finally:
         shutil.rmtree(td, onerror=_remove_readonly, ignore_errors=True)
 
+
+def test_stale_output_with_hash_in_cache_purged_vs_unsaved_mismatch_fails():
+    """Test Bug 9: output whose hash differs from lock:
+    - if current hash is in local cache -> purged and listed in missing_outputs (no error)
+    - if current hash is NOT in local cache -> raises WorkspaceSanitizerError
+    """
+    td = tempfile.mkdtemp(prefix="test_stale_branch_")
+    try:
+        subprocess.run(["git", "init"], cwd=td, check=True, capture_output=True)
+        subprocess.run(["dvc", "init", "--no-scm"], cwd=td, check=True, capture_output=True)
+
+        expected_md5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        stale_content = b"old commit test pairs 10k\n"
+        stale_md5 = hashlib.md5(stale_content).hexdigest()
+
+        # Branch 1: the stale content IS already saved in local cache (safe to purge)
+        cache_file = os.path.join(td, ".dvc", "cache", "files", "md5", stale_md5[:2], stale_md5[2:])
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        with open(cache_file, "wb") as f:
+            f.write(stale_content)
+
+        out_file = os.path.join(td, "test_pairs.csv")
+        with open(out_file, "wb") as f:
+            f.write(stale_content)
+
+        with open(os.path.join(td, "dvc.lock"), "w", encoding="utf-8") as f:
+            f.write(
+                f"schema: '2.0'\nstages:\n  gen:\n    cmd: python gen.py\n    outs:\n"
+                f"      - path: test_pairs.csv\n        md5: '{expected_md5}'\n"
+            )
+
+        # Sanitizer must purge stale file without raising exception, and track as missing_outputs
+        res = sanitize_workspace(td, dvc_checkout=False, strict_lock_check=True)
+        assert not os.path.exists(out_file)
+        assert "test_pairs.csv" in res["purged_files"]
+        assert "test_pairs.csv" in res["missing_outputs"]
+        assert len(res["mismatches"]) == 0
+
+        # Branch 2: unsaved unique content NOT in local cache
+        unsaved_content = b"unsaved corrupted unbacked data\n"
+        with open(out_file, "wb") as f:
+            f.write(unsaved_content)
+
+        with pytest.raises(WorkspaceSanitizerError) as excinfo:
+            sanitize_workspace(td, dvc_checkout=False, strict_lock_check=True)
+
+        assert "Écart d'intégrité détecté" in str(excinfo.value)
+        assert "test_pairs.csv" in str(excinfo.value)
+    finally:
+        shutil.rmtree(td, onerror=_remove_readonly, ignore_errors=True)
+
+
