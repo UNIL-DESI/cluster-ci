@@ -24,6 +24,7 @@ try:
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
         get_worker_total_gpus, get_worker_allocated_resources
     )
+    from queue_helper import format_waiting_time, scheduler_node_sort_key
 except ImportError:
     from src.scheduler.persistence import (
         init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
@@ -40,6 +41,7 @@ except ImportError:
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
         get_worker_total_gpus, get_worker_allocated_resources
     )
+    from src.scheduler.queue_helper import format_waiting_time, scheduler_node_sort_key
 try:
     from redaction import redact_secrets
 except ImportError:
@@ -2323,7 +2325,7 @@ def api_queue():
                     reasons.append("branch_exclusivity")
 
                 # Check resource availability (no worker with enough RAM)
-                ram_required = job.get('ram_required_gb', 0)
+                ram_required = float(job.get('ram_required_gb') or 0.0)
                 busy_worker_ids = {aj['worker_id'] for aj in active_jobs if aj.get('worker_id')}
                 free_workers = [w for w in workers if w['worker_id'] not in busy_worker_ids]
                 compatible_free = [w for w in free_workers if (w['total_ram_gb'] - 2.0) >= ram_required]
@@ -2340,19 +2342,6 @@ def api_queue():
     except Exception as e:
         app.logger.error(f"Error fetching queue: {e}")
         return jsonify({"error": "Internal server error"}), 500
-
-
-def format_waiting_time(seconds: float) -> str:
-    s = max(0, int(seconds))
-    if s < 60:
-        return f"{s}s"
-    m = s // 60
-    rem_s = s % 60
-    if m < 60:
-        return f"{m}m {rem_s:02d}s" if rem_s else f"{m}m"
-    h = m // 60
-    rem_m = m % 60
-    return f"{h}h {rem_m:02d}m"
 
 
 def get_worker_queues(conn=None, target_worker_id=None):
@@ -2414,13 +2403,16 @@ def get_worker_queues(conn=None, target_worker_id=None):
             cr_dict["image"] = None
             node_rows.append(cr_dict)
 
-        # Scheduler selection ordering: ready nodes before pending, then FIFO by created_at, then priority DESC
-        node_rows.sort(key=lambda r: (
-            0 if r.get("status") == "ready" else 1,
-            str(r.get("created_at") or ""),
-            -float(r.get("priority") or 0.0),
-            str(r.get("node_name") or "")
-        ))
+        # Scheduler selection ordering: reproduit fidèlement scheduler_loop.py (FIFO jobs 1568, node_sort_key 1109-1122)
+        def _node_sort(r):
+            raw_res = r.get("resources")
+            try:
+                res_dict = json.loads(raw_res) if isinstance(raw_res, str) else (raw_res or {})
+            except Exception:
+                res_dict = {}
+            return scheduler_node_sort_key(node=r, resources=res_dict)
+
+        node_rows.sort(key=_node_sort)
 
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         queues = {w["worker_id"]: [] for w in workers}

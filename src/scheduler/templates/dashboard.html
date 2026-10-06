@@ -979,8 +979,8 @@
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spin-icon { display: inline-block; animation: spin 1s linear infinite; }
 
-        /* ===== V3 Multi-Node & DAG Visualization Styles ===== */
-        .v3-badge {
+        /* ===== Machine Role Badges ===== */
+        .badge-machine {
             font-size: 0.75rem;
             font-weight: 600;
             padding: 3px 8px;
@@ -989,35 +989,25 @@
             align-items: center;
             gap: 4px;
         }
-        .v3-badge-home {
+        .badge-machine-home {
             background: rgba(16, 185, 129, 0.15);
             color: #059669;
             border: 1px solid rgba(16, 185, 129, 0.35);
         }
-        [data-theme="dark"] .v3-badge-home {
+        [data-theme="dark"] .badge-machine-home {
             background: rgba(16, 185, 129, 0.25);
             color: #34d399;
             border-color: rgba(16, 185, 129, 0.4);
         }
-        .v3-badge-extra {
+        .badge-machine-extra {
             background: rgba(59, 130, 246, 0.15);
             color: #2563eb;
             border: 1px solid rgba(59, 130, 246, 0.35);
         }
-        [data-theme="dark"] .v3-badge-extra {
+        [data-theme="dark"] .badge-machine-extra {
             background: rgba(59, 130, 246, 0.25);
             color: #60a5fa;
             border-color: rgba(59, 130, 246, 0.4);
-        }
-        .v3-badge-dag {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.15));
-            color: #6366f1;
-            border: 1px solid rgba(99, 102, 241, 0.35);
-            font-weight: 700;
-        }
-        [data-theme="dark"] .v3-badge-dag {
-            color: #a5b4fc;
-            border-color: rgba(165, 180, 252, 0.35);
         }
         .v3-branch-banner {
             background: var(--bg-card);
@@ -1341,11 +1331,8 @@
             <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-color);">
                 <div class="modal-header d-flex align-items-center justify-content-between" style="background: var(--bg-card); border-bottom: 1px solid var(--border-color);">
                     <div class="d-flex align-items-center gap-3">
-                        <span class="v3-badge v3-badge-dag" style="font-size: 0.9rem; padding: 6px 12px;">
-                            <i class="bi bi-diagram-3-fill"></i> Cluster-CI v3 DAG
-                        </span>
                         <div>
-                            <h5 class="modal-title fw-bold mb-0" id="v3DagModalLabel" style="color: var(--text-primary);">Pipeline & Multi-Node Distribution</h5>
+                            <h5 class="modal-title fw-bold mb-0" id="v3DagModalLabel" style="color: var(--text-primary);"><i class="bi bi-diagram-3-fill me-2 text-primary"></i>Pipeline & Multi-Node Distribution</h5>
                             <span id="v3-dag-modal-subtitle" class="small" style="color: #cbd5e1 !important;"></span>
                         </div>
                     </div>
@@ -1825,9 +1812,9 @@
 
             // 1. Overview container
             const overviewEl = document.getElementById('v3-dag-overview-container');
-            const homeBadge = job.home_worker ? `<span class="v3-badge v3-badge-home"><i class="bi bi-house-door-fill"></i> Home Machine : <strong>${escapeHtml(job.home_worker)}</strong></span>` : '<span class="text-muted">No home machine assigned</span>';
+            const homeBadge = job.home_worker ? `<span class="badge-machine badge-machine-home"><i class="bi bi-house-door-fill"></i> Home Machine : <strong>${escapeHtml(job.home_worker)}</strong></span>` : '<span class="text-muted">No home machine assigned</span>';
             const extraWorkers = activeWorkersList.filter(w => w !== job.home_worker);
-            const extrasBadge = extraWorkers.length > 0 ? extraWorkers.map(w => `<span class="v3-badge v3-badge-extra"><i class="bi bi-lightning-charge-fill"></i> Auxiliary : <strong>${escapeHtml(w)}</strong></span>`).join(' ') : '<span class="text-muted small">No auxiliary machines</span>';
+            const extrasBadge = extraWorkers.length > 0 ? extraWorkers.map(w => `<span class="badge-machine badge-machine-extra"><i class="bi bi-lightning-charge-fill"></i> Auxiliary : <strong>${escapeHtml(w)}</strong></span>`).join(' ') : '<span class="text-muted small">No auxiliary machines</span>';
 
             const statusClassMap = {
                 completed: 'badge-success-premium',
@@ -1856,7 +1843,6 @@
                             <div class="v3-modal-section-title">Consolidated Status</div>
                             <div class="d-flex align-items-center gap-2">
                                 ${aggStatusBadge}
-                                <span class="v3-badge v3-badge-dag">v3 Parallel</span>
                             </div>
                         </div>
                     </div>
@@ -1933,7 +1919,7 @@
                                     <i class="bi bi-pc-display-horizontal text-secondary"></i>
                                     <strong class="text-dark">${escapeHtml(workerId)}</strong>
                                 </div>
-                                <span class="v3-badge ${isHome ? 'v3-badge-home' : 'v3-badge-extra'}">
+                                <span class="badge-machine ${isHome ? 'badge-machine-home' : 'badge-machine-extra'}">
                                     ${isHome ? '<i class="bi bi-house-door-fill"></i> Primary' : '<i class="bi bi-lightning-charge-fill"></i> Auxiliary'}
                                 </span>
                             </div>
@@ -2144,8 +2130,8 @@
             let v3BadgesHtml = '';
             if (isV3) {
                 v3BadgesHtml = `
-                    ${run.home_worker ? `<span class="v3-badge v3-badge-home" title="Home machine"><i class="bi bi-house-door-fill"></i> Home : ${escapeHtml(run.home_worker)}</span>` : ''}
-                    ${activeWorkersList.filter(w => w !== run.home_worker).map(w => `<span class="v3-badge v3-badge-extra" title="Auxiliary machine"><i class="bi bi-lightning-charge-fill"></i> Auxiliary : ${escapeHtml(w)}</span>`).join('')}
+                    ${run.home_worker ? `<span class="badge-machine badge-machine-home" title="Home machine"><i class="bi bi-house-door-fill"></i> Home : ${escapeHtml(run.home_worker)}</span>` : ''}
+                    ${activeWorkersList.filter(w => w !== run.home_worker).map(w => `<span class="badge-machine badge-machine-extra" title="Auxiliary machine"><i class="bi bi-lightning-charge-fill"></i> Auxiliary : ${escapeHtml(w)}</span>`).join('')}
                 `;
             }
 
@@ -4257,7 +4243,7 @@
                             const modeBadge = isV3 ? '' : 
                                 `<span class="badge-classic-pill" style="font-size:0.68rem; padding: 1px 6px;">Classic</span>`;
                             const primaryBadge = ex.isHome ? 
-                                `<span class="v3-badge v3-badge-home" style="font-size:0.68rem; padding: 1px 6px;" title="Primary machine guaranteed for pipeline coordination & main runner"><i class="bi bi-house-door me-1"></i>Primary Machine</span>` : '';
+                                `<span class="badge-machine badge-machine-home" style="font-size:0.68rem; padding: 1px 6px;" title="Primary machine guaranteed for pipeline coordination & main runner"><i class="bi bi-house-door me-1"></i>Primary Machine</span>` : '';
                             const cardTitle = ex.type === 'classic_job' ? 
                                 `Job ${ex.jobId ? ex.jobId.substring(0, 8) : ''}` : 
                                 (ex.type === 'v3_coordinator' ? `Coordinator · Job ${ex.jobId ? ex.jobId.substring(0, 8) : ''}` : `Stage : ${escapeHtml(ex.nodeName)}`);
@@ -4282,7 +4268,7 @@
                                             <div class="fw-semibold text-dark text-truncate" style="max-width: 260px;" title="${escapeHtml(ex.repo)} @${escapeHtml(ex.branch)}">
                                                 <i class="bi bi-folder me-1 text-secondary"></i>${escapeHtml(ex.repo)} <span class="text-muted fw-normal">@${escapeHtml(ex.branch)}</span>
                                             </div>
-                                            <div class="text-muted" style="font-size: 0.72rem;" title="Runner: ${escapeHtml(ex.runnerId)}">
+                                            <div class="text-muted" style="font-size: 0.72rem;" title="${escapeHtml(ex.runnerId)}">
                                                 <i class="bi bi-person me-1"></i>${escapeHtml(displayUser)}
                                             </div>
                                         </div>
@@ -4297,7 +4283,7 @@
                                                 </button>
                                             `}
                                             ${viewerUrl ? `
-                                                <a href="${viewerUrl}" target="_blank" class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2" style="font-size: 0.72rem;" title="Open DVC viewer">
+                                                <a href="${viewerUrl}" target="_blank" class="btn btn-sm btn-outline-primary rounded-pill py-0 px-2 fw-semibold" style="font-size: 0.72rem; cursor: pointer;" title="Open DVC viewer">
                                                     <i class="bi bi-broadcast me-1"></i>DVC viewer
                                                 </a>
                                             ` : ''}
