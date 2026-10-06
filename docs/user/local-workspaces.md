@@ -41,6 +41,14 @@ volume or an already contaminated public workspace. Preserve and quarantine any
 such data through the existing administrator procedure; this patch does not
 delete or migrate volumes automatically.
 
+The runner owns `IS_LOCAL`, `CLUSTER_CI_MODE`, `JOB_ID`, `HEADNODE_URL`,
+`CLUSTER_TOKEN` and the node attempt counter. Custom stage variables/secret files
+cannot override those values. A local pipeline refuses external log delegation.
+The maintained CLI remembers local mode before submission work can fail, and
+ambiguous old recovery state is treated conservatively. `--local` supports
+submission and `attach`; GitHub-only subcommands are rejected with that flag.
+The legacy shell launcher rejects `--local` rather than starting a shadow push.
+
 ## Cleanup
 
 Both modes use the existing `repositories/registry.json` and oldest-idle-first

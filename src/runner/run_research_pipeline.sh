@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Preserve the worker's local-mode selection across installation env files.
+readonly CLUSTER_CI_SUBMITTED_LOCAL="${IS_LOCAL:-0}"
+if [ "$CLUSTER_CI_SUBMITTED_LOCAL" = "1" ] && [ "$CLUSTER_CI_MODE" != "executor" ]; then
+    echo "Local jobs require executor mode; submit them with cluster-run --local." >&2
+    exit 1
+fi
+
 if [ "$#" -lt 2 ]; then
     echo "Usage: $0 <owner/repo> <branch_name>"
     echo "Example: $0 hjamet/llm-as-recommender main"
@@ -41,7 +48,7 @@ export CALLER_COMMIT_SHA
 CALLER_WORKSPACE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
 export CALLER_WORKSPACE_DIR
 
-if [ "$CLI_TARGET_BRANCH" = "cluster-run" ]; then
+if [ "$CLI_TARGET_BRANCH" = "cluster-run" ] && [ "$CLUSTER_CI_SUBMITTED_LOCAL" != "1" ]; then
     log_info "Detecting origin branch for tag cluster-run..."
     git fetch origin "+refs/heads/*:refs/remotes/origin/*" --quiet || true
     
@@ -85,6 +92,13 @@ fi
 
 TARGET_REPO=${CLI_TARGET_REPO:-$TARGET_REPO}
 TARGET_BRANCH=${CLI_TARGET_BRANCH:-$TARGET_BRANCH}
+if [ "$CLUSTER_CI_SUBMITTED_LOCAL" = "1" ]; then
+    export IS_LOCAL=1
+fi
+if [ "$IS_LOCAL" = "1" ] && [ "$CLUSTER_CI_MODE" != "executor" ]; then
+    echo "Local mode cannot use external log delegation." >&2
+    exit 1
+fi
 
 # Prioritize local GITHUB_PAT or GH_TOKEN from local environment files over the CLI token argument
 if [ -n "$GITHUB_PAT" ]; then

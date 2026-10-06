@@ -190,6 +190,7 @@ USER_INTERRUPTED = False
 REPO_FULL_NAME = "UNIL-DESI/cluster-ci"
 STATE_FILE = ".cluster-ci-run.json"
 _CLEANUP_DONE = False
+RUN_IS_LOCAL = None  # Selected in memory before any fallible submission work.
 
 # Global variables and regex for tqdm and stream log optimizations
 _LAST_WAS_TQDM = False
@@ -589,6 +590,15 @@ def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnod
     # 3. Remove state file
     clear_run_state()
 
+def _state_is_local(state, branch):
+    """Old/ambiguous state must not silently choose a publishing workflow."""
+    if str(branch or '').startswith('local-draft/'):
+        return True
+    if isinstance(state.get('is_local'), bool):
+        return state['is_local']
+    return not str(branch or '').startswith('cluster-draft/')
+
+
 def cleanup():
     """Cleanup handler: sync results, cancel run, delete branch."""
     global _CLEANUP_DONE
@@ -600,7 +610,7 @@ def cleanup():
         job_id = None
         headnode_url = None
         cluster_token = None
-        is_local = False
+        is_local = RUN_IS_LOCAL if RUN_IS_LOCAL is not None else _state_is_local({}, BRANCH)
         try:
             if os.path.exists(STATE_FILE):
                 with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -608,7 +618,8 @@ def cleanup():
                     job_id = state.get("job_id")
                     headnode_url = state.get("headnode_url")
                     cluster_token = state.get("cluster_token")
-                    is_local = state.get("is_local", False)
+                    if RUN_IS_LOCAL is None:
+                        is_local = _state_is_local(state, BRANCH)
         except Exception as e:
             print(f"⚠️  Error reading state file during cleanup: {e}", file=sys.stderr)
         cancel_and_cleanup_run(
@@ -662,7 +673,7 @@ def recover_orphaned_run():
         orphan_job_id = state.get("job_id")
         orphan_headnode_url = state.get("headnode_url")
         orphan_cluster_token = state.get("cluster_token")
-        orphan_is_local = state.get("is_local", False)
+        orphan_is_local = _state_is_local(state, orphan_branch)
         cancel_and_cleanup_run(
             orphan_run_id, orphan_branch, orphan_sha,
             job_id=orphan_job_id, headnode_url=orphan_headnode_url,
@@ -1332,7 +1343,8 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
 
 def shadow_run():
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
-    global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED
+    global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED, RUN_IS_LOCAL
+    RUN_IS_LOCAL = False
     
     clean_old_results()
     
@@ -2172,7 +2184,8 @@ def _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token=Non
 
 def local_run():
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
-    global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE
+    global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE, RUN_IS_LOCAL
+    RUN_IS_LOCAL = True
 
     clean_old_results()
 
@@ -2347,6 +2360,9 @@ def main():
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
 
     args = parser.parse_args()
+
+    if args.local and args.command not in (None, 'attach'):
+        parser.error('--local supports submission and attach; this command uses GitHub and is not available in local mode')
 
     check_dependencies(require_gh=False if (args.local or args.command == "attach") else (True if args.command else not args.local))
 

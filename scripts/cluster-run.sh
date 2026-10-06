@@ -365,6 +365,14 @@ shadow_run() {
 }
 
 # --- CLI Entry Point ---
+for argument in "$@"; do
+    case "$argument" in
+        --local|--local=*)
+            echo "This legacy launcher does not support local mode. Use the installed Python cluster-run client." >&2
+            exit 2
+            ;;
+    esac
+done
 check_dependencies
 
 COMMAND=$1
@@ -411,6 +419,10 @@ case "$COMMAND" in
         show_help
         ;;
     *)
+        if [ -n "$COMMAND" ]; then
+            echo "Unknown command or option: $COMMAND" >&2
+            exit 2
+        fi
         shadow_run
         ;;
 esac

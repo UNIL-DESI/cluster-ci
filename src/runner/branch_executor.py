@@ -998,6 +998,18 @@ class BranchExecutor:
             except Exception as e:
                 logger.debug("Erreur lecture CLUSTER_CI_SECRETS_FILE: %s", e)
 
+        # Job metadata wins over custom environment variables and secret files.
+        # Otherwise a local stage could accidentally select publishing helpers
+        # or send results to a different HEADNODE_URL.
+        env.update({
+            'IS_LOCAL': os.environ.get('IS_LOCAL', '0'),
+            'CLUSTER_CI_MODE': 'executor',
+            'JOB_ID': self.job_id,
+            'HEADNODE_URL': self.headnode_url,
+            'CLUSTER_TOKEN': self.cluster_token or '',
+            'CLUSTER_CI_NODE_ATTEMPT': str(attempt),
+        })
+
         # Démarrage du watchdog mémoire hôte si supporté (Grace-Blackwell GB10 Guard)
         watchdog_proc = None
         watchdog_script = Path(__file__).parent / "gpu_watchdog.sh"
