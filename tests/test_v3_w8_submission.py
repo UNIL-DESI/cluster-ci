@@ -10,7 +10,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 import pytest
 import io
-import shutil
 import threading
 import zipfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -24,7 +23,6 @@ from src.scheduler.submit_job import (
     get_planner_module_name,
     run_planner_for_submission,
     format_nodes_status_summary,
-    print_final_dag_summary,
     submit_job,
     wait_for_job,
     NetworkRetryTracker,
@@ -33,7 +31,6 @@ from src.cluster.cluster_run import (
     parse_cluster_ci_config,
     fetch_local_results,
     stream_local_job_logs_and_wait,
-    _headnode_stop_job,
 )
 
 
@@ -464,7 +461,7 @@ class TestV3W8Submission(unittest.TestCase):
                         pass
 
                     self.assertIsNotNone(captured_handler)
-                    with pytest.raises(SystemExit) as exc_info:
+                    with pytest.raises(SystemExit):
                         captured_handler(signal.SIGINT, None)
 
                     self.assertIn("http://fake-headnode:5000/api/jobs/test-job-stop/stop", stop_called_urls)
@@ -753,7 +750,6 @@ class TestV3W8Submission(unittest.TestCase):
 
     def test_wait_for_job_bounded_retries_on_network_errors(self):
         """(Correction 4) Vérifie que submit_job gère les erreurs réseau par retries bornés avec message et fait remonter les autres."""
-        import requests
         # 1. Erreur transitoire de connexion sur la récupération des logs
         attempt_count = 0
 
@@ -859,7 +855,7 @@ class TestV3W8Submission(unittest.TestCase):
     def test_run_planner_external_target_repo_no_modulenotfound(self):
         """(Non-régression) Vérifie que run_planner_for_submission résout le plan sans ModuleNotFoundError
         même lorsque target_repo est un dossier temporaire externe et PYTHONPATH ne contient pas cluster-ci."""
-        with tempfile.TemporaryDirectory(prefix="test_ext_repo_") as tmp_repo:
+        with tempfile.TemporaryDirectory(prefix="test_ext_repo_", ignore_cleanup_errors=True) as tmp_repo:
             subprocess.run(["git", "init"], cwd=tmp_repo, check=True, capture_output=True)
             dvc_cmd = ["dvc"] if shutil.which("dvc") else [sys.executable, "-m", "dvc"]
             subprocess.run(dvc_cmd + ["init", "--no-scm"], cwd=tmp_repo, check=True, capture_output=True)

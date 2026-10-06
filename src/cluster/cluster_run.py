@@ -1801,7 +1801,7 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
 _job_logs_fallback_warned = False
 
 
-def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None, is_parallel=False):
+def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None, is_parallel=True):
     """Fetch logs from headnode with priority on /job_logs/{job_id} when parallel, and /api/jobs/{job_id}/logs when classic."""
     global _job_logs_fallback_warned
     if is_parallel:
@@ -1824,7 +1824,7 @@ def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None, is_pa
                     data = json.loads(resp.read().decode("utf-8"))
                     return data.get("logs", ""), data.get("offset", offset)
         except urllib.error.HTTPError as e:
-            if e.code == 404 and is_parallel:
+            if e.code == 404:
                 if idx == 0 and not _job_logs_fallback_warned:
                     print(
                         f"⚠️ Avertissement : Route /job_logs/{job_id} introuvable (HTTP 404), "
