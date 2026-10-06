@@ -2207,12 +2207,9 @@ def local_run(skip_code: bool = False):
     clean_old_results()
 
     if skip_code:
-        print("🔧 Realigning local dvc.lock for code-only changes (--skip-code)...")
+        print("[cluster-run] Realigning local dvc.lock for code-only changes (--skip-code)...")
         from src.runner.dvc_realign import realign_dvc_lock
-        try:
-            realign_dvc_lock(".", strict_guardrails=True)
-        except Exception as e:
-            print(f"⚠️  dvc_realign warning: {e}", file=sys.stderr)
+        realign_dvc_lock(".", strict_guardrails=True)
 
     headnode_url = discover_headnode_url()
     if not headnode_url:

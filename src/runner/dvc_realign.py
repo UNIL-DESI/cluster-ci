@@ -25,6 +25,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from ruamel.yaml import YAML
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 logger = logging.getLogger("cluster_ci.dvc_realign")
 
 # Default classification rules
@@ -249,6 +256,52 @@ def realign_dvc_lock(
             raise ValueError(f"Malformed stage entry for '{stage_name}' in dvc.lock")
 
         # Invariant: NEVER touch output hashes ('outs')
+
+        # Strict guardrails: Check parameters ('params')
+        lock_params = stage_info.get("params") or {}
+        if isinstance(lock_params, dict):
+            for params_file_rel, param_entries in lock_params.items():
+                if not isinstance(param_entries, dict):
+                    continue
+                abs_params_file = repo_path / params_file_rel
+                if not abs_params_file.is_file():
+                    if strict_guardrails:
+                        raise FileNotFoundError(
+                            f"Parameters file '{params_file_rel}' for stage '{stage_name}' "
+                            f"does not exist on disk."
+                        )
+                    continue
+
+                try:
+                    with open(abs_params_file, "r", encoding="utf-8") as pf:
+                        disk_params = yaml.load(pf) or {}
+                except Exception as pe:
+                    if strict_guardrails:
+                        raise ValueError(
+                            f"Strict guardrail rejection: Failed to parse parameters file "
+                            f"'{params_file_rel}' for stage '{stage_name}': {pe}"
+                        )
+                    continue
+
+                for param_key, expected_val in param_entries.items():
+                    curr_val = disk_params
+                    for part in param_key.split("."):
+                        if isinstance(curr_val, dict) and part in curr_val:
+                            curr_val = curr_val[part]
+                        else:
+                            curr_val = None
+                            break
+                    if curr_val is None and isinstance(disk_params, dict) and param_key in disk_params:
+                        curr_val = disk_params[param_key]
+
+                    if curr_val != expected_val:
+                        if strict_guardrails:
+                            raise ValueError(
+                                f"Strict guardrail rejection: Parameter '{param_key}' in '{params_file_rel}' "
+                                f"for stage '{stage_name}' has changed on disk (expected {expected_val!r}, got {curr_val!r}). "
+                                f"Realigning code hashes is forbidden when parameters have changed."
+                            )
+
         deps = stage_info.get("deps") or []
         for dep in deps:
             if not isinstance(dep, dict) or "path" not in dep:
@@ -301,9 +354,9 @@ def realign_dvc_lock(
     if changes:
         with open(lock_file, "w", encoding="utf-8") as f:
             yaml.dump(lock_data, f)
-        print(f"✅ Successfully realigned {len(changes)} code dependency hash(es) in dvc.lock.")
+        print(f"[dvc_realign] Successfully realigned {len(changes)} code dependency hash(es) in dvc.lock.")
     else:
-        print("ℹ️ All code dependencies in dvc.lock are already up to date with workspace.")
+        print("[dvc_realign] All code dependencies in dvc.lock are already up to date with workspace.")
 
     return changes
 
@@ -358,9 +411,9 @@ def commit_realigned_lock(
     # Existing guard: IS_LOCAL=1 skips git push (JohannesDav commit 0358518 & dvc_iterative_repro.py:187)
     effective_is_local = is_local if is_local is not None else (os.environ.get("IS_LOCAL") == "1")
     if effective_is_local:
-        print(f"🏠 Local mode (IS_LOCAL=1): realigned dvc.lock committed locally ({commit_sha[:8]}), skipping Git push.")
+        print(f"[dvc_realign] [LOCAL] (IS_LOCAL=1): realigned dvc.lock committed locally ({commit_sha[:8]}), skipping Git push.")
     else:
-        print(f"💾 Realigned dvc.lock committed as {commit_sha[:8]} [skip ci].")
+        print(f"[dvc_realign] Realigned dvc.lock committed as {commit_sha[:8]} [skip ci].")
 
     return commit_sha
 
@@ -413,7 +466,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         return 0
     except Exception as e:
-        print(f"❌ Error during dvc_realign: {e}", file=sys.stderr)
+        print(f"[dvc_realign] [ERROR] Error during dvc_realign: {e}", file=sys.stderr)
         return 1
 
 

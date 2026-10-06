@@ -180,6 +180,30 @@ class TestDVCLockRealignment:
         with pytest.raises(ValueError, match="Strict guardrail rejection"):
             realign_dvc_lock(repo_path, target_stages=["stage_prep"], strict_guardrails=True)
 
+    def test_strict_guardrails_rejects_param_modifications(self, temp_git_dvc_repo):
+        repo_path = temp_git_dvc_repo
+        # Create params.yaml and stage with parameters
+        params_file = repo_path / "params.yaml"
+        params_file.write_text("lr: 0.01\nbatch_size: 32\n", encoding="utf-8")
+
+        subprocess.run([
+            "dvc", "stage", "add", "-q", "-f", "-n", "stage_prep",
+            "-d", "src/prep.py",
+            "-p", "lr,batch_size",
+            "-o", "data/prep_out.txt",
+            "python src/prep.py"
+        ], cwd=repo_path, check=True)
+        subprocess.run(["dvc", "repro", "-q"], cwd=repo_path, check=True)
+
+        # Modify both code AND params.yaml
+        prep_py = repo_path / "src" / "prep.py"
+        prep_py.write_text(prep_py.read_text(encoding="utf-8") + "\n# comment\n", encoding="utf-8")
+        params_file.write_text("lr: 0.05\nbatch_size: 32\n", encoding="utf-8")
+
+        # Strict guardrails must reject realignment because parameters changed
+        with pytest.raises(ValueError, match="Strict guardrail rejection: Parameter 'lr'"):
+            realign_dvc_lock(repo_path, target_stages=["stage_prep"], strict_guardrails=True)
+
     def test_yaml_formatting_and_comments_preserved(self, temp_git_dvc_repo):
         repo_path = temp_git_dvc_repo
         lock_file = repo_path / "dvc.lock"
