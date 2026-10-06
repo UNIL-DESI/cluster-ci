@@ -224,7 +224,7 @@ cluster-ci/
 - [x] [Orchestrator: Silent fallback of HEADNODE_URL and missing network feedback](https://github.com/UNIL-DESI/cluster-ci/issues/109)
 - [x] [Docker: Container throttled to 2 GB RAM on 128 GB machine (False alarm)](https://github.com/UNIL-DESI/cluster-ci/issues/107)
 - [x] [Fix(logs): Resilient streaming, reconnection, and false infrastructure error resolution at job completion](https://github.com/UNIL-DESI/cluster-ci/issues/111)
-- [🔄] [DVC Runner: Double stage execution and misleading commit message](https://github.com/UNIL-DESI/cluster-ci/issues/106)
+- [x] [DVC Runner: Double stage execution and misleading commit message](https://github.com/UNIL-DESI/cluster-ci/issues/106)
 - [ ] [Web Interface Bugs: Random date and time sorting in DVC History](https://github.com/UNIL-DESI/cluster-ci/issues/101)
 - [x] Fix Zombie Jobs: Branch-level guard in scheduler, headnode-aware cancellation in `cluster-run`, auto-cancel in deployed version, and HTTP 500 crash fix on `/api/jobs/{id}/stop`
 - [x] Fix Scheduling cluster-run: Cross-repo per-user cancellation for draft branches (one cluster-run per user across all repos), max 1 pending policy per repo+branch for normal branches, and queue display with wait reasons on web dashboard

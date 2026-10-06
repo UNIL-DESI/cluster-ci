@@ -172,13 +172,13 @@ def main():
     print(f"📋 Stages to execute sequentially: {stages}")
     
     for stage in stages:
-        print(f"\n==================================================")
+        print("\n==================================================")
         print(f"🚀 Executing stage: {stage}")
-        print(f"==================================================")
+        print("==================================================")
         
         write_status(stage)
         stage_cmd = ["dvc", "repro", stage] + flags
-        if stage != "dvc-code-analysis" and "-s" not in stage_cmd and "--single-item" not in stage_cmd:
+        if "-s" not in stage_cmd and "--single-item" not in stage_cmd:
             stage_cmd.append("-s")
         ret = subprocess.run(stage_cmd)
         if ret.returncode != 0:
@@ -188,7 +188,7 @@ def main():
                 print("🏠 Local mode: skipping Git commit and push.")
                 sys.exit(ret.returncode)
 
-            print(f"💾 Committing and pushing failure state to GitHub...")
+            print("💾 Committing and pushing failure state to GitHub...")
             subprocess.run(["git", "add", "."], check=False)
             status = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, text=True)
             if status.stdout.strip():
@@ -217,9 +217,9 @@ def main():
                     print("⚠️ Warning: git push timed out after 60s, continuing...")
             sys.exit(ret.returncode)
             
-        print(f"==================================================")
+        print("==================================================")
         print(f"✅ Stage {stage} completed successfully.")
-        print(f"==================================================")
+        print("==================================================")
         
         # Auto-sync metrics and plots to Git immediately after each successful stage to prevent progress loss
         print(f"🔄 Syncing metrics and plots for completed stage '{stage}'...")
@@ -230,7 +230,7 @@ def main():
             print(f"⚠️ Warning: Auto-syncing metrics after stage '{stage}' failed with code {sync_ret.returncode}")
             
     clear_status()
-    print(f"\n✅ Iterative reproduction completed successfully.")
+    print("\n✅ Iterative reproduction completed successfully.")
 
 if __name__ == "__main__":
     main()

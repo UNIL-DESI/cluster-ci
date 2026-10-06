@@ -605,6 +605,58 @@ def _get_git_env():
     return env
 
 
+def format_auto_sync_commit_message(staged_files: List[str], metric_paths: Optional[List[str]] = None) -> str:
+    """Construit un message de commit fidèle aux fichiers réellement modifiés/stagés.
+    
+    Évite les messages trompeurs mentionnant 'dvc.lock' quand seuls des artefacts ou métriques
+    sont modifiés (résolution Issue #106).
+    """
+    if not staged_files:
+        return "chore(ci): auto-sync changes [skip ci]"
+
+    norm_staged = [Path(f).as_posix().lstrip("./") for f in staged_files]
+    metric_paths_norm = [Path(f).as_posix().lstrip("./") for f in (metric_paths or [])]
+
+    has_lock = "dvc.lock" in norm_staged
+
+    has_metrics = False
+    has_artifacts = False
+    has_other = False
+
+    for f in norm_staged:
+        if f == "dvc.lock":
+            continue
+        if f in metric_paths_norm or f.endswith(("metrics.json", "metric.json", "scores.json", "metrics.csv")):
+            has_metrics = True
+        elif f.startswith("artifacts/") or "artifact" in f.lower() or f.endswith((".pt", ".bin", ".onnx", ".parquet", ".pkl")):
+            has_artifacts = True
+        elif f.endswith((".json", ".csv", ".tsv", ".png", ".jpg", ".svg", ".html")):
+            has_metrics = True
+        else:
+            has_other = True
+
+    parts: List[str] = []
+    if has_metrics:
+        parts.append("metrics")
+    if has_artifacts:
+        parts.append("artifacts")
+    if has_other and not has_metrics and not has_artifacts:
+        parts.append("changes")
+    if has_lock:
+        parts.append("dvc.lock")
+
+    if not parts:
+        parts.append("changes")
+
+    if len(parts) == 1:
+        desc = parts[0]
+    elif len(parts) == 2:
+        desc = f"{parts[0]} and {parts[1]}"
+    else:
+        desc = f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+    return f"chore(ci): auto-sync {desc} [skip ci]"
+
 def _get_current_branch(cwd=None):
     try:
         res = subprocess.run(
@@ -1098,12 +1150,7 @@ def push_with_retries(
         return True
 
     if not commit_msg:
-        if "dvc.lock" in target_files and len(target_files) > 1:
-            commit_msg = "chore(ci): auto-sync metrics and dvc.lock [skip ci]"
-        elif "dvc.lock" in target_files:
-            commit_msg = "chore(ci): auto-sync dvc.lock [skip ci]"
-        else:
-            commit_msg = "chore(ci): auto-sync metrics [skip ci]"
+        commit_msg = format_auto_sync_commit_message(target_files)
 
     for attempt in range(1, max_retries + 1):
         log_info(f"Push attempt {attempt}/{max_retries} to origin/{current_branch} (files: {target_files})...")
@@ -1493,29 +1540,24 @@ def sync_metrics():
             has_changes_to_commit = True
 
     if has_changes_to_commit:
-        # Detect what was actually staged using git diff --cached --quiet
-        dvc_lock_staged = False
-        if os.path.exists('dvc.lock'):
-            res_diff_lock = subprocess.run(['git', 'diff', '--cached', '--quiet', 'dvc.lock'])
-            if res_diff_lock.returncode != 0:
-                dvc_lock_staged = True
-
-        metrics_staged = False
-        for path in paths:
-            if os.path.isfile(path):
-                res_diff_metric = subprocess.run(['git', 'diff', '--cached', '--quiet', path])
-                if res_diff_metric.returncode != 0:
-                    metrics_staged = True
-                    break
-
-        if dvc_lock_staged and metrics_staged:
-            commit_msg = 'chore(ci): auto-sync metrics and dvc.lock [skip ci]'
-        elif dvc_lock_staged:
-            commit_msg = 'chore(ci): auto-sync dvc.lock [skip ci]'
-        elif metrics_staged:
-            commit_msg = 'chore(ci): auto-sync metrics [skip ci]'
+        env = _get_git_env()
+        staged_files: List[str] = []
+        staged_res = subprocess.run(['git', 'diff', '--cached', '--name-only'], capture_output=True, text=True, env=env)
+        if isinstance(staged_res.stdout, str) and staged_res.stdout.strip():
+            staged_files = [f.strip() for f in staged_res.stdout.splitlines() if f.strip()]
         else:
-            commit_msg = 'chore(ci): auto-sync changes [skip ci]'
+            # Fallback for mocked environments in tests
+            if os.path.exists('dvc.lock'):
+                res_diff_lock = subprocess.run(['git', 'diff', '--cached', '--quiet', 'dvc.lock'], env=env)
+                if res_diff_lock.returncode != 0:
+                    staged_files.append('dvc.lock')
+            for path in paths:
+                if os.path.isfile(path):
+                    res_diff_metric = subprocess.run(['git', 'diff', '--cached', '--quiet', path], env=env)
+                    if res_diff_metric.returncode != 0:
+                        staged_files.append(path)
+
+        commit_msg = format_auto_sync_commit_message(staged_files, metric_paths=paths)
 
         log_info(f"Committing changes with message: {commit_msg}")
         subprocess.run(['git', 'config', 'user.name', 'cluster-ci-bot'], check=True)
