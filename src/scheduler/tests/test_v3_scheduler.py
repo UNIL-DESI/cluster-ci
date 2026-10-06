@@ -49,7 +49,9 @@ def client(monkeypatch):
             raise subprocess.CalledProcessError(128, cmd)
         return orig_run(cmd, *args, **kwargs)
     monkeypatch.setattr(subprocess, "run", mock_run)
+    monkeypatch.setattr(headnode_service, "CLUSTER_TOKEN", "scheduler-test-token")
     with headnode_service.app.test_client() as c:
+        c.environ_base["HTTP_AUTHORIZATION"] = "Bearer scheduler-test-token"
         yield c
 
 

@@ -20,6 +20,15 @@ trusted job code, administrator access, custom Docker network overrides, or
 other lab members who possess the shared token. Use the existing trusted network
 or HTTPS for token transport.
 
+Hash-based peer downloads (`/fetch_cas/<hash>`) search public caches only, even
+when the caller supplies a token. Local consumers explicitly request `local=1`
+and supply `Authorization: Bearer <CLUSTER_TOKEN>` to include protected caches.
+A hash is an integrity check, not an access credential. The runner client sends
+the token only in local mode and does not follow download redirects.
+Parallel `next_node` and `runner_heartbeat` control APIs also require the token;
+they reject requests when the server token is unconfigured. Dashboard metadata
+and console logs retain their existing access rules.
+
 ## Cleanup
 
 Both modes use the existing `repositories/registry.json` and oldest-idle-first

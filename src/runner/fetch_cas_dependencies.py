@@ -234,7 +234,16 @@ def download_single_object(
         for url in candidate_urls:
             start_t = time.monotonic()
             try:
-                resp = http.get(url, stream=True, timeout=timeout)
+                request_options = {"stream": True, "timeout": timeout, "allow_redirects": False}
+                if os.environ.get("IS_LOCAL") == "1":
+                    token = os.environ.get("CLUSTER_TOKEN")
+                    if not token:
+                        return DownloadResult(False, "missing_cluster_token", None)
+                    # Explicitly opt into private CAS lookup; ordinary jobs must
+                    # never consume a private cache just because a hash matches.
+                    url += ("&" if "?" in url else "?") + "local=1"
+                    request_options["headers"] = {"Authorization": f"Bearer {token}"}
+                resp = http.get(url, **request_options)
                 if resp.status_code != 200:
                     continue
 

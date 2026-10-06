@@ -199,6 +199,10 @@ def local_worker_get(repo, endpoint, **params):
 
 @app.before_request
 def require_token():
+    # Runner control can return secrets and mutate job state. Unlike public
+    # dashboard metadata, it must also fail closed if no token is configured.
+    if request.endpoint in {'api_next_node', 'api_runner_heartbeat'} and not local_token_valid():
+        return jsonify({"error": "Unauthorized"}), 401
     # Only protect API endpoints that workers or users use to modify state
     protected_endpoints = ['register_worker', 'submit_job', 'submit_maintenance_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
     local_transfers = {'download_code', 'sync_results', 'get_job_results', 'create_local_transfer',

@@ -37,9 +37,11 @@ def isolated_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     headnode_service.app.config['TESTING'] = True
+    monkeypatch.setattr(headnode_service, "CLUSTER_TOKEN", "scheduler-test-token")
     with headnode_service.app.test_client() as c:
+        c.environ_base["HTTP_AUTHORIZATION"] = "Bearer scheduler-test-token"
         yield c
 
 

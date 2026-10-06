@@ -1356,6 +1356,8 @@ def workspace_path(repo, local=False):
 def require_local_file_token():
     local = request.args.get('local') == '1'
     protected = request.endpoint == 'local_viewer_proxy'
+    if request.endpoint == 'fetch_cas_object':
+        protected = local
     if request.endpoint in {'worker_dvc_get', 'worker_dvc_list', 'start_dvc_viewer'}:
         protected = protected or local
     if request.endpoint == 'fetch_artifact':
@@ -1583,10 +1585,11 @@ def fetch_artifact(file_path):
     logger.info(f"Worker received request for artifact: {file_path}")
     return send_from_directory(REPOS_DIR, file_path)
 
-def find_cas_file_in_repos(md5_hash):
+def find_cas_file_in_repos(md5_hash, include_local=False):
     """
     Locates a CAS object by MD5 hash within any DVC repository cache under REPOS_DIR.
-    Guarantees that the resolved path is strictly confined within REPOS_DIR.
+    Public lookup excludes protected storage, including aliases into it.
+    Private lookup is explicitly selected by an authenticated local caller.
     """
     clean_md5 = md5_hash.strip().lower()
     prefix = clean_md5[:2]
@@ -1600,6 +1603,12 @@ def find_cas_file_in_repos(md5_hash):
             real_path = os.path.realpath(target_path)
             try:
                 if os.path.commonpath([real_repos_dir, real_path]) == real_repos_dir:
+                    relative = os.path.relpath(real_path, real_repos_dir)
+                    protected = relative.split(os.sep)[0] in {
+                        '_local', '_local_uploads', '_local_results', '_local_transfers'
+                    }
+                    if protected and not include_local:
+                        return None
                     return real_path
             except ValueError:
                 return None
@@ -1660,7 +1669,9 @@ def fetch_cas_object(md5):
     if ".." in clean_md5 or "/" in clean_md5 or "\\" in clean_md5:
         return jsonify({"error": "Path traversal characters forbidden"}), 400
 
-    cas_file = find_cas_file_in_repos(clean_md5)
+    # Possessing the shared token does not implicitly turn an ordinary job's
+    # cache request into a private one. The consuming job must select local mode.
+    cas_file = find_cas_file_in_repos(clean_md5, include_local=request.args.get('local') == '1')
     if not cas_file:
         return jsonify({"error": f"CAS object '{clean_md5}' not found"}), 404
 
