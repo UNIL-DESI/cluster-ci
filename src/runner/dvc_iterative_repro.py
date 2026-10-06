@@ -178,7 +178,7 @@ def main():
         
         write_status(stage)
         stage_cmd = ["dvc", "repro", stage] + flags
-        if "-s" not in stage_cmd and "--single-item" not in stage_cmd:
+        if stage != "dvc-code-analysis" and "-s" not in stage_cmd and "--single-item" not in stage_cmd:
             stage_cmd.append("-s")
         ret = subprocess.run(stage_cmd)
         if ret.returncode != 0:

@@ -63,15 +63,25 @@ class TestChantier15AutoSyncCommitMessage(unittest.TestCase):
 
 
 class TestChantier15IterativeRepro(unittest.TestCase):
-    def test_dvc_code_analysis_includes_dash_s(self):
-        """Test que dvc-code-analysis passe bien avec -s (résolution issue #106)."""
+    def test_regular_stage_includes_dash_s(self):
+        """Test qu'un stage régulier (ex: train) reçoit bien -s automatiquement."""
+        with patch.dict(os.environ, {"IS_LOCAL": "1"}, clear=True), \
+                patch.object(runner, "get_dvc_dag", return_value=["train"]), \
+                patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            runner.main()
+
+        commands = [call[0][0] for call in run.call_args_list]
+        self.assertTrue(any(cmd[:3] == ["dvc", "repro", "train"] and "-s" in cmd for cmd in commands))
+
+    def test_dvc_code_analysis_preserves_exclusion_from_dash_s(self):
+        """Test que dvc-code-analysis n'a pas -s forcé (exclusion intentionnelle du commit fe381b43)."""
         with patch.dict(os.environ, {"IS_LOCAL": "1"}, clear=True), \
                 patch.object(runner, "get_dvc_dag", return_value=["dvc-code-analysis"]), \
                 patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
             runner.main()
 
         commands = [call[0][0] for call in run.call_args_list]
-        self.assertTrue(any(cmd[:3] == ["dvc", "repro", "dvc-code-analysis"] and "-s" in cmd for cmd in commands))
+        self.assertTrue(any(cmd[:3] == ["dvc", "repro", "dvc-code-analysis"] and "-s" not in cmd for cmd in commands))
 
 
 if __name__ == "__main__":
