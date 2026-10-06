@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.runner.dvc_realign import (  # noqa: E402
     commit_realigned_lock,
+    compute_file_md5_and_size,
     is_code_dependency,
     realign_dvc_lock,
 )
@@ -95,7 +96,15 @@ class TestCodeDependencyClassifier:
         custom_exts = {".custom"}
         custom_paths = ("custom_dir/",)
         assert is_code_dependency("foo.custom", code_extensions=custom_exts) is True
-        assert is_code_dependency("custom_dir/anything.txt", code_paths=custom_paths) is True
+        assert is_code_dependency("custom_dir/anything.sh", code_paths=custom_paths) is True
+
+    def test_non_code_files_under_src_excluded(self):
+        assert is_code_dependency("src/config.yaml") is False
+        assert is_code_dependency("src/config.yml") is False
+        assert is_code_dependency("src/vocab.txt") is False
+        assert is_code_dependency("scripts/data.json") is False
+        assert is_code_dependency("src/model.py") is True
+
 
 
 class TestDVCLockRealignment:
@@ -241,6 +250,73 @@ class TestDVCLockRealignment:
         res_log = subprocess.run(["git", "log", "-1", "--format=%s"], cwd=repo_path, capture_output=True, text=True, check=True)
         assert "chore(ci): realign dvc.lock for code-only changes in stage_prep [skip ci]" in res_log.stdout
 
+    def test_directory_dependency_raises_not_implemented(self, temp_git_dvc_repo):
+        repo_path = temp_git_dvc_repo
+        src_dir = repo_path / "src"
+        assert src_dir.is_dir()
+
+        with pytest.raises(NotImplementedError, match="Directory dependency .* is not supported"):
+            compute_file_md5_and_size(src_dir)
+
+        # Inject a directory dependency into dvc.lock
+        lock_file = repo_path / "dvc.lock"
+        yaml = YAML()
+        with open(lock_file, "r", encoding="utf-8") as f:
+            lock_data = yaml.load(f)
+
+        lock_data["stages"]["stage_prep"]["deps"].append({
+            "path": "src/",
+            "md5": "dummy.dir",
+            "size": 0,
+        })
+        with open(lock_file, "w", encoding="utf-8") as f:
+            yaml.dump(lock_data, f)
+
+        with pytest.raises(NotImplementedError, match="Directory dependency 'src/' is not supported"):
+            realign_dvc_lock(repo_path, target_stages=["stage_prep"])
+
+    def test_crlf_binary_md5_matches_dvc(self, temp_git_dvc_repo):
+        import hashlib
+        repo_path = temp_git_dvc_repo
+
+        crlf_file = repo_path / "src" / "crlf_script.py"
+        raw_bytes = (
+            b"def foo():\r\n"
+            b"    with open('data/crlf_out.txt', 'w') as f:\r\n"
+            b"        f.write('crlf_out_v1')\r\n"
+            b"foo()\r\n"
+        )
+        crlf_file.write_bytes(raw_bytes)
+
+        expected_md5 = hashlib.md5(raw_bytes).hexdigest()
+        computed_md5, size = compute_file_md5_and_size(crlf_file)
+
+        assert computed_md5 == expected_md5
+        assert size == len(raw_bytes)
+
+        # Register stage with CRLF file and run dvc repro
+        subprocess.run([
+            "dvc", "stage", "add", "-q", "-n", "stage_crlf",
+            "-d", "src/crlf_script.py",
+            "-o", "data/crlf_out.txt",
+            "python src/crlf_script.py"
+        ], cwd=repo_path, check=True)
+
+        subprocess.run(["dvc", "repro", "-q", "stage_crlf"], cwd=repo_path, check=True)
+
+        # Read dvc.lock and assert DVC 3.x md5 equals raw binary md5 without conversion
+        yaml = YAML()
+        with open(repo_path / "dvc.lock", "r", encoding="utf-8") as f:
+            lock_data = yaml.load(f)
+
+        dep_entry = next(
+            d for d in lock_data["stages"]["stage_crlf"]["deps"]
+            if d["path"] == "src/crlf_script.py"
+        )
+        assert dep_entry["md5"] == expected_md5
+        assert dep_entry["md5"] == computed_md5
+
+
 
 class TestCLIIntegration:
     """Tests verifying CLI argument parsing and propagation for skip-code mode."""
@@ -282,4 +358,45 @@ class TestCLIIntegration:
 
         args = parser.parse_args(["--skip-code"])
         assert args.skip_code_invalidation is True
+
+    def test_skip_code_propagation_in_headnode_and_env(self, tmp_path, monkeypatch):
+        """Verify that skip_code_invalidation flag is parsed by headnode_service and propagates to env_vars."""
+        import json
+        import uuid
+        from src.scheduler import headnode_service, persistence
+
+        db_file = str(tmp_path / f"test_cluster_{uuid.uuid4().hex[:8]}.db")
+        monkeypatch.setenv("CLUSTER_DB_PATH", db_file)
+        monkeypatch.setattr(headnode_service, "REPOS_DIR", str(tmp_path / "repos"))
+        persistence.DB_PATH = db_file
+        persistence.init_db()
+
+        headnode_service.app.config["TESTING"] = True
+        monkeypatch.setattr(headnode_service, "CLUSTER_TOKEN", "test-token")
+
+        with headnode_service.app.test_client() as c:
+            c.environ_base["HTTP_AUTHORIZATION"] = "Bearer test-token"
+            resp = c.post("/submit_job", json={
+                "repo": "owner/repo",
+                "branch": "main",
+                "skip_code_invalidation": True,
+            })
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert "job_id" in data
+            with persistence.get_db_conn() as conn:
+                row = conn.execute("SELECT env_vars FROM jobs WHERE job_id = ?", (data["job_id"],)).fetchone()
+            assert row is not None
+            env_vars = json.loads(row[0]) if row[0] else {}
+            assert env_vars.get("SKIP_CODE_INVALIDATION") == "1"
+
+        secrets_file = tmp_path / "job.secrets"
+        secrets_file.write_text("SKIP_CODE_INVALIDATION=1\nOTHER_VAR=abc\n", encoding="utf-8")
+        lines = dict(
+            line.strip().split("=", 1)
+            for line in secrets_file.read_text(encoding="utf-8").splitlines()
+            if "=" in line
+        )
+        assert lines.get("SKIP_CODE_INVALIDATION") == "1"
+
 

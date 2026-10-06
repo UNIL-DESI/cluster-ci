@@ -72,6 +72,9 @@ EXCLUDED_DATA_EXTENSIONS: Set[str] = {
     ".arrow",
     ".jsonl",
     ".json",
+    ".yaml",
+    ".yml",
+    ".txt",
     ".pt",
     ".pth",
     ".bin",
@@ -168,6 +171,11 @@ def compute_file_md5_and_size(file_path: Union[str, Path]) -> Tuple[str, int]:
         FileNotFoundError: If file_path does not exist or is not a file.
     """
     path = Path(file_path)
+    if path.is_dir():
+        raise NotImplementedError(
+            f"Directory dependency '{file_path}' is not supported for code realignment; "
+            f"only file-level code dependencies are supported."
+        )
     if not path.is_file():
         raise FileNotFoundError(f"Dependency file '{file_path}' does not exist on disk.")
 
@@ -309,6 +317,13 @@ def realign_dvc_lock(
 
             dep_rel_path = dep["path"]
             abs_dep_path = repo_path / dep_rel_path
+
+            if abs_dep_path.is_dir() or dep_rel_path.endswith("/"):
+                raise NotImplementedError(
+                    f"Directory dependency '{dep_rel_path}' is not supported for code realignment; "
+                    f"only file-level code dependencies are supported."
+                )
+
             is_code = is_code_dependency(dep_rel_path, custom_exts, custom_paths)
 
             if is_code:
