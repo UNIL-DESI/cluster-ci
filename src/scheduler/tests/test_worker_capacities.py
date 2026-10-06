@@ -385,6 +385,18 @@ class TestWorkerCapacities(unittest.TestCase):
 
         token = "test-cluster-token"
         with patch.object(worker_agent, "CLUSTER_TOKEN", token):
+            # Ordinary requests must never discover private cache objects,
+            # even when the requester possesses a valid cluster token.
+            url = "/fetch_cas/778899aabbccddeeff00112233445566"
+            self.assertEqual(self.app.get(url).status_code, 404)
+            self.assertEqual(self.app.get(url, headers={
+                "Authorization": f"Bearer {token}"
+            }).status_code, 404)
+            self.assertEqual(self.app.get(url + "?local=1").status_code, 401)
+            self.assertEqual(self.app.get(url + "?local=1", headers={
+                "Authorization": "Bearer wrong-token"
+            }).status_code, 401)
+
             resp = self.app.get(
                 "/fetch_cas/778899aabbccddeeff00112233445566?local=1",
                 headers={"Authorization": f"Bearer {token}"},
