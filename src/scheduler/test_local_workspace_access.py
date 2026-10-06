@@ -206,7 +206,7 @@ def test_public_local_status_and_logs_remain_available(clients):
     with patch.object(headnode, 'get_db_conn') as conn:
         job = {'job_id': 'example', 'is_local': 1, 'status': 'running', 'started_at': '2026-01-01', 'worker_service_url': 'http://worker', 'service_url': 'http://worker'}
         fetch = conn.return_value.__enter__.return_value.cursor.return_value.fetchone
-        fetch.side_effect = [job, (0,)]
+        fetch.side_effect = [job, {'cnt': 0}]
         response = browser.get('/job_status/example')
         assert response.status_code == 200
         assert response.json['status'] == 'running'
