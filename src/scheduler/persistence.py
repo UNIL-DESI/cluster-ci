@@ -219,6 +219,10 @@ def init_db():
             exit_code INTEGER,
             error_message TEXT,
             missing_deps_retried INTEGER DEFAULT 0,
+            attempt INTEGER DEFAULT 0,
+            retry_count INTEGER DEFAULT 0,
+            failure_reason TEXT,
+            cas_transfers TEXT DEFAULT '[]',
             PRIMARY KEY (job_id, node_name),
             FOREIGN KEY (job_id) REFERENCES jobs (job_id)
         )
@@ -241,10 +245,17 @@ def init_db():
             pass
 
     # --- v3 Migrations: Job Nodes additions ---
-    try:
-        cursor.execute("ALTER TABLE job_nodes ADD COLUMN gpu_ids TEXT DEFAULT '[]'")
-    except sqlite3.OperationalError:
-        pass
+    for col_def in [
+        "gpu_ids TEXT DEFAULT '[]'",
+        "attempt INTEGER DEFAULT 0",
+        "retry_count INTEGER DEFAULT 0",
+        "failure_reason TEXT",
+        "cas_transfers TEXT DEFAULT '[]'",
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE job_nodes ADD COLUMN {col_def}")
+        except sqlite3.OperationalError:
+            pass
 
     # --- v3 Migrations: Workers table additions ---
     for col_def in [
@@ -419,25 +430,30 @@ def update_dag_ready_states(job_id=None):
         if updated:
             conn.commit()
 
-def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None, error_message=None):
+def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None, error_message=None, failure_reason=None, cas_transfers=None):
     """
     Enregistre le statut d'un nœud et propage l'avancement dans le DAG.
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
+        cas_json = json.dumps(cas_transfers) if cas_transfers is not None else None
         if status in ("done", "failed"):
             cursor.execute('''
                 UPDATE job_nodes
                 SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
+                    failure_reason = COALESCE(?, failure_reason),
+                    cas_transfers = COALESCE(?, cas_transfers),
                     finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]'
                 WHERE job_id = ? AND node_name = ?
-            ''', (status, duration_s, exit_code, error_message, job_id, node_name))
+            ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, job_id, node_name))
         else:
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = ?, duration_s = ?, exit_code = ?, error_message = ?
+                SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
+                    failure_reason = COALESCE(?, failure_reason),
+                    cas_transfers = COALESCE(?, cas_transfers)
                 WHERE job_id = ? AND node_name = ?
-            ''', (status, duration_s, exit_code, error_message, job_id, node_name))
+            ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, job_id, node_name))
         conn.commit()
 
     update_dag_ready_states(job_id)

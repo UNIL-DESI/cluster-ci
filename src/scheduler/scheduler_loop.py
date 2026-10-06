@@ -878,8 +878,11 @@ def handle_next_node(req):
 
     # 1. Enregistrement résultat nœud précédent
     if node_name:
+        failure_reason = req.get("failure_reason")
+        cas_transfers = req.get("cas_transfers")
+
         if status == "done":
-            mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0)
+            mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0, cas_transfers=cas_transfers)
             outputs_to_record = req.get("outputs") or req.get("out_paths")
             if outputs_to_record:
                 try:
@@ -892,8 +895,51 @@ def handle_next_node(req):
                 error_message = f"OOMKilled: Stage '{node_name}' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)"
             elif exit_code == 137 and "OOMKilled" not in (error_message or ""):
                 error_message = f"OOMKilled: {error_message} (Exit code 137)"
-            mark_node_status(job_id, node_name, "failed", duration_s=duration_s,
-                             exit_code=exit_code or 1, error_message=error_message)
+
+            is_host_memory_pressure = (
+                failure_reason == "HostMemoryPressureExceeded"
+                or "HostMemoryPressureExceeded" in str(error_message)
+            )
+
+            max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
+
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT retry_count FROM job_nodes WHERE job_id = ? AND node_name = ?', (job_id, node_name))
+                row = cursor.fetchone()
+                current_retries = row[0] if row and row[0] is not None else 0
+
+            if not is_host_memory_pressure and current_retries < max_retries:
+                new_retry_count = current_retries + 1
+                logger.info(
+                    "🔄 Retrying node '%s' for job %s (retry %d/%d)",
+                    node_name, job_id, new_retry_count, max_retries
+                )
+                with get_db_conn() as conn:
+                    cursor = conn.cursor()
+                    cas_json = json.dumps(cas_transfers) if cas_transfers is not None else "[]"
+                    cursor.execute('''
+                        UPDATE job_nodes
+                        SET status = 'ready', retry_count = ?, worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
+                            duration_s = ?, exit_code = ?, error_message = ?, failure_reason = ?, cas_transfers = ?
+                        WHERE job_id = ? AND node_name = ?
+                    ''', (
+                        new_retry_count, duration_s, exit_code, error_message,
+                        failure_reason or f"retry_{new_retry_count}", cas_json,
+                        job_id, node_name
+                    ))
+                    conn.commit()
+                update_dag_ready_states(job_id)
+            else:
+                final_reason = "HostMemoryPressureExceeded" if is_host_memory_pressure else (failure_reason or "retries_exhausted")
+                mark_node_status(
+                    job_id, node_name, "failed",
+                    duration_s=duration_s, exit_code=exit_code or 1,
+                    error_message=error_message,
+                    failure_reason=final_reason,
+                    cas_transfers=cas_transfers
+                )
+
             if error_message:
                 try:
                     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1100,10 +1146,14 @@ def handle_next_node(req):
                 continue
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, started_at = CURRENT_TIMESTAMP
+                SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, started_at = CURRENT_TIMESTAMP,
+                    attempt = attempt + 1
                 WHERE job_id = ? AND node_name = ? AND status = 'ready'
             ''', (worker_id, runner_id, json.dumps(cand_gpu_ids) if cand_gpu_ids is not None else '[]', job_id, candidate_node["node_name"]))
             if cursor.rowcount == 1:
+                cursor.execute('SELECT attempt FROM job_nodes WHERE job_id = ? AND node_name = ?', (job_id, candidate_node["node_name"]))
+                att_row = cursor.fetchone()
+                assigned_attempt = att_row[0] if att_row else 1
                 cursor.execute('''
                     UPDATE jobs
                     SET status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
@@ -1183,6 +1233,14 @@ def handle_next_node(req):
     if gpu_ids is not None:
         next_res["gpu_ids"] = gpu_ids
 
+    job_env_vars = {}
+    try:
+        raw_env = job.get("env_vars")
+        if raw_env:
+            job_env_vars = json.loads(raw_env) if isinstance(raw_env, str) else dict(raw_env)
+    except Exception:
+        job_env_vars = {}
+
     return {
         "action": action,
         "node": next_node["node_name"],
@@ -1193,6 +1251,8 @@ def handle_next_node(req):
         "dep_sources": dep_sources_map,
         "sources": dep_sources_map,
         "out_paths": out_paths_list,
+        "attempt": assigned_attempt,
+        "env_vars": job_env_vars,
     }
 
 def check_resource_impossibility(resources, workers, item_name="job", is_classic=False):

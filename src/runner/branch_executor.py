@@ -452,6 +452,8 @@ class BranchExecutor:
         duration_s: float = 0.0,
         exit_code: Optional[int] = None,
         error_message: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        cas_transfers: Optional[List[Dict[str, Any]]] = None,
         missing_deps: Optional[List[str]] = None,
         outputs: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -465,6 +467,8 @@ class BranchExecutor:
             "duration_s": duration_s,
             "exit_code": exit_code,
             "error_message": error_message,
+            "failure_reason": failure_reason,
+            "cas_transfers": cas_transfers,
             "missing_deps": missing_deps,
             "missing_paths": missing_deps,
             "outputs": outputs,
@@ -946,6 +950,9 @@ class BranchExecutor:
         self,
         node: str,
         gpu_ids_str: str = "",
+        attempt: int = 1,
+        env_vars: Optional[Dict[str, Any]] = None,
+        resources: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, str]:
         """Exécute dvc repro -s <node> dans le conteneur avec logs préfixés."""
         if not self.current_container:
@@ -967,12 +974,67 @@ class BranchExecutor:
         elif gpu_ids_str == "":
             env["CUDA_VISIBLE_DEVICES"] = ""
 
-        return self.docker.exec_in_container(
-            container_name=self.current_container,
-            command=cmd,
-            env=env,
-            stream_prefix=stream_prefix,
-        )
+        # Contrat CLUSTER_CI_NODE_ATTEMPT et propagation des variables d'environnement
+        env["CLUSTER_CI_NODE_ATTEMPT"] = str(attempt)
+        if env_vars:
+            for k, v in env_vars.items():
+                env[str(k)] = str(v)
+
+        # Si un fichier de secrets existe sur l'hôte, charger ses variables
+        secrets_file = os.environ.get("CLUSTER_CI_SECRETS_FILE")
+        if secrets_file and os.path.isfile(secrets_file):
+            try:
+                with open(secrets_file, "r", encoding="utf-8") as sf:
+                    for line in sf:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            sk, sv = line.split("=", 1)
+                            env.setdefault(sk.strip(), sv.strip())
+            except Exception as e:
+                logger.debug("Erreur lecture CLUSTER_CI_SECRETS_FILE: %s", e)
+
+        # Démarrage du watchdog mémoire hôte si supporté (Grace-Blackwell GB10 Guard)
+        watchdog_proc = None
+        watchdog_script = Path(__file__).parent / "gpu_watchdog.sh"
+        vram_limit_gb = (resources or {}).get("vram_gb") or 0.0
+        marker_file = "host_guard_killed.marker"
+
+        if os.path.exists(marker_file):
+            try:
+                os.remove(marker_file)
+            except Exception:
+                pass
+
+        if watchdog_script.exists() and sys.platform != "win32":
+            try:
+                w_env = dict(os.environ)
+                w_env["HOST_GUARD_MARKER_FILE"] = marker_file
+                watchdog_proc = subprocess.Popen(
+                    ["bash", str(watchdog_script), self.current_container, str(int(vram_limit_gb))],
+                    env=w_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                logger.debug("Could not start gpu_watchdog.sh: %s", e)
+
+        try:
+            return self.docker.exec_in_container(
+                container_name=self.current_container,
+                command=cmd,
+                env=env,
+                stream_prefix=stream_prefix,
+            )
+        finally:
+            if watchdog_proc and watchdog_proc.poll() is None:
+                try:
+                    watchdog_proc.terminate()
+                    watchdog_proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        watchdog_proc.kill()
+                    except Exception:
+                        pass
 
     # -----------------------------------------------------------------
     # Boucle Principale de l'Exécuteur
@@ -988,6 +1050,8 @@ class BranchExecutor:
         duration_for_req: float = 0.0
         exit_code_for_req: Optional[int] = None
         error_message_for_req: Optional[str] = None
+        failure_reason_for_req: Optional[str] = None
+        cas_transfers_for_req: Optional[List[Dict[str, Any]]] = None
         missing_deps_for_req: Optional[List[str]] = None
         outputs_for_req: Optional[List[Dict[str, Any]]] = None
 
@@ -999,10 +1063,14 @@ class BranchExecutor:
                     duration_s=duration_for_req,
                     exit_code=exit_code_for_req,
                     error_message=error_message_for_req,
+                    failure_reason=failure_reason_for_req,
+                    cas_transfers=cas_transfers_for_req,
                     missing_deps=missing_deps_for_req,
                     outputs=outputs_for_req,
                 )
                 outputs_for_req = None
+                failure_reason_for_req = None
+                cas_transfers_for_req = None
 
                 action = resp.get("action")
                 target_node = resp.get("node")
@@ -1120,9 +1188,15 @@ class BranchExecutor:
                 gpu_ids_str = (
                     ",".join(map(str, gpu_ids)) if gpu_ids is not None else ""
                 )
+                attempt = resp.get("attempt") or 1
+                node_env_vars = resp.get("env_vars") or {}
+
                 node_exit_code, _ = self.execute_node_in_container(
                     node=target_node,
                     gpu_ids_str=gpu_ids_str,
+                    attempt=attempt,
+                    env_vars=node_env_vars,
+                    resources=resources,
                 )
                 node_duration = time.time() - node_start_time
 
@@ -1140,6 +1214,9 @@ class BranchExecutor:
                     duration_for_req = node_duration
                     exit_code_for_req = 0
                     error_message_for_req = None
+                    failure_reason_for_req = None
+                    cas_transfers_for_req = getattr(self, "last_cas_transfers", None)
+                    self.last_cas_transfers = []
                     missing_deps_for_req = None
                     outputs_for_req = []
                     dvc_lock_path = os.path.join(self.repo_dir, "dvc.lock")
@@ -1151,23 +1228,49 @@ class BranchExecutor:
                             logger.debug("Extraction outputs dvc.lock impossible: %s", e)
                 else:
                     logger.error("Node %s failed (code %d)", target_node, node_exit_code)
-                    oom_killed = self.docker.is_oom_killed(self.current_container)
-                    if oom_killed:
-                        node_ram = (resources or {}).get("ram_gb", self.ram_limit)
-                        err_msg = (
-                            f"node {target_node} killed due to out-of-memory (ram_gb={node_ram} GB ceiling); "
-                            f"remedy: increase meta.cluster.ram_gb of stage {target_node} in dvc.yaml"
-                        )
+                    failure_reason_for_req = None
+                    marker_file = "host_guard_killed.marker"
+                    marker_in_repo = os.path.join(self.repo_dir, "host_guard_killed.marker")
+                    found_marker = None
+                    if os.path.exists(marker_file):
+                        found_marker = marker_file
+                    elif os.path.exists(marker_in_repo):
+                        found_marker = marker_in_repo
+
+                    if node_exit_code == 137 and found_marker:
+                        try:
+                            with open(found_marker, "r", encoding="utf-8") as mf:
+                                mdata = json.load(mf)
+                            err_msg = f"HostMemoryPressureExceeded: {mdata.get('reason')} (used: {mdata.get('used_gb')}GB, available: {mdata.get('available_gb')}GB)"
+                        except Exception:
+                            err_msg = "HostMemoryPressureExceeded: Container killed by host memory guard."
+                        try:
+                            os.remove(found_marker)
+                        except Exception:
+                            pass
                         logger.error("❌ %s", err_msg)
                         error_message_for_req = err_msg
+                        failure_reason_for_req = "HostMemoryPressureExceeded"
                     else:
-                        error_message_for_req = (
-                            f"Node {target_node} failed with exit code {node_exit_code}"
-                        )
+                        oom_killed = self.docker.is_oom_killed(self.current_container)
+                        if oom_killed:
+                            node_ram = (resources or {}).get("ram_gb", self.ram_limit)
+                            err_msg = (
+                                f"node {target_node} killed due to out-of-memory (ram_gb={node_ram} GB ceiling); "
+                                f"remedy: increase meta.cluster.ram_gb of stage {target_node} in dvc.yaml"
+                            )
+                            logger.error("❌ %s", err_msg)
+                            error_message_for_req = err_msg
+                        else:
+                            error_message_for_req = (
+                                f"Node {target_node} failed with exit code {node_exit_code}"
+                            )
                     node_for_req = target_node
                     status_for_req = "failed"
                     duration_for_req = node_duration
                     exit_code_for_req = node_exit_code
+                    cas_transfers_for_req = getattr(self, "last_cas_transfers", None)
+                    self.last_cas_transfers = []
                     missing_deps_for_req = None
 
                 self.current_node = None

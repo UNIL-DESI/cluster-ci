@@ -1105,7 +1105,8 @@ def job_status(job_id):
                 job_dict["status"] = agg_status
             cursor.execute('''
                 SELECT node_name, status, worker_id, runner_id, image, priority,
-                       duration_s, exit_code, error_message, stale, stale_reason
+                       duration_s, exit_code, error_message, stale, stale_reason,
+                       attempt, retry_count, failure_reason, cas_transfers
                 FROM job_nodes WHERE job_id = ?
                 ORDER BY priority DESC, node_name ASC
             ''', (job_id,))
@@ -1116,6 +1117,17 @@ def job_status(job_id):
                 nd["name"] = nd["node_name"]
                 nd["machine"] = nd["worker_id"]
                 nd["duration"] = nd["duration_s"]
+                nd["attempt"] = nd.get("attempt") or 0
+                nd["attempts"] = nd.get("attempt") or 0
+                nd["retry_count"] = nd.get("retry_count") or 0
+                raw_cas = nd.get("cas_transfers")
+                if raw_cas and isinstance(raw_cas, str):
+                    try:
+                        nd["cas_transfers"] = json.loads(raw_cas)
+                    except Exception:
+                        nd["cas_transfers"] = []
+                elif not raw_cas:
+                    nd["cas_transfers"] = []
                 nodes_list.append(nd)
             job_dict["nodes"] = nodes_list
             job_dict["nodes_summary"] = [
@@ -1123,7 +1135,11 @@ def job_status(job_id):
                     "name": n["name"],
                     "status": n["status"],
                     "machine": n["machine"],
-                    "duration": n["duration"]
+                    "duration": n["duration"],
+                    "attempt": n.get("attempt", 0),
+                    "attempts": n.get("attempts", 0),
+                    "retry_count": n.get("retry_count", 0),
+                    "failure_reason": n.get("failure_reason"),
                 }
                 for n in nodes_list
             ]

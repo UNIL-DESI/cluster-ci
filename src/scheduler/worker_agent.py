@@ -999,19 +999,26 @@ def execute_job(job):
         logger.info(f"Parallel mode configured: runner_id={runner_id}, job_id={job_id}, headnode={HEADNODE_URL}")
 
     secrets_file = None
+    parsed_vars = {}
     if env_vars:
         try:
-            parsed_vars = json.loads(env_vars) if isinstance(env_vars, str) else env_vars
-            if parsed_vars:
-                # Create a secure temp file for job secrets
-                fd, secrets_file = tempfile.mkstemp(prefix=f"job_secrets_{job_id}_", suffix=".env")
-                with os.fdopen(fd, 'w') as f:
-                    for k, v in parsed_vars.items():
-                        f.write(f"{k}={v}\n")
-                logger.info(f"Injecting {len(parsed_vars)} custom environment variables via {secrets_file}")
-                env["CLUSTER_CI_SECRETS_FILE"] = secrets_file
+            parsed_vars = json.loads(env_vars) if isinstance(env_vars, str) else dict(env_vars)
         except Exception as e:
-            logger.error(f"Failed to write job secrets: {e}")
+            logger.error(f"Failed to parse job env_vars: {e}")
+            parsed_vars = {}
+    if "CLUSTER_CI_NODE_ATTEMPT" not in parsed_vars:
+        parsed_vars["CLUSTER_CI_NODE_ATTEMPT"] = "1"
+
+    try:
+        # Create a secure temp file for job secrets
+        fd, secrets_file = tempfile.mkstemp(prefix=f"job_secrets_{job_id}_", suffix=".env")
+        with os.fdopen(fd, 'w') as f:
+            for k, v in parsed_vars.items():
+                f.write(f"{k}={v}\n")
+        logger.info(f"Injecting {len(parsed_vars)} custom environment variables via {secrets_file}")
+        env["CLUSTER_CI_SECRETS_FILE"] = secrets_file
+    except Exception as e:
+        logger.error(f"Failed to write job secrets: {e}")
 
     log_path = os.path.join(LOGS_DIR, f"{job_id}.log")
     log_file = open(log_path, 'w', encoding='utf-8')
@@ -1179,7 +1186,21 @@ def execute_job(job):
                 logger.error(f"Failed to read commit hash file: {e}")
 
         if exit_code == 137:
-            error_msg = f"❌ [CLUSTER INTERRUPTED] Execution interrupted (Exit code 137). This usually means an OOM (Out of Memory) or a Zombie Job Cleanup.\n"
+            marker_file = "host_guard_killed.marker"
+            if os.path.exists(marker_file):
+                try:
+                    with open(marker_file, 'r', encoding='utf-8') as mf:
+                        m_data = json.load(mf)
+                    error_msg = f"❌ [HOST GUARD KILLED] HostMemoryPressureExceeded: {m_data.get('reason')} (used: {m_data.get('used_gb')}GB, available: {m_data.get('available_gb')}GB)\n"
+                except Exception:
+                    error_msg = "❌ [HOST GUARD KILLED] HostMemoryPressureExceeded: Container killed by host memory guard.\n"
+                try:
+                    os.remove(marker_file)
+                except Exception:
+                    pass
+            else:
+                error_msg = f"❌ [CLUSTER INTERRUPTED] Execution interrupted (Exit code 137). This usually means an OOM (Out of Memory) or a Zombie Job Cleanup.\n"
+
             sys.stderr.write(error_msg)
             sys.stderr.flush()
             log_file.write(error_msg)
@@ -1189,10 +1210,10 @@ def execute_job(job):
                     log_file.write("\n--- SYSTEM DMESG (Kernel OOM Logs) ---\n")
                     log_file.write(res.stdout)
                     log_file.write("--------------------------------------\n")
-            except:
+            except Exception:
                 pass
             log_file.flush()
-            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
+            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, error_message=error_msg)
         elif exit_code == 0:
             update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
         elif exit_code < 0:
