@@ -161,33 +161,34 @@ def check_simulated_failure(
     elif "fail_exit_code" in params and params["fail_exit_code"] is not None:
         fail_exit_code = int(params["fail_exit_code"])
 
-    # 4. Lecture et incrémentation du compteur persistant
-    attempts_dir = os.path.join("artifacts", ".attempts")
-    os.makedirs(attempts_dir, exist_ok=True)
-    slug = full_stage_name.replace("/", "_").replace("@", "_")
-    attempt_file = os.path.join(attempts_dir, f"{slug}.attempt")
+    # 4. Lecture de la tentative courante via CLUSTER_CI_NODE_ATTEMPT (injectée par le scheduler)
+    raw_attempt = None
+    if args and getattr(args, "node_attempt", None) is not None:
+        raw_attempt = args.node_attempt
+    elif "CLUSTER_CI_NODE_ATTEMPT" in os.environ and os.environ["CLUSTER_CI_NODE_ATTEMPT"].strip():
+        raw_attempt = os.environ["CLUSTER_CI_NODE_ATTEMPT"].strip()
 
-    current_attempt = 1
-    if os.path.exists(attempt_file):
-        try:
-            with open(attempt_file, "r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if content:
-                    current_attempt = int(content) + 1
-        except Exception as e:
-            print(f"[simulate_research] Warning: Failed to read {attempt_file}: {e}", file=sys.stderr)
-            current_attempt = 1
+    if raw_attempt is None:
+        raise RuntimeError(
+            f"Stage '{full_stage_name}' ciblé par FAIL_STAGE='{fail_stage}', mais la variable d'environnement "
+            f"'CLUSTER_CI_NODE_ATTEMPT' est absente ou non renseignée.\n"
+            f"Cause : Le scheduler (Lot E / Chantier 12) doit injecter CLUSTER_CI_NODE_ATTEMPT (>= 1) à chaque tentative d'exécution.\n"
+            f"Remède : Pour tester localement, exportez CLUSTER_CI_NODE_ATTEMPT=1 ou passez l'option CLI --node-attempt 1."
+        )
 
     try:
-        with open(attempt_file, "w", encoding="utf-8") as f:
-            f.write(str(current_attempt))
-    except Exception as e:
-        print(f"[simulate_research] Warning: Failed to write {attempt_file}: {e}", file=sys.stderr)
+        current_attempt = int(raw_attempt)
+        if current_attempt < 1:
+            raise ValueError(f"CLUSTER_CI_NODE_ATTEMPT doit être >= 1, reçu {current_attempt}")
+    except (ValueError, TypeError) as e:
+        raise ValueError(
+            f"Valeur invalide pour CLUSTER_CI_NODE_ATTEMPT : {raw_attempt!r} (doit être un entier >= 1) : {e}"
+        ) from e
 
     if current_attempt <= fail_attempts:
         print(
             f"❌ [SIMULATED FAILURE] Stage '{full_stage_name}' failing on attempt "
-            f"{current_attempt}/{fail_attempts} (target: {fail_stage}, exit_code: {fail_exit_code}).",
+            f"{current_attempt}/{fail_attempts} (CLUSTER_CI_NODE_ATTEMPT={current_attempt}, target: {fail_stage}, exit_code: {fail_exit_code}).",
             file=sys.stderr,
         )
         sys.exit(fail_exit_code)
@@ -493,12 +494,13 @@ def run_all_sequentially(toy_duration: Optional[float] = None) -> None:
     print("🚀 [simulate_research] Running monolithic sequential execution (classic mode)...")
 
     class DummyArgs:
-        def __init__(self, item=None, duration=None):
+        def __init__(self, item=None, duration=None, attempt=None):
             self.item = item
             self.toy_duration = duration
             self.fail_stage = None
             self.fail_attempts = None
             self.fail_exit_code = None
+            self.node_attempt = attempt
 
     run_prep(DummyArgs(duration=toy_duration))
     run_branch_a_step1(DummyArgs(item=1, duration=toy_duration))
@@ -545,6 +547,12 @@ def main():
         type=int,
         default=None,
         help="Exit code returned upon simulated failure (overrides FAIL_EXIT_CODE)",
+    )
+    parent_parser.add_argument(
+        "--node-attempt",
+        type=int,
+        default=None,
+        help="Current execution attempt number (overrides CLUSTER_CI_NODE_ATTEMPT)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
