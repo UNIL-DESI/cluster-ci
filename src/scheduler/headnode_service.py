@@ -2148,6 +2148,9 @@ def api_run_files(job_id):
 
     repo = job['repo']
     if job['is_local']:
+        denied = require_local_files()
+        if denied is not None:
+            return denied
         return local_worker_get(repo, '/api/worker/dvc/list', path=request.args.get('path', ''))
     commit_hash = job['commit_hash']
     branch = job['branch'] or 'main'

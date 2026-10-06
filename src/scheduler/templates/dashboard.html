@@ -3826,7 +3826,12 @@
                     container.appendChild(col);
                 });
             } catch (err) {
-                container.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error loading run details: ${err.message}</div></div>`;
+                const isLocalAuth = err.message && err.message.includes('Cluster token required');
+                if (isLocalAuth) {
+                    container.innerHTML = `<div class="col-12"><div class="alert alert-warning"><i class="bi bi-shield-lock me-2"></i>Cluster token required for local files. <a href="/local-access" class="alert-link ms-1">Unlock local files</a></div></div>`;
+                } else {
+                    container.innerHTML = `<div class="col-12"><div class="alert alert-danger">Error loading run details: ${err.message}</div></div>`;
+                }
             }
         }
 

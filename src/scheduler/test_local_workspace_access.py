@@ -186,14 +186,19 @@ def test_local_viewer_start_failure_does_not_remove_workspace(clients):
     assert (local / 'result.txt').read_text() == 'local'
 
 
-def test_headnode_local_listing_remains_available_without_browser_unlock(clients):
+def test_headnode_local_listing_requires_cluster_token_or_browser_unlock(clients):
     _, browser, _, _ = clients
     with patch.object(headnode, 'get_db_conn') as conn, patch.object(headnode, 'local_worker_get', return_value=headnode.app.response_class('[{"path":"result.txt"}]', mimetype='application/json')) as get:
         conn.return_value.__enter__.return_value.cursor.return_value.fetchone.return_value = {'repo': 'lab/project', 'is_local': 1}
-        response = browser.get('/api/runs/example/files')
-    assert response.status_code == 200
-    assert response.json == [{'path': 'result.txt'}]
-    get.assert_called_once_with('lab/project', '/api/worker/dvc/list', path='')
+        # Sans jeton ni déverrouillage -> 401
+        assert browser.get('/api/runs/example/files').status_code == 401
+        get.assert_not_called()
+
+        # Avec jeton -> 200
+        response = browser.get('/api/runs/example/files', headers=AUTH)
+        assert response.status_code == 200
+        assert response.json == [{'path': 'result.txt'}]
+        get.assert_called_once_with('lab/project', '/api/worker/dvc/list', path='')
 
 
 def test_public_local_status_and_logs_remain_available(clients):
