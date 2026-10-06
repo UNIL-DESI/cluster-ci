@@ -839,8 +839,10 @@ def stream_logs(run_id, commit_sha, branch=None):
         proc = None
         current_proc = [None]
         stream_active = [False]
+        MAX_STREAM_RECONNECT_ATTEMPTS = 15
         reconnect_attempts = 0
         last_reconnect_time = 0.0
+        reconnect_failed_reported = False
         recent_lines_history: List[str] = []
         recent_lines_max = 2000
         in_reconnect_sync = False
@@ -926,7 +928,10 @@ def stream_logs(run_id, commit_sha, branch=None):
                     else:
                         # Fresh new line received: reconnection catch-up complete
                         in_reconnect_sync = False
+                        if reconnect_attempts > 0:
+                            print("\n✅ [Stream] Reconnected to live log stream.", file=sys.stderr, flush=True)
                         reconnect_attempts = 0
+                        reconnect_failed_reported = False
 
                 recent_lines_history.append(line_stripped)
                 if len(recent_lines_history) > recent_lines_max:
@@ -1115,13 +1120,29 @@ def stream_logs(run_id, commit_sha, branch=None):
                     if has_curl and commit_sha and not gha_completed:
                         proc_dead = current_proc[0] is None or current_proc[0].poll() is not None or not stream_active[0]
                         if proc_dead:
-                            now = time.time()
-                            backoff = min(10.0, 1.0 * (1.5 ** min(reconnect_attempts, 6)))
-                            if now - last_reconnect_time >= backoff:
-                                reconnect_attempts += 1
-                                last_reconnect_time = now
-                                in_reconnect_sync = True
-                                start_stream_proc()
+                            if reconnect_attempts >= MAX_STREAM_RECONNECT_ATTEMPTS:
+                                if not reconnect_failed_reported:
+                                    reconnect_failed_reported = True
+                                    print(
+                                        f"\n❌ [STREAM DISCONNECTED] Log stream disconnected after {MAX_STREAM_RECONNECT_ATTEMPTS} failed reconnect attempts.\n"
+                                        f"   The remote job continues executing on the cluster/GHA runner, but live terminal streaming has ended.\n"
+                                        f"   Full logs and artifacts will be fetched automatically upon job completion.",
+                                        file=sys.stderr,
+                                        flush=True,
+                                    )
+                            else:
+                                now = time.time()
+                                backoff = min(10.0, 1.0 * (1.5 ** min(reconnect_attempts, 6)))
+                                if now - last_reconnect_time >= backoff:
+                                    reconnect_attempts += 1
+                                    last_reconnect_time = now
+                                    in_reconnect_sync = True
+                                    print(
+                                        f"\n🔄 [Stream] Attempting log stream reconnection ({reconnect_attempts}/{MAX_STREAM_RECONNECT_ATTEMPTS})...",
+                                        file=sys.stderr,
+                                        flush=True,
+                                    )
+                                    start_stream_proc()
 
                     last_gha_poll_time = time.time()
 

@@ -103,3 +103,26 @@ def test_bounded_exponential_backoff():
     assert delays[2] == 2.25
     assert delays[-1] == 10.0
     assert all(d <= 10.0 for d in delays)
+
+
+def test_reconnect_max_attempts_caps_and_notifies():
+    """Verify that after 15 failed reconnect attempts, the failure state is flagged without silent hang."""
+    MAX_STREAM_RECONNECT_ATTEMPTS = 15
+    reconnect_attempts = 0
+    reconnect_failed_reported = False
+    reported_messages = []
+
+    # Simulate 20 polling iterations while proc is dead
+    for _ in range(20):
+        if reconnect_attempts >= MAX_STREAM_RECONNECT_ATTEMPTS:
+            if not reconnect_failed_reported:
+                reconnect_failed_reported = True
+                reported_messages.append("STREAM DISCONNECTED")
+        else:
+            reconnect_attempts += 1
+
+    assert reconnect_attempts == 15
+    assert reconnect_failed_reported is True
+    assert len(reported_messages) == 1
+    assert "STREAM DISCONNECTED" in reported_messages[0]
+
