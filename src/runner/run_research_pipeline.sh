@@ -928,7 +928,7 @@ log_info "DVC-Git-Helper: Injecting cache: false for metrics and plots..."
 docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py inject"
 
 log_info "Workspace Sanitizer: Purging stale outputs, running dvc checkout, and verifying lock hashes..."
-docker_exec "python3 -m src.runner.workspace_sanitizer /workspace" || {
+docker_exec "python3 /cluster-ci/src/runner/workspace_sanitizer.py /workspace" || {
     log_error "Workspace sanitization or DVC integrity check failed! Aborting pipeline."
     exit 1
 }
