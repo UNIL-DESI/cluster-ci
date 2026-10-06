@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 from dvc.repo import Repo
-from src.config.defaults import DEFAULT_RESOURCES, parse_project_cluster_ci, validate_and_resolve_resources
 from src.planner.stage_plan import compute_stage_plan, replan
 
 
@@ -660,4 +659,72 @@ def test_a16_cluster_ci_job_equivalents():
         assert res["storage_gb"] == 50
     finally:
         shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
+
+
+def test_stage_plan_stages_filter_single_target(toy_repo):
+    """Test Bug 11: specifying target_stages restricts plan to the target and excludes other branches."""
+    plan = compute_stage_plan(toy_repo, target_stages=["prep_a"])
+    names = [n["name"] for n in plan["nodes"]]
+    assert names == ["prep_a"]
+    assert "proc_b@item1" not in names
+    assert "proc_b@item2" not in names
+    assert "join_all" not in names
+
+
+def test_stage_plan_stages_filter_foreach_exact(toy_repo):
+    """Test Bug 11: specifying an exact foreach instance targets only that item."""
+    plan = compute_stage_plan(toy_repo, target_stages=["proc_b@item1"])
+    names = [n["name"] for n in plan["nodes"]]
+    assert names == ["proc_b@item1"]
+    assert "proc_b@item2" not in names
+    assert "prep_a" not in names
+
+
+def test_stage_plan_stages_filter_foreach_basename(toy_repo):
+    """Test Bug 11: specifying a foreach base name matches all corresponding foreach instances."""
+    plan = compute_stage_plan(toy_repo, target_stages=["proc_b"])
+    names = [n["name"] for n in plan["nodes"]]
+    assert set(names) == {"proc_b@item1", "proc_b@item2"}
+    assert "prep_a" not in names
+    assert "join_all" not in names
+
+
+def test_stage_plan_stages_filter_upstream_closure(toy_repo):
+    """Test Bug 11: targeting a junction node includes target and its full transitive upstream closure."""
+    plan = compute_stage_plan(toy_repo, target_stages=["join_all"])
+    names = [n["name"] for n in plan["nodes"]]
+    assert set(names) == {"prep_a", "proc_b@item1", "proc_b@item2", "join_all"}
+    # join_all must be topologically after its upstreams
+    assert names[-1] == "join_all"
+
+
+def test_stage_plan_stages_filter_unknown_stage_raises_error(toy_repo):
+    """Test Bug 11: unknown stage name raises clear ValueError listing valid stages."""
+    with pytest.raises(ValueError) as excinfo:
+        compute_stage_plan(toy_repo, target_stages=["non_existent_stage"])
+    msg = str(excinfo.value)
+    assert "Nom de stage inconnu dans STAGES" in msg
+    assert "non_existent_stage" in msg
+    assert "prep_a" in msg
+
+
+def test_stage_plan_stages_filter_from_cluster_ci(toy_repo):
+    """Test Bug 11: STAGES in .cluster-ci file is respected when target_stages is not explicitly passed."""
+    ci_file = os.path.join(toy_repo, ".cluster-ci")
+    with open(ci_file, "a", encoding="utf-8") as f:
+        f.write("\nSTAGES=prep_a\n")
+
+    plan = compute_stage_plan(toy_repo)
+    names = [n["name"] for n in plan["nodes"]]
+    assert names == ["prep_a"]
+
+
+def test_stage_plan_stages_filter_cli(toy_repo):
+    """Test Bug 11: CLI --stages flag properly restricts output JSON plan."""
+    cmd = [sys.executable, "-m", "src.planner.stage_plan", "--repo", toy_repo, "--stages", "prep_a", "--json"]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    plan = json.loads(res.stdout)
+    names = [n["name"] for n in plan["nodes"]]
+    assert names == ["prep_a"]
+
 

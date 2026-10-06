@@ -2,7 +2,7 @@
 
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 # A15 - Rétention pathologique de la base de données SQLite (Cluster-CI v3)
 # La base n'est purgée qu'en cas de croissance pathologique (> 1 Go).
@@ -147,7 +147,16 @@ def parse_project_cluster_ci(repo_path: str) -> Dict[str, Any]:
         if workers:
             overrides["workers"] = workers
 
+    # STAGES (Bug 11)
+    m_stages = re.search(r'^\s*STAGES\s*=\s*(.+)', content, re.MULTILINE)
+    if m_stages:
+        raw_stages = m_stages.group(1).split("#")[0].strip().strip('"\'')
+        stages = [s.strip() for s in re.split(r'[\s,]+', raw_stages) if s.strip()]
+        if stages:
+            overrides["stages"] = stages
+
     return overrides
+
 
 
 def validate_and_resolve_resources(

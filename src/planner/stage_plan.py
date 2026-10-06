@@ -7,8 +7,9 @@ and computes node staleness and execution priorities without requiring heavy dat
 import argparse
 import json
 import os
+import re
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import networkx as nx
 from dvc.repo import Repo
@@ -54,18 +55,26 @@ def _find_matching_output(
     return None
 
 
-def compute_stage_plan(repo_path: str = ".") -> Dict[str, Any]:
+def compute_stage_plan(
+    repo_path: str = ".",
+    target_stages: Optional[Union[List[str], str]] = None,
+) -> Dict[str, Any]:
     """Compute the versioned stage execution plan for a repository.
     
     Args:
         repo_path: Path to the target Git/DVC repository.
+        target_stages: Optional target stage name(s) to restrict the execution plan to.
+            When provided, only the target stages and their transitive upstream closure
+            (dependencies) are scheduled. Ancestors already up-to-date remain skipped.
+            Supports exact names ('prep'), foreach instances ('train@item1') and
+            base foreach names ('train' matching all 'train@*').
         
     Returns:
         A dictionary containing version, defaults, and list of resolved nodes.
         
     Raises:
         FileNotFoundError: If dvc.yaml does not exist in repo_path.
-        ValueError/TypeError: If dvc.yaml or meta.cluster is invalid.
+        ValueError/TypeError: If dvc.yaml, meta.cluster, or target_stages is invalid.
     """
     repo_path = os.path.abspath(repo_path)
     dvc_yaml_path = os.path.join(repo_path, "dvc.yaml")
@@ -127,6 +136,77 @@ def compute_stage_plan(repo_path: str = ".") -> Dict[str, Any]:
             if hasattr(pred, "name") and pred.name in stages_by_name
         ]
         downstream_deps[s.name] = sorted(down)
+
+    # Build initial forward DAG (u -> v where u is upstream and v depends on u)
+    forward_dag = nx.DiGraph()
+    for s_name in stages_by_name:
+        forward_dag.add_node(s_name)
+    for s_name, ups in upstream_deps.items():
+        for u in ups:
+            forward_dag.add_edge(u, s_name)
+
+    # Resolve target stages (Bug 11 - filter plan to target stages + upstream closure)
+    raw_targets = target_stages
+    if raw_targets is None:
+        raw_targets = project_overrides.get("stages")
+
+    cleaned_targets: List[str] = []
+    if raw_targets:
+        if isinstance(raw_targets, str):
+            raw_items = [raw_targets]
+        else:
+            raw_items = list(raw_targets)
+        for item in raw_items:
+            if item:
+                for sub in re.split(r'[\s,]+', str(item)):
+                    sub_clean = sub.strip()
+                    if sub_clean:
+                        cleaned_targets.append(sub_clean)
+
+    if cleaned_targets:
+        all_valid_names = set(stages_by_name.keys())
+        resolved_targets: Set[str] = set()
+
+        for t in cleaned_targets:
+            matched = False
+            if t in all_valid_names:
+                resolved_targets.add(t)
+                matched = True
+            else:
+                # Check foreach base name (stage@item matches t)
+                prefix = f"{t}@"
+                foreach_matches = [s for s in all_valid_names if s.startswith(prefix)]
+                if foreach_matches:
+                    resolved_targets.update(foreach_matches)
+                    matched = True
+
+            if not matched:
+                sorted_valid = sorted(all_valid_names)
+                raise ValueError(
+                    f"Nom de stage inconnu dans STAGES : '{t}'. "
+                    f"Cause : aucun stage ne correspond à ce nom ou à ce préfixe foreach dans dvc.yaml. "
+                    f"Stages valides disponibles : {sorted_valid}."
+                )
+
+        # Transitive upstream closure: targets + all upstream ancestors
+        target_closure: Set[str] = set(resolved_targets)
+        for t in resolved_targets:
+            target_closure.update(nx.ancestors(forward_dag, t))
+
+        # Restrict graph and stage structures to upstream closure
+        forward_dag = forward_dag.subgraph(target_closure).copy()
+        pipeline_stages = [s for s in pipeline_stages if s.name in target_closure]
+        stages_by_name = {s.name: s for s in pipeline_stages}
+        upstream_deps = {
+            s_name: [u for u in ups if u in target_closure]
+            for s_name, ups in upstream_deps.items()
+            if s_name in target_closure
+        }
+        downstream_deps = {
+            s_name: [d for d in downs if d in target_closure]
+            for s_name, downs in downstream_deps.items()
+            if s_name in target_closure
+        }
 
     # Load dvc.lock if present
     lock_path = os.path.join(repo_path, "dvc.lock")
@@ -323,14 +403,6 @@ def compute_stage_plan(repo_path: str = ".") -> Dict[str, Any]:
         intrinsic_stale[name] = (is_stale, stale_reason)
 
     # Step 2: Propagate staleness through DAG (upstream stale -> downstream stale)
-    # Build a forward DAG (u -> v where u is upstream and v depends on u)
-    forward_dag = nx.DiGraph()
-    for s_name in stages_by_name:
-        forward_dag.add_node(s_name)
-    for s_name, ups in upstream_deps.items():
-        for u in ups:
-            forward_dag.add_edge(u, s_name)
-
     final_stale: Dict[str, bool] = {}
     final_stale_reason: Dict[str, Optional[str]] = {}
 
@@ -458,7 +530,11 @@ def compute_stage_plan(repo_path: str = ".") -> Dict[str, Any]:
     }
 
 
-def replan(repo_path: str = ".", done_node: Optional[str] = None) -> Dict[str, Any]:
+def replan(
+    repo_path: str = ".",
+    done_node: Optional[str] = None,
+    target_stages: Optional[Union[List[str], str]] = None,
+) -> Dict[str, Any]:
     """Re-evaluate the stage execution plan after a node has finished execution.
 
     In Cluster-CI v3, when an upstream node completes on a worker (e.g., an
@@ -477,11 +553,12 @@ def replan(repo_path: str = ".", done_node: Optional[str] = None) -> Dict[str, A
     Args:
         repo_path: Path to the target Git/DVC repository with updated state.
         done_node: Optional name of the completed stage node (for logging/traceability).
+        target_stages: Optional target stage name(s) to restrict the execution plan to.
 
     Returns:
         The updated versioned stage execution plan dictionary.
     """
-    return compute_stage_plan(repo_path=repo_path)
+    return compute_stage_plan(repo_path=repo_path, target_stages=target_stages)
 
 
 def main():
@@ -503,13 +580,25 @@ def main():
         default=None,
         help="Optional name of completed stage node when replanning",
     )
+    parser.add_argument(
+        "--stages",
+        nargs="*",
+        default=None,
+        help="Target stages to restrict the execution plan to (closure includes target and upstreams)",
+    )
     args = parser.parse_args()
+
+    stages_arg: Optional[List[str]] = None
+    if args.stages:
+        stages_arg = []
+        for item in args.stages:
+            stages_arg.extend([s.strip() for s in re.split(r'[\s,]+', item) if s.strip()])
 
     try:
         if args.done_node:
-            plan = replan(args.repo, done_node=args.done_node)
+            plan = replan(args.repo, done_node=args.done_node, target_stages=stages_arg)
         else:
-            plan = compute_stage_plan(args.repo)
+            plan = compute_stage_plan(args.repo, target_stages=stages_arg)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

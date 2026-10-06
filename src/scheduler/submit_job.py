@@ -47,7 +47,7 @@ def get_planner_module_name():
     return "src.planner.stage_plan"
 
 
-def run_planner_for_submission(repo_dir="."):
+def run_planner_for_submission(repo_dir=".", stages=None):
     """Exécute le planificateur W1 via CLI (python -m <module> --repo <repo_dir> --json).
 
     Utilise DVC 3.67.1 via uv/uvx quand disponible, ou l'interpréteur Python actif.
@@ -55,6 +55,7 @@ def run_planner_for_submission(repo_dir="."):
     avec le message exact et ne se replie JAMAIS silencieusement.
     """
     import json
+    import re
     import shutil
     import subprocess
 
@@ -79,6 +80,17 @@ def run_planner_for_submission(repo_dir="."):
         ]
     else:
         cmd = [sys.executable, "-m", planner_mod, "--repo", target_repo, "--json"]
+
+    if stages:
+        if isinstance(stages, str):
+            stage_items = [s.strip() for s in re.split(r'[\s,]+', stages) if s.strip()]
+        else:
+            stage_items = []
+            for item in stages:
+                if item:
+                    stage_items.extend([s.strip() for s in re.split(r'[\s,]+', str(item)) if s.strip()])
+        if stage_items:
+            cmd.extend(["--stages"] + stage_items)
 
     cluster_ci_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     env = os.environ.copy()
@@ -412,7 +424,7 @@ def get_config_value(pattern, content, default=None, is_float=False):
         return float(val) if is_float else val
     return default
 
-def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None):
+def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None, stages=None):
     """Submits a research job to the headnode scheduler."""
     if not headnode_url:
         print("Error: HEADNODE_URL is required to submit a job.")
@@ -599,8 +611,23 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             )
             sys.exit(1)
 
+        # Parse STAGES (Bug 11)
+        stages_req = None
+        if stages:
+            stages_req = stages
+        elif env_vars and "STAGES" in env_vars:
+            stages_req = env_vars["STAGES"]
+        else:
+            stages_match = re.search(r'^\s*STAGES\s*=\s*(.+)', content, re.MULTILINE)
+            if stages_match:
+                raw_st = stages_match.group(1).split("#")[0].strip().strip('"\'')
+                if raw_st:
+                    stages_req = raw_st
+
         print(f"🧩 PARALLEL_STAGES enabled and dvc.yaml found: generating v3 plan via W1 planner for {repo}...")
-        plan = run_planner_for_submission(target_repo_dir)
+        if stages_req:
+            print(f"🎯 Target stage(s) specified for submission: {stages_req}")
+        plan = run_planner_for_submission(target_repo_dir, stages=stages_req)
         print(f"✅ Planner generated plan successfully ({len(plan.get('nodes', []))} node(s)).")
 
     submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
@@ -1227,6 +1254,7 @@ if __name__ == '__main__':
     parser.add_argument("--local-repo-path", default=None, help="Path to local repository")
     parser.add_argument("--repo-dir", default=None, help="Path to target repository containing dvc.yaml")
     parser.add_argument("-e", "--env", action="append", default=[], help="Environment variables (KEY=VAL)")
+    parser.add_argument("--stages", nargs="*", default=None, help="Target stage(s) to restrict the execution plan to (STAGES)")
 
     args = parser.parse_args()
 
@@ -1265,7 +1293,8 @@ if __name__ == '__main__':
     local_repo_path = args.local_repo_path or (os.path.abspath(os.getcwd()) if args.local else None)
     job_id = submit_job(
         args.headnode, args.repo, args.branch, args.gh_token, env_vars,
-        is_local=args.local, local_repo_path=local_repo_path, repo_dir=args.repo_dir
+        is_local=args.local, local_repo_path=local_repo_path, repo_dir=args.repo_dir,
+        stages=args.stages
     )
     exit_code = wait_for_job(args.headnode, job_id, branch=args.branch)
     sys.exit(exit_code)
