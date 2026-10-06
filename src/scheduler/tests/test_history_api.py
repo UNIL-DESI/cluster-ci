@@ -99,7 +99,7 @@ def run_history_test_logic(client):
 
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
-        assert "dvc" in args
+        assert "dvc" in args[0]
         assert "list" in args
         assert "https://github.com/owner/repo1.git" in args
         assert "--rev" in args

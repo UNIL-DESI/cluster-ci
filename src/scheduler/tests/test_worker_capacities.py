@@ -373,7 +373,8 @@ class TestWorkerCapacities(unittest.TestCase):
         self.assertIn("not found", data["error"].lower())
 
     def test_fetch_cas_local_workspace_resolution(self):
-        """Verify GET /fetch_cas finds objects in _local workspaces up to 3 directory levels."""
+        """Verify GET /fetch_cas finds objects in _local workspaces up to 3 directory levels with local=1."""
+        from src.scheduler import worker_agent
         local_repo = os.path.join(self.test_dir, "_local", "org", "project")
         cache_dir = os.path.join(local_repo, ".dvc", "cache", "files", "md5", "77")
         os.makedirs(cache_dir, exist_ok=True)
@@ -382,9 +383,14 @@ class TestWorkerCapacities(unittest.TestCase):
         with open(cas_file, "wb") as f:
             f.write(payload)
 
-        resp = self.app.get("/fetch_cas/778899aabbccddeeff00112233445566")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data, payload)
+        token = "test-cluster-token"
+        with patch.object(worker_agent, "CLUSTER_TOKEN", token):
+            resp = self.app.get(
+                "/fetch_cas/778899aabbccddeeff00112233445566?local=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.data, payload)
 
     def test_cpu_affinity_failure_logs_and_returns_null_when_no_fallback(self):
         """Verify error in sched_getaffinity is logged and returns None (null) if no CPU source succeeds."""
