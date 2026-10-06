@@ -120,3 +120,95 @@ def test_handle_missing_deps_no_peer_reschedules_producer_with_reason(test_db):
         cursor.execute("SELECT status FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, cons_name))
         cons_row = cursor.fetchone()
         assert cons_row["status"] == "pending"
+
+
+def test_handle_missing_deps_peer_offline_reschedules_producer(test_db):
+    """Si le pair détenteur est hors ligne ('offline'), il n'est pas qualifié et le producteur est replanifié."""
+    job_id = "job-offline-peer-7"
+    prod_name = "producer_stage"
+    cons_name = "consumer_stage"
+    missing_file = "data/model_heavy.pt"
+    md5_hash = "offline1234567890abcdef123456789"
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO jobs (job_id, status, parallel_mode) VALUES (?, 'running', 1)", (job_id,))
+        # Worker pair HORS LIGNE
+        cursor.execute("""
+            INSERT INTO workers (worker_id, hostname, service_url, status)
+            VALUES ('worker-offline', 'hec45802', 'http://hec45802:6000', 'offline')
+        """)
+        cursor.execute("""
+            INSERT INTO node_artifacts (job_id, node_name, md5, is_dir, size_bytes, worker_id, path)
+            VALUES (?, ?, ?, 0, 1048576, 'worker-offline', ?)
+        """, (job_id, prod_name, md5_hash, missing_file))
+        cursor.execute("""
+            INSERT INTO job_nodes (job_id, node_name, status, out_paths, missing_deps_retried)
+            VALUES (?, ?, 'done', ?, 0)
+        """, (job_id, prod_name, json.dumps([{"path": missing_file, "md5": md5_hash}])))
+        cursor.execute("""
+            INSERT INTO job_nodes (job_id, node_name, status, deps, dep_paths, missing_deps_retried)
+            VALUES (?, ?, 'running', ?, ?, 0)
+        """, (job_id, cons_name, json.dumps([prod_name]), json.dumps([missing_file])))
+        conn.commit()
+
+    res = handle_missing_deps(job_id, cons_name, [missing_file])
+
+    assert res["success"] is True
+    assert res.get("retriggered_node") == prod_name
+    assert res.get("reason") == "outputs_missing_no_peer_cache"
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, stale_reason FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, prod_name))
+        row = cursor.fetchone()
+        assert row["status"] == "ready"
+        assert row["stale_reason"] == "outputs_missing_no_peer_cache"
+
+
+def test_handle_missing_deps_repeated_fetch_failures_reschedules_producer(test_db):
+    """Si le fetch P2P échoue de façon répétée (borne missing_deps_retried >= 2 atteinte), le producteur est replanifié."""
+    job_id = "job-repeated-fail-7"
+    prod_name = "producer_stage"
+    cons_name = "consumer_stage"
+    missing_file = "data/model_heavy.pt"
+    md5_hash = "repeated1234567890abcdef12345678"
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO jobs (job_id, status, parallel_mode) VALUES (?, 'running', 1)", (job_id,))
+        # Worker pair en ligne
+        cursor.execute("""
+            INSERT INTO workers (worker_id, hostname, service_url, status)
+            VALUES ('worker-online', 'hec45803', 'http://hec45803:6000', 'online')
+        """)
+        cursor.execute("""
+            INSERT INTO node_artifacts (job_id, node_name, md5, is_dir, size_bytes, worker_id, path)
+            VALUES (?, ?, ?, 0, 1048576, 'worker-online', ?)
+        """, (job_id, prod_name, md5_hash, missing_file))
+        cursor.execute("""
+            INSERT INTO job_nodes (job_id, node_name, status, out_paths, missing_deps_retried)
+            VALUES (?, ?, 'done', ?, 0)
+        """, (job_id, prod_name, json.dumps([{"path": missing_file, "md5": md5_hash}])))
+        # Consommateur qui a DÉJÀ atteint la borne de 2 retries
+        cursor.execute("""
+            INSERT INTO job_nodes (job_id, node_name, status, deps, dep_paths, missing_deps_retried)
+            VALUES (?, ?, 'running', ?, ?, 2)
+        """, (job_id, cons_name, json.dumps([prod_name]), json.dumps([missing_file])))
+        conn.commit()
+
+    res = handle_missing_deps(job_id, cons_name, [missing_file])
+
+    # Le producteur doit être replanifié avec outputs_unfetchable_from_peers
+    assert res["success"] is True
+    assert res.get("retriggered_node") == prod_name
+    assert res.get("reason") == "outputs_unfetchable_from_peers"
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, stale_reason, missing_deps_retried FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, prod_name))
+        row = cursor.fetchone()
+        assert row["status"] == "ready"
+        assert row["stale_reason"] == "outputs_unfetchable_from_peers"
+        assert row["missing_deps_retried"] == 1
+
