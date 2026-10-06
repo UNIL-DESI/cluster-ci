@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv",
     "pyyaml",
     "networkx>=3.0",
-    "dvc==3.67.1",
+    "dvc>=3.67.1,<4",
     "ruamel.yaml>=0.18.0",
 ]
 
