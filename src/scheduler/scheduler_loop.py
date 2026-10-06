@@ -901,6 +901,13 @@ def handle_next_node(req):
                 failure_reason == "HostMemoryPressureExceeded"
                 or "HostMemoryPressureExceeded" in str(error_message)
             )
+            is_pkg_verification_failure = (
+                failure_reason == "PackageVerificationFailed"
+                or "PackageVerificationFailed" in str(error_message)
+                or "Fail-fast package verification failed" in str(error_message)
+                or "FAIL-FAST:" in str(error_message)
+            )
+            is_non_retryable = is_host_memory_pressure or is_pkg_verification_failure
 
             max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
 
@@ -910,7 +917,7 @@ def handle_next_node(req):
                 row = cursor.fetchone()
                 current_retries = row[0] if row and row[0] is not None else 0
 
-            if not is_host_memory_pressure and current_retries < max_retries:
+            if not is_non_retryable and current_retries < max_retries:
                 new_retry_count = current_retries + 1
                 logger.info(
                     "🔄 Retrying node '%s' for job %s (retry %d/%d)",
@@ -932,7 +939,12 @@ def handle_next_node(req):
                     conn.commit()
                 update_dag_ready_states(job_id)
             else:
-                final_reason = "HostMemoryPressureExceeded" if is_host_memory_pressure else (failure_reason or "retries_exhausted")
+                if is_host_memory_pressure:
+                    final_reason = "HostMemoryPressureExceeded"
+                elif is_pkg_verification_failure:
+                    final_reason = "PackageVerificationFailed"
+                else:
+                    final_reason = failure_reason or "retries_exhausted"
                 mark_node_status(
                     job_id, node_name, "failed",
                     duration_s=duration_s, exit_code=exit_code or 1,

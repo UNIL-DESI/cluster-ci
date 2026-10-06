@@ -827,12 +827,14 @@ def poll_for_job():
         logger.error(f"Failed to poll: {e}")
     return None
 
-def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None, runner_id=None, worker_id=None, error_message=None):
+def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_port=None, runner_id=None, worker_id=None, error_message=None, failure_reason=None):
     payload = {"job_id": job_id, "status": status}
     if exit_code is not None:
         payload["exit_code"] = exit_code
     if error_message is not None:
         payload["error_message"] = error_message
+    if failure_reason is not None:
+        payload["failure_reason"] = failure_reason
     if commit_hash is not None:
         payload["commit_hash"] = commit_hash
     if viewer_port is not None:
@@ -1200,7 +1202,7 @@ def execute_job(job):
                 except Exception:
                     pass
             else:
-                error_msg = f"❌ [CLUSTER INTERRUPTED] Execution interrupted (Exit code 137). This usually means an OOM (Out of Memory) or a Zombie Job Cleanup.\n"
+                error_msg = "❌ [CLUSTER INTERRUPTED] Execution interrupted (Exit code 137). This usually means an OOM (Out of Memory) or a Zombie Job Cleanup.\n"
 
             sys.stderr.write(error_msg)
             sys.stderr.flush()
@@ -1214,20 +1216,34 @@ def execute_job(job):
             except Exception:
                 pass
             log_file.flush()
-            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, error_message=error_msg)
+            update_job_status(job_id, 'failed', 137, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, error_message=error_msg, failure_reason="HostMemoryPressureExceeded" if "HostMemoryPressureExceeded" in error_msg else "OOMKilled")
         elif exit_code == 0:
             update_job_status(job_id, 'completed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
-        elif exit_code < 0:
-            # Likely killed by a signal (cancellation)
-            logger.info(f"Job {job_id} was killed (exit code {exit_code})")
-            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
         else:
-            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
+            failure_reason = None
+            recent_log_text = ""
+            try:
+                log_file.flush()
+                if hasattr(log_file, "name") and os.path.exists(log_file.name):
+                    with open(log_file.name, "r", encoding="utf-8", errors="replace") as lf:
+                        lines = lf.readlines()
+                        recent_log_text = "".join(lines[-40:])
+            except Exception:
+                pass
+            if "PackageVerificationFailed" in recent_log_text or "FAIL-FAST:" in recent_log_text or "Fail-fast package verification failed" in recent_log_text:
+                failure_reason = "PackageVerificationFailed"
+            elif "SmartInstallFailed" in recent_log_text:
+                failure_reason = "SmartInstallFailed"
+            elif exit_code < 0:
+                failure_reason = "Cancelled"
+                logger.info(f"Job {job_id} was killed (exit code {exit_code})")
+
+            update_job_status(job_id, 'failed', exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, failure_reason=failure_reason)
 
     except Exception as e:
         logger.error(f"Execution failed: {e}")
         try:
-            update_job_status(job_id, 'failed', -1, runner_id=runner_id, worker_id=WORKER_ID)
+            update_job_status(job_id, 'failed', -1, runner_id=runner_id, worker_id=WORKER_ID, failure_reason="ExecutionException")
         except Exception as update_err:
             logger.error(f"Failed to update failed job status to headnode: {update_err}")
     finally:

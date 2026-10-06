@@ -407,3 +407,155 @@ def test_bug9_branch_executor_sanitizer_failure(monkeypatch, tmp_path):
     assert report["failure_reason"] == "WorkspaceSanitizerError"
     assert "Hash mismatch on dvc.lock output" in report["error_message"]
 
+
+def test_bug12_no_retry_on_package_verification_failure(client, monkeypatch):
+    """
+    Vérifie qu'un échec avec PackageVerificationFailed échoue IMMÉDIATEMENT
+    sans aucun retry, même avec retries configurés à 5.
+    """
+    monkeypatch.setenv("CLUSTER_CI_MAX_NODE_RETRIES", "5")
+
+    client.post("/register_worker", json={
+        "worker_id": "worker1", "hostname": "worker1", "cpus": 8, "total_ram_gb": 64.0, "available_storage_gb": 500.0, "role": "worker"
+    })
+
+    plan = {
+        "nodes": [
+            {"name": "ngc_stage", "deps": [], "resources": {"cpus": 2, "ram_gb": 4.0}, "stale": True}
+        ]
+    }
+    sub = client.post("/submit_job", json={
+        "repo": "UNIL-DESI/cluster-ci", "branch": "main", "parallel_mode": 1, "plan": plan
+    }).get_json()
+    job_id = sub["job_id"]
+
+    scheduler_loop.schedule_iteration()
+
+    # Tentative 1
+    t1 = client.post(f"/api/jobs/{job_id}/next_node", json={"worker": "worker1", "runner_id": "r1"}).get_json()
+    assert t1.get("node") == "ngc_stage"
+    assert t1.get("attempt") == 1
+
+    # Échec par PackageVerificationFailed
+    t2 = client.post(f"/api/jobs/{job_id}/next_node", json={
+        "worker": "worker1",
+        "runner_id": "r1",
+        "node": "ngc_stage",
+        "status": "failed",
+        "exit_code": 1,
+        "failure_reason": "PackageVerificationFailed",
+        "error_message": "Fail-fast package verification failed: rec2idx failed real import",
+    }).get_json()
+
+    # Ne doit PAS retenter -> action finish direct !
+    assert t2.get("action") == "finish"
+
+    # Vérification Observabilité : job et nœud immédiatement failed
+    st = client.get(f"/job_status/{job_id}").get_json()
+    assert st["status"] == "failed"
+    node = st["nodes"][0]
+    assert node["status"] == "failed"
+    assert node["failure_reason"] == "PackageVerificationFailed"
+    assert node["retry_count"] == 0
+
+
+def test_update_job_status_failed_terminates_job_with_dag_nodes(client, monkeypatch):
+    """
+    Vérifie que lorsque /update_job_status reçoit status='failed' avec failure_reason='PackageVerificationFailed'
+    sur un job avec DAG nodes, le job ne boucle pas indéfiniment à 'running' mais passe à 'failed'.
+    """
+    monkeypatch.setenv("CLUSTER_CI_MAX_NODE_RETRIES", "2")
+
+    client.post("/register_worker", json={
+        "worker_id": "worker1", "hostname": "worker1", "cpus": 8, "total_ram_gb": 64.0, "available_storage_gb": 500.0, "role": "worker"
+    })
+
+    plan = {
+        "nodes": [
+            {"name": "step1", "deps": [], "resources": {"cpus": 2, "ram_gb": 4.0}, "stale": True}
+        ]
+    }
+    sub = client.post("/submit_job", json={
+        "repo": "UNIL-DESI/cluster-ci", "branch": "main", "parallel_mode": 1, "plan": plan
+    }).get_json()
+    job_id = sub["job_id"]
+
+    scheduler_loop.schedule_iteration()
+
+    # Worker exécute et crashe au boot du conteneur -> appelle /update_job_status avec status='failed'
+    up = client.post("/update_job_status", json={
+        "job_id": job_id,
+        "status": "failed",
+        "exit_code": 1,
+        "worker_id": "worker1",
+        "failure_reason": "PackageVerificationFailed",
+        "error_message": "Fail-fast package verification failed for container",
+    }).get_json()
+    assert up.get("status") in ("ok", "success")
+
+    # Le job DOIT être terminé en 'failed' et non laissé en 'running'
+    st = client.get(f"/job_status/{job_id}").get_json()
+    assert st["status"] == "failed"
+    assert st["failure_reason"] == "PackageVerificationFailed"
+    node = st["nodes"][0]
+    assert node["status"] == "failed"
+    assert node["failure_reason"] == "PackageVerificationFailed"
+
+
+def test_branch_executor_catches_start_container_failure(monkeypatch, tmp_path):
+    """
+    Vérifie que branch_executor intercepte l'échec de start_container_for_image
+    et transmet node_for_req avec status='failed' et failure_reason='PackageVerificationFailed'.
+    """
+    from src.runner.branch_executor import BranchExecutor, DockerRunner
+
+    reported_status = []
+
+    def mock_call_next_node(self, node=None, status=None, exit_code=None, error_message=None, failure_reason=None, **kwargs):
+        if status:
+            reported_status.append({
+                "node": node,
+                "status": status,
+                "exit_code": exit_code,
+                "error_message": error_message,
+                "failure_reason": failure_reason,
+            })
+            return {"action": "finish"}
+        return {
+            "action": "run",
+            "node": "ngc_node",
+            "image": "nvcr.io/nvidia/pytorch:26.05-py3",
+            "attempt": 1,
+        }
+
+    monkeypatch.setattr(BranchExecutor, "call_next_node", mock_call_next_node)
+    monkeypatch.setattr(BranchExecutor, "start_container_for_image", lambda self, img, res: (_ for _ in ()).throw(RuntimeError("Fail-fast package verification failed for container xyz (code 1)")))
+
+    class MockDocker(DockerRunner):
+        def create_volume(self, volume_name): return 0
+        def run_container(self, *args, **kwargs): return 0
+        def exec_in_container(self, *args, **kwargs): return 0, ""
+        def stop_container(self, *args, **kwargs): return 0
+        def remove_container(self, *args, **kwargs): return 0
+
+    executor = BranchExecutor(
+        headnode_url="http://mock-hn",
+        job_id="job-pkg-fail",
+        runner_id="runner-1",
+        worker_id="worker-1",
+        repo_dir=str(tmp_path),
+        target_repo="test/repo",
+        target_branch="main",
+        start_commit="abc",
+        docker=MockDocker(),
+    )
+
+    ret = executor.run()
+    assert ret == 0  # S'arrête proprement sur finish
+    assert len(reported_status) == 1
+    report = reported_status[0]
+    assert report["node"] == "ngc_node"
+    assert report["status"] == "failed"
+    assert report["failure_reason"] == "PackageVerificationFailed"
+    assert "Fail-fast package verification failed" in report["error_message"]
+

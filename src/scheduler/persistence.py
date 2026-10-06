@@ -236,7 +236,9 @@ def init_db():
         'plan_json TEXT',
         'active_workers TEXT DEFAULT "[]"',
         'error_message TEXT',
-        'gpu_ids TEXT DEFAULT "[]"'
+        'gpu_ids TEXT DEFAULT "[]"',
+        'failure_reason TEXT',
+        'retry_count INTEGER DEFAULT 0',
     ]:
         col_name = col_def.split()[0]
         try:

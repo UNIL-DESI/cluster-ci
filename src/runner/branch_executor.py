@@ -1158,7 +1158,25 @@ class BranchExecutor:
                                 target_node, image_changed, resource_args_changed
                             )
                             self.stop_current_container()
-                        self.start_container_for_image(image or self.current_image, resources)
+                        try:
+                            self.start_container_for_image(image or self.current_image, resources)
+                        except Exception as err:
+                            logger.error("Échec du démarrage ou de la vérification du conteneur pour le nœud %s: %s", target_node, err)
+                            err_str = str(err)
+                            if "package verification" in err_str.lower() or "fail-fast" in err_str.lower():
+                                fail_reason = "PackageVerificationFailed"
+                            elif "smart_install" in err_str.lower():
+                                fail_reason = "SmartInstallFailed"
+                            else:
+                                fail_reason = "ContainerStartFailed"
+                            node_for_req = target_node
+                            status_for_req = "failed"
+                            duration_for_req = 0.0
+                            exit_code_for_req = 1
+                            error_message_for_req = err_str
+                            failure_reason_for_req = fail_reason
+                            self.current_node = None
+                            continue
                     if not target_node:
                         node_for_req = None
                         status_for_req = None

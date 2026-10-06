@@ -1450,6 +1450,7 @@ def update_job_status():
             ''', (status, commit_hash, viewer_port, job_id))
         elif status in ['completed', 'failed']:
             err_msg = data.get('error_message')
+            failure_reason = data.get('failure_reason')
             if status == 'failed':
                 if not err_msg and exit_code == 137:
                     err_msg = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
@@ -1460,9 +1461,57 @@ def update_job_status():
             cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ?', (job_id,))
             has_dag_nodes = cursor.fetchone()[0] > 0
             if job_dict.get('parallel_mode') == 1 or has_dag_nodes:
-                agg_status = get_aggregated_job_status(job_id)
                 caller_worker = data.get('worker_id') or data.get('worker')
                 caller_runner = data.get('runner_id')
+                max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
+
+                # Si le worker rapporte un échec global alors que le job a des nœuds DAG:
+                if status == 'failed':
+                    is_fatal_failure = (
+                        failure_reason in ("PackageVerificationFailed", "HostMemoryPressureExceeded")
+                        or (err_msg and ("PackageVerificationFailed" in err_msg or "FAIL-FAST:" in err_msg or "HostMemoryPressureExceeded" in err_msg))
+                    )
+                    # Identifier les nœuds actifs ou candidats à faire échouer / retenter
+                    cursor.execute('''
+                        SELECT node_name, status, retry_count
+                        FROM job_nodes
+                        WHERE job_id = ? AND (worker_id = ? OR runner_id = ? OR status = 'running')
+                    ''', (job_id, caller_worker, caller_runner))
+                    active_nodes = cursor.fetchall()
+                    if not active_nodes:
+                        cursor.execute('''
+                            SELECT node_name, status, retry_count
+                            FROM job_nodes
+                            WHERE job_id = ? AND status = 'ready'
+                            ORDER BY priority DESC, node_name ASC LIMIT 1
+                        ''', (job_id,))
+                        active_nodes = cursor.fetchall()
+
+                    for n_row in active_nodes:
+                        n_name, n_status, n_retries = n_row[0], n_row[1], n_row[2] or 0
+                        if is_fatal_failure or n_retries >= max_retries:
+                            f_reason = failure_reason or ("PackageVerificationFailed" if is_fatal_failure else "retries_exhausted")
+                            cursor.execute('''
+                                UPDATE job_nodes
+                                SET status = 'failed', failure_reason = ?, exit_code = COALESCE(?, exit_code, 1),
+                                    error_message = COALESCE(?, error_message)
+                                WHERE job_id = ? AND node_name = ?
+                            ''', (f_reason, exit_code, err_msg, job_id, n_name))
+                        else:
+                            cursor.execute('''
+                                UPDATE job_nodes
+                                SET status = 'ready', retry_count = retry_count + 1, worker_id = NULL, runner_id = NULL,
+                                    failure_reason = ?, exit_code = COALESCE(?, exit_code, 1), error_message = COALESCE(?, error_message)
+                                WHERE job_id = ? AND node_name = ?
+                            ''', (failure_reason or f"retry_{n_retries+1}", exit_code, err_msg, job_id, n_name))
+
+                    try:
+                        from src.scheduler.scheduler_loop import update_dag_ready_states
+                        update_dag_ready_states(job_id)
+                    except Exception:
+                        pass
+
+                agg_status = get_aggregated_job_status(job_id)
 
                 # Libérer uniquement le worker / runner appelant
                 if caller_worker:
@@ -1470,7 +1519,7 @@ def update_job_status():
                 if caller_runner:
                     cursor.execute('DELETE FROM runner_heartbeats WHERE runner_id = ?', (caller_runner,))
                 elif caller_worker:
-                    cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND worker = ?', (job_id, caller_worker))
+                    cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND worker_id = ?', (job_id, caller_worker))
 
                 if agg_status in ['completed', 'failed']:
                     cursor.execute('''
@@ -1480,9 +1529,10 @@ def update_job_status():
                             exit_code = COALESCE(?, exit_code),
                             commit_hash = COALESCE(?, commit_hash),
                             error_message = COALESCE(?, error_message),
+                            failure_reason = COALESCE(?, failure_reason),
                             gpu_ids = '[]'
                         WHERE job_id = ?
-                    ''', (agg_status, exit_code, commit_hash, err_msg, job_id))
+                    ''', (agg_status, exit_code, commit_hash, err_msg, failure_reason, job_id))
                     cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
                     cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
                     cleanup_local_archive(job_id)
@@ -1490,9 +1540,11 @@ def update_job_status():
                     cursor.execute('''
                         UPDATE jobs SET
                             status = 'running',
-                            commit_hash = COALESCE(?, commit_hash)
+                            commit_hash = COALESCE(?, commit_hash),
+                            failure_reason = COALESCE(?, failure_reason),
+                            retry_count = COALESCE(retry_count, 0) + 1
                         WHERE job_id = ?
-                    ''', (commit_hash, job_id))
+                    ''', (commit_hash, failure_reason, job_id))
             else:
                 cursor.execute('''
                     UPDATE jobs SET
@@ -1501,9 +1553,10 @@ def update_job_status():
                         exit_code = COALESCE(?, exit_code),
                         commit_hash = COALESCE(?, commit_hash),
                         error_message = COALESCE(?, error_message),
+                        failure_reason = COALESCE(?, failure_reason),
                         gpu_ids = '[]'
                     WHERE job_id = ?
-                ''', (status, exit_code, commit_hash, err_msg, job_id))
+                ''', (status, exit_code, commit_hash, err_msg, failure_reason, job_id))
                 cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
                 cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
                 cleanup_local_archive(job_id)
