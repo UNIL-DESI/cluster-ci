@@ -3850,6 +3850,12 @@
                     if (queueResp.ok) queue = await queueResp.json();
                 } catch(e) {}
 
+                let workerQueues = {};
+                try {
+                    const wqResp = await fetch('/api/workers/queues');
+                    if (wqResp.ok) workerQueues = await wqResp.json();
+                } catch(e) {}
+
                 const statsContainer = document.getElementById('cluster-stats-container');
                 if (!statsContainer) return;
 
@@ -4270,6 +4276,7 @@
                                             <div class="d-flex align-items-center gap-1 mb-1">
                                                 ${modeBadge}
                                                 ${primaryBadge}
+                                                <!-- TODO(Lot P): Priority badge placeholder (high / normal / low) -->
                                                 <span class="font-monospace fw-bold text-primary">${cardTitle}</span>
                                             </div>
                                             <div class="fw-semibold text-dark text-truncate" style="max-width: 260px;" title="${escapeHtml(ex.repo)} @${escapeHtml(ex.branch)}">
@@ -4317,6 +4324,58 @@
                             </div>
                         `;
                     }
+
+                    // Machine queue (eligible ready/pending nodes in scheduler selection order)
+                    const machineQueue = (workerQueues && workerQueues[w.worker_id]) || [];
+                    let queueListHtml = `
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="text-secondary mb-0 d-flex align-items-center gap-1" style="font-size: 0.85rem;">
+                                    <i class="bi bi-hourglass-split"></i> Queue (${machineQueue.length})
+                                </h6>
+                                ${machineQueue.length > 0 ? `<span class="badge bg-secondary-subtle text-secondary border" style="font-size: 0.7rem;">Eligible Waiting</span>` : ''}
+                            </div>
+                    `;
+                    if (machineQueue.length > 0) {
+                        queueListHtml += `<div class="d-flex flex-column gap-2">`;
+                        machineQueue.forEach(qNode => {
+                            const qStatusBadge = qNode.status === 'ready' ? 
+                                `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size:0.68rem; padding: 1px 6px;">ready</span>` :
+                                `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" style="font-size:0.68rem; padding: 1px 6px;">pending</span>`;
+                            queueListHtml += `
+                                <div class="p-2 rounded border bg-light" style="font-size: 0.78rem;">
+                                    <div class="d-flex justify-content-between align-items-start mb-1 flex-wrap gap-1">
+                                        <div>
+                                            <div class="d-flex align-items-center gap-1 mb-1">
+                                                ${qStatusBadge}
+                                                <!-- TODO(Lot P): Priority badge placeholder (high / normal / low) -->
+                                                <span class="font-monospace fw-bold text-primary">Stage : ${escapeHtml(qNode.stage || qNode.node_name)}</span>
+                                            </div>
+                                            <div class="fw-semibold text-dark text-truncate" style="max-width: 260px;" title="${escapeHtml(qNode.repo)} @${escapeHtml(qNode.branch)}">
+                                                <i class="bi bi-folder me-1 text-secondary"></i>${escapeHtml(qNode.repo)} <span class="text-muted fw-normal">@${escapeHtml(qNode.branch)}</span>
+                                            </div>
+                                            <div class="text-muted" style="font-size: 0.72rem;">
+                                                <i class="bi bi-hash me-1"></i>Job ${escapeHtml(qNode.job_id_short)}…
+                                            </div>
+                                        </div>
+                                        <div class="d-flex align-items-center">
+                                            <span class="badge-spec-pill" title="Waiting time in queue">
+                                                <i class="bi bi-clock me-1"></i>${escapeHtml(qNode.waiting_time)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        queueListHtml += `</div>`;
+                    } else {
+                        queueListHtml += `
+                            <div class="p-2 rounded border border-dashed bg-light text-muted small text-center" style="font-size: 0.75rem;">
+                                <i class="bi bi-inbox me-1"></i>Queue empty &bull; 0 nodes waiting
+                            </div>
+                        `;
+                    }
+                    queueListHtml += `</div>`;
 
                     // Local Docker images display from heartbeat (w.docker_images)
                     let dockerImagesHtml = '';
@@ -4431,6 +4490,9 @@
 
                                     <!-- List of Active Executors (A11) -->
                                     ${executorsListHtml}
+
+                                    <!-- Queue per Machine (A14) -->
+                                    ${queueListHtml}
 
                                     <!-- Local Docker Images (A13) -->
                                     ${dockerImagesHtml}

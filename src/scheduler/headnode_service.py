@@ -2341,6 +2341,173 @@ def api_queue():
         app.logger.error(f"Error fetching queue: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
+
+def format_waiting_time(seconds: float) -> str:
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    m = s // 60
+    rem_s = s % 60
+    if m < 60:
+        return f"{m}m {rem_s:02d}s" if rem_s else f"{m}m"
+    h = m // 60
+    rem_m = m % 60
+    return f"{h}h {rem_m:02d}m"
+
+
+def get_worker_queues(conn=None, target_worker_id=None):
+    """
+    Computes eligible waiting/pending nodes for each online worker in scheduler selection order.
+    Returns a dict mapping worker_id -> list of queued node metadata dicts.
+    """
+    def _execute(c):
+        cursor = c.cursor()
+        if target_worker_id:
+            cursor.execute("SELECT * FROM workers WHERE worker_id = ? AND status = 'online'", (target_worker_id,))
+        else:
+            cursor.execute("SELECT * FROM workers WHERE status = 'online'")
+        workers = [dict(w) for w in cursor.fetchall()]
+
+        # Candidates 1: job_nodes from non-finished jobs with status ready or pending
+        cursor.execute('''
+            SELECT jn.job_id, jn.node_name, jn.status, jn.resources, jn.image, jn.priority, jn.deps,
+                   j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username
+            FROM job_nodes jn
+            JOIN jobs j ON jn.job_id = j.job_id
+            WHERE jn.status IN ('ready', 'pending')
+              AND j.status IN ('pending', 'assigned', 'running')
+            ORDER BY j.created_at ASC, (CASE WHEN jn.status = 'ready' THEN 0 ELSE 1 END) ASC, jn.priority DESC, jn.node_name ASC
+        ''')
+        node_rows = [dict(r) for r in cursor.fetchall()]
+
+        # Candidates 2: classic pending jobs without entries in job_nodes
+        cursor.execute('''
+            SELECT j.job_id, 'job' AS node_name, 'ready' AS status,
+                   0.0 AS priority, '[]' AS deps,
+                   j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
+                   j.ram_required_gb, j.vram_required_gb, j.worker_id, j.allowed_workers
+            FROM jobs j
+            WHERE j.status = 'pending' AND (j.parallel_mode = 0 OR j.parallel_mode IS NULL)
+              AND j.job_id NOT IN (SELECT DISTINCT job_id FROM job_nodes)
+            ORDER BY j.created_at ASC
+        ''')
+        classic_rows = cursor.fetchall()
+        for cr in classic_rows:
+            cr_dict = dict(cr)
+            res = {
+                "cpus": 4,
+                "ram_gb": cr_dict.get("ram_required_gb") or 10.0,
+                "vram_gb": cr_dict.get("vram_required_gb") or 0.0,
+                "gpus": 1 if (cr_dict.get("vram_required_gb") or 0) > 0 else 0,
+            }
+            allowed = []
+            if cr_dict.get("allowed_workers"):
+                try:
+                    allowed = json.loads(cr_dict["allowed_workers"])
+                except Exception:
+                    allowed = [cr_dict["allowed_workers"]]
+            elif cr_dict.get("worker_id"):
+                allowed = [cr_dict["worker_id"]]
+            if allowed:
+                res["workers"] = allowed
+            cr_dict["resources"] = json.dumps(res)
+            cr_dict["image"] = None
+            node_rows.append(cr_dict)
+
+        # Scheduler selection ordering: ready nodes before pending, then FIFO by created_at, then priority DESC
+        node_rows.sort(key=lambda r: (
+            0 if r.get("status") == "ready" else 1,
+            str(r.get("created_at") or ""),
+            -float(r.get("priority") or 0.0),
+            str(r.get("node_name") or "")
+        ))
+
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        queues = {w["worker_id"]: [] for w in workers}
+
+        for w in workers:
+            w_id = w["worker_id"]
+            w_dict = dict(w)
+            for n in node_rows:
+                raw_res = n.get("resources")
+                try:
+                    res = json.loads(raw_res) if isinstance(raw_res, str) else (raw_res or {})
+                except Exception:
+                    res = {}
+                if not isinstance(res, dict):
+                    res = {}
+                res = dict(res)
+                res.setdefault("job_id", n["job_id"])
+
+                # Check worker admission against node constraints (allowed_workers, arch, resources)
+                try:
+                    admissible = is_worker_admissible_for_node(w_dict, res, allocated=None)
+                except Exception:
+                    admissible = False
+
+                if not admissible:
+                    continue
+
+                wait_s = 0.0
+                created_str = n.get("created_at")
+                if created_str:
+                    try:
+                        c_dt = datetime.datetime.strptime(str(created_str).split(".")[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+                        wait_s = max(0.0, (now_utc - c_dt).total_seconds())
+                    except Exception:
+                        wait_s = 0.0
+
+                queues[w_id].append({
+                    "stage": n["node_name"],
+                    "node_name": n["node_name"],
+                    "repo": n["repo"] or "",
+                    "branch": n["branch"] or "",
+                    "job_id": n["job_id"],
+                    "job_id_short": (n["job_id"] or "")[:8],
+                    "status": n["status"],
+                    "waiting_seconds": round(wait_s, 1),
+                    "waiting_time": format_waiting_time(wait_s),
+                    "is_local": int(n.get("is_local") or 0)
+                })
+
+        return queues
+
+    if conn is not None:
+        return _execute(conn)
+    with get_db_conn() as c:
+        return _execute(c)
+
+
+@app.route('/api/workers/queues', methods=['GET'])
+def api_workers_queues():
+    """Returns queued/pending eligible nodes per worker for the dashboard."""
+    has_token = bool(CLUSTER_TOKEN) and check_token()
+    if 'user' not in session and not has_token:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        queues = get_worker_queues()
+        return jsonify(queues)
+    except Exception as e:
+        app.logger.error(f"Error fetching worker queues: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route('/api/workers/<worker_id>/queue', methods=['GET'])
+def api_worker_queue(worker_id):
+    """Returns queued/pending eligible nodes for a specific worker."""
+    has_token = bool(CLUSTER_TOKEN) and check_token()
+    if 'user' not in session and not has_token:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        queues = get_worker_queues(target_worker_id=worker_id)
+        return jsonify(queues.get(worker_id, []))
+    except Exception as e:
+        app.logger.error(f"Error fetching worker queue for {worker_id}: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
 @app.route('/')
 def dashboard():
     if 'user' not in session:
