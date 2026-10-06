@@ -44,6 +44,7 @@ except (ImportError, SystemExit):
 from src.runner.fetch_cas_dependencies import (
     compute_file_md5,
     fetch_dependencies,
+    normalize_worker_url,
     parse_dir_manifest,
 )
 from src.scheduler.artifact_registry import (
@@ -554,6 +555,9 @@ class BranchExecutor:
 
             local_path = os.path.join(self.repo_dir, norm_p)
             is_stage_out, out_info = is_dag_stage_output(norm_p, exact_outs, dir_outs, pat_outs)
+            if not is_stage_out and norm_p in lock_hash_by_path:
+                is_stage_out = True
+                out_info = {"md5": lock_hash_by_path[norm_p], "cache": True}
 
             if not is_stage_out:
                 # -------------------------------------------------------------
@@ -675,18 +679,36 @@ class BranchExecutor:
             dep_sources_dict = dep_sources or {}
             for k, urls in dep_sources_dict.items():
                 url_list = urls if isinstance(urls, list) else [urls]
-                sources_map.setdefault(k.strip().lower(), []).extend(url_list)
+                for u in url_list:
+                    if u:
+                        try:
+                            norm_u = normalize_worker_url(u)
+                            sources_map.setdefault(k.strip().lower(), []).append(norm_u)
+                        except Exception:
+                            sources_map.setdefault(k.strip().lower(), []).append(str(u))
 
             workers_hint = (resources or {}).get("workers") or []
-            all_workers = list(workers_hint)
+            all_workers = []
+            for w in workers_hint:
+                if w:
+                    try:
+                        all_workers.append(normalize_worker_url(w))
+                    except Exception:
+                        all_workers.append(str(w))
+
             if not all_workers and self.headnode_url:
                 hw_list = self._get_workers_from_headnode()
                 for w in hw_list:
-                    s_url = w.get("service_url")
-                    if s_url and s_url not in all_workers:
-                        all_workers.append(s_url)
-                        if "isipol09" in s_url:
-                            alt_url = s_url.replace("isipol09", "130.223.73.209")
+                    s_url = w.get("service_url") or w.get("worker_id")
+                    if s_url:
+                        try:
+                            norm_s = normalize_worker_url(s_url)
+                        except Exception:
+                            norm_s = str(s_url)
+                        if norm_s not in all_workers:
+                            all_workers.append(norm_s)
+                        if "isipol09" in norm_s:
+                            alt_url = norm_s.replace("isipol09", "130.223.73.209")
                             if alt_url not in all_workers:
                                 all_workers.append(alt_url)
 
@@ -722,6 +744,8 @@ class BranchExecutor:
                 repo_name=self.target_repo,
                 run_checkout=True,
             )
+
+            self.last_cas_transfers = getattr(result, "transfers", [])
 
             if not result.success:
                 missing = result.missing_deps or result.missing_hashes

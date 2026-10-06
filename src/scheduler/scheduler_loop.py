@@ -36,6 +36,20 @@ except ImportError:
     )
     from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
     from src.scheduler.db_retention import run_retention_periodic
+
+try:
+    from src.runner.fetch_cas_dependencies import normalize_worker_url
+except ImportError:
+    try:
+        from fetch_cas_dependencies import normalize_worker_url
+    except ImportError:
+        def normalize_worker_url(worker_str: str, default_port: int = 6000) -> str:
+            raw = str(worker_str).strip()
+            if not (raw.startswith("http://") or raw.startswith("https://")):
+                raw = f"http://{raw}"
+            if ":" not in raw.split("//", 1)[-1]:
+                raw = f"{raw}:{default_port}"
+            return raw
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -1141,12 +1155,27 @@ def handle_next_node(req):
         with get_db_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT worker_id, service_url FROM workers WHERE status = 'online'")
-            online_workers_map = {r[0]: r[1] for r in cursor.fetchall()}
+            online_workers_map = {}
+            for r in cursor.fetchall():
+                w_id, s_url = r[0], r[1]
+                target_url = s_url or w_id
+                if target_url:
+                    try:
+                        online_workers_map[w_id] = normalize_worker_url(target_url)
+                    except Exception:
+                        online_workers_map[w_id] = target_url
+
             dep_hashes = []
             if dep_paths_list:
                 placeholders = ','.join(['?'] * len(dep_paths_list))
                 cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE job_id = ? AND path IN ({placeholders})", [job_id, *dep_paths_list])
-                dep_hashes = [r[0] for r in cursor.fetchall()]
+                dep_hashes = [r[0] for r in cursor.fetchall() if r[0]]
+                # Bug 6: si des artefacts n'ont pas été trouvés dans le job courant, chercher cross-jobs
+                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE path IN ({placeholders}) ORDER BY created_at DESC", dep_paths_list)
+                for r in cursor.fetchall():
+                    if r[0] and r[0] not in dep_hashes:
+                        dep_hashes.append(r[0])
+
             dep_sources_map = sources_for(conn, dep_hashes, online_workers_map)
     except Exception as e:
         logger.debug(f"Failed to query artifact sources: {e}")

@@ -31,13 +31,66 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from typing import Any, Iterable, Mapping, Sequence
+import urllib.parse
 from urllib.parse import urlparse
 from uuid import uuid4
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+class DownloadResult(tuple):
+    """Backwards-compatible 2-tuple (success, reason) with optional transfer_info attribute."""
+    def __new__(cls, success: bool, reason: str, transfer_info: dict[str, Any] | None = None):
+        return super().__new__(cls, (success, reason))
+
+    def __init__(self, success: bool, reason: str, transfer_info: dict[str, Any] | None = None):
+        self.success = success
+        self.reason = reason
+        self.transfer_info = transfer_info
+
+
+def normalize_worker_url(worker_str: str, default_port: int = 6000) -> str:
+    """
+    Normalizes a worker hostname, IP, or raw address to a canonical http(s) URL with port.
+    Guarantees a valid scheme (http:// or https://) and port to prevent requests.exceptions.InvalidURL.
+
+    Examples:
+      'HEC45801' -> 'http://HEC45801:6000'
+      'HEC45801:6000' -> 'http://HEC45801:6000'
+      'http://HEC45801' -> 'http://HEC45801:6000'
+      'http://HEC45801:6000/' -> 'http://HEC45801:6000'
+      'https://remote-worker.org:8080' -> 'https://remote-worker.org:8080'
+    """
+    raw = str(worker_str).strip()
+    if not raw:
+        raise ValueError("Worker URL or hostname cannot be empty")
+
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        raw = f"http://{raw}"
+
+    parsed = urllib.parse.urlsplit(raw)
+    scheme = parsed.scheme or "http"
+    netloc = parsed.netloc
+    path = parsed.path.rstrip("/")
+    if not netloc and path:
+        netloc = path
+        path = ""
+
+    if ":" in netloc:
+        host, port = netloc.rsplit(":", 1)
+        if not port.isdigit():
+            netloc = f"{netloc}:{default_port}"
+    else:
+        netloc = f"{netloc}:{default_port}"
+
+    result = f"{scheme}://{netloc}"
+    if path:
+        result = f"{result}{path}"
+    return result
 
 
 @dataclass
@@ -49,6 +102,7 @@ class FetchResult:
     missing_hashes: list[str] = field(default_factory=list)
     downloaded_hashes: list[str] = field(default_factory=list)
     cached_hashes: list[str] = field(default_factory=list)
+    transfers: list[dict[str, Any]] = field(default_factory=list)
     error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +113,7 @@ class FetchResult:
             "missing_hashes": self.missing_hashes,
             "downloaded_hashes": self.downloaded_hashes,
             "cached_hashes": self.cached_hashes,
+            "transfers": self.transfers,
             "error_message": self.error_message,
         }
 
@@ -102,8 +157,9 @@ def build_candidate_urls(
       - worker_agent.py /fetch_artifact route: http://worker:6000/fetch_artifact
       - Base worker URL: http://worker:6000
     """
+    norm_source = normalize_worker_url(source_base_url)
     relpath = get_cas_object_relpath(md5_hash)
-    base = source_base_url.rstrip("/")
+    base = norm_source.rstrip("/")
     candidates = []
 
     # Case 1: Base is already a full peer remote endpoint ending in .dvc/cache/files/md5
@@ -148,7 +204,7 @@ def download_single_object(
     """
     clean_h = md5_hash.strip().lower()
     if len(clean_h) < 2:
-        return False, "invalid_hash"
+        return DownloadResult(False, "invalid_hash", None)
 
     prefix = clean_h[:2]
     suffix = clean_h[2:]
@@ -159,7 +215,7 @@ def download_single_object(
     # 1. Check if already cached and valid
     if target_file.is_file():
         if compute_file_md5(target_file) == expected_hex:
-            return True, "already_cached"
+            return DownloadResult(True, "already_cached", None)
         logger.warning("Corrupted local cache file %s, removing to re-fetch", target_file)
         _ensure_writable(target_file)
         target_file.unlink()
@@ -170,8 +226,13 @@ def download_single_object(
 
     # 2. Try candidate sources in order
     for source in candidate_sources:
-        candidate_urls = build_candidate_urls(source, clean_h, repo_name)
+        try:
+            candidate_urls = build_candidate_urls(source, clean_h, repo_name)
+        except Exception as parse_err:
+            logger.warning("Invalid candidate source '%s': %s", source, parse_err)
+            continue
         for url in candidate_urls:
+            start_t = time.monotonic()
             try:
                 resp = http.get(url, stream=True, timeout=timeout)
                 if resp.status_code != 200:
@@ -204,8 +265,24 @@ def download_single_object(
                 except OSError:
                     pass
 
-                logger.info("Successfully fetched and verified %s from %s", clean_h, url)
-                return True, "downloaded"
+                file_size = target_file.stat().st_size
+                fetch_duration = time.monotonic() - start_t
+                transfer_info = {
+                    "hash": clean_h,
+                    "source": source,
+                    "url": url,
+                    "size_bytes": file_size,
+                    "duration_s": round(fetch_duration, 4),
+                }
+                logger.info(
+                    "[CAS P2P FETCH] Successfully fetched artifact hash=%s size=%d bytes in %.3fs from worker source=%s (url=%s)",
+                    clean_h, file_size, fetch_duration, source, url
+                )
+                print(
+                    f"[CAS P2P FETCH] Successfully fetched artifact hash={clean_h} size={file_size} bytes in {fetch_duration:.3f}s from worker source={source} (url={url})",
+                    flush=True
+                )
+                return DownloadResult(True, "downloaded", transfer_info)
 
             except Exception as e:
                 logger.debug("Fetch failed for %s from %s: %s", clean_h, url, e)
@@ -214,7 +291,7 @@ def download_single_object(
 
     _ensure_writable(temp_file)
     temp_file.unlink(missing_ok=True)
-    return False, "missing"
+    return DownloadResult(False, "missing", None)
 
 
 def parse_dir_manifest(manifest_path: Path) -> list[dict[str, Any]]:
@@ -337,15 +414,17 @@ def fetch_dependencies(
     downloaded: list[str] = []
     already_cached: list[str] = []
     failed_hashes: set[str] = set()
+    transfers: list[dict[str, Any]] = []
 
     session = requests.Session()
 
     # 2. Phase 1: Download top-level hashes (including .dir manifests)
-    def _fetch_worker(h: str, candidates: list[str]) -> tuple[str, bool, str]:
-        ok, reason = download_single_object(
+    def _fetch_worker(h: str, candidates: list[str]) -> tuple[str, bool, str, dict[str, Any] | None]:
+        res = download_single_object(
             h, candidates, c_path, repo_name=repo_name, timeout=timeout, session=session
         )
-        return h, ok, reason
+        t_info = getattr(res, "transfer_info", None)
+        return h, res[0], res[1], t_info
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
@@ -353,8 +432,10 @@ def fetch_dependencies(
             for h in set(top_level_hashes)
         }
         for future in concurrent.futures.as_completed(future_map):
-            h, ok, reason = future.result()
+            h, ok, reason, t_info = future.result()
             if ok:
+                if t_info:
+                    transfers.append(t_info)
                 if reason == "downloaded":
                     downloaded.append(h)
                 else:
@@ -388,8 +469,10 @@ def fetch_dependencies(
                 for sub_h in nested_hashes_to_fetch
             }
             for future in concurrent.futures.as_completed(future_map):
-                sub_h, ok, reason = future.result()
+                sub_h, ok, reason, t_info = future.result()
                 if ok:
+                    if t_info:
+                        transfers.append(t_info)
                     if reason == "downloaded":
                         downloaded.append(sub_h)
                     else:
@@ -430,6 +513,7 @@ def fetch_dependencies(
             missing_hashes=missing_hashes,
             downloaded_hashes=downloaded,
             cached_hashes=already_cached,
+            transfers=transfers,
             error_message=f"Missing {len(missing_deps)} dependencies in CAS across all candidate peers.",
         )
 
@@ -445,6 +529,7 @@ def fetch_dependencies(
                 missing_hashes=[],
                 downloaded_hashes=downloaded,
                 cached_hashes=already_cached,
+                transfers=transfers,
             )
 
         cmd = [*get_dvc_command(), "checkout", *target_paths]
@@ -467,6 +552,7 @@ def fetch_dependencies(
                     missing_hashes=[],
                     downloaded_hashes=downloaded,
                     cached_hashes=already_cached,
+                    transfers=transfers,
                     error_message=f"dvc checkout failed (exit {proc.returncode}): {proc.stderr.strip()}",
                 )
         except FileNotFoundError:
@@ -479,6 +565,7 @@ def fetch_dependencies(
                 missing_hashes=[],
                 downloaded_hashes=downloaded,
                 cached_hashes=already_cached,
+                transfers=transfers,
                 error_message=str(e),
             )
 
@@ -489,6 +576,7 @@ def fetch_dependencies(
         missing_hashes=[],
         downloaded_hashes=downloaded,
         cached_hashes=already_cached,
+        transfers=transfers,
     )
 
 
