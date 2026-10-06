@@ -25,6 +25,17 @@ import zipfile
 import shutil
 from typing import List
 
+try:
+    from src.runner.cluster_http import cluster_urlopen
+except ImportError:
+    # install.sh also installs this file alone; keep its transport self-contained.
+    class _NoRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    def cluster_urlopen(request, timeout):
+        return urllib.request.build_opener(_NoRedirects()).open(request, timeout=timeout)
+
 # Source de vérité des défauts v3 (spec_v3_interfaces §1, W1 src/config/defaults.py)
 try:
     from src.config.defaults import (
@@ -322,7 +333,7 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     try:
         url = f"{headnode_url}/api/projects/{repo}/runs"
         req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with cluster_urlopen(req, timeout=5) as resp:
             runs = json.loads(resp.read().decode())
             for run in runs:
                 if run.get("status") in ("running", "assigned", "pending") and run.get("branch") == branch:
@@ -530,7 +541,7 @@ def _headnode_stop_job(job_id, headnode_url, cluster_token):
         req.add_header("Content-Type", "application/json")
         if cluster_token:
             req.add_header("Authorization", f"Bearer {cluster_token}")
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with cluster_urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read().decode())
             print(f"   Headnode: {result.get('message', 'Job stopped')}")
     except urllib.error.HTTPError as e:
@@ -985,7 +996,7 @@ def stream_logs(run_id, commit_sha, branch=None):
                         try:
                             url = f"{headnode_url}/job_status/{job_id}"
                             req = urllib.request.Request(url)
-                            with urllib.request.urlopen(req, timeout=5) as resp:
+                            with cluster_urlopen(req, timeout=5) as resp:
                                 job_data = json.loads(resp.read().decode())
                                 status_val = job_data.get("status")
                                 job_active = status_val in ("running", "assigned", "pending")
@@ -1532,7 +1543,7 @@ def _delete_local_transfer(headnode_url, transfer_id, cluster_token=None):
     if cluster_token:
         req.add_header("Authorization", f"Bearer {cluster_token}")
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with cluster_urlopen(req, timeout=30):
             pass
     except Exception:
         pass
@@ -1557,7 +1568,7 @@ def upload_local_file_in_chunks(path, headnode_url, purpose, cluster_token=None,
     )
     if cluster_token:
         create_req.add_header("Authorization", f"Bearer {cluster_token}")
-    with urllib.request.urlopen(create_req, timeout=30) as response:
+    with cluster_urlopen(create_req, timeout=30) as response:
         transfer = json.loads(response.read().decode("utf-8"))
 
     transfer_id = transfer["transfer_id"]
@@ -1585,7 +1596,7 @@ def upload_local_file_in_chunks(path, headnode_url, purpose, cluster_token=None,
                         )
                         if cluster_token:
                             chunk_req.add_header("Authorization", f"Bearer {cluster_token}")
-                        with urllib.request.urlopen(chunk_req, timeout=120):
+                        with cluster_urlopen(chunk_req, timeout=120):
                             pass
                         break
                     except Exception:
@@ -1606,7 +1617,7 @@ def upload_local_file_in_chunks(path, headnode_url, purpose, cluster_token=None,
         )
         if cluster_token:
             complete_req.add_header("Authorization", f"Bearer {cluster_token}")
-        with urllib.request.urlopen(complete_req, timeout=600) as response:
+        with cluster_urlopen(complete_req, timeout=600) as response:
             result = json.loads(response.read().decode("utf-8"))
         result["transfer_id"] = transfer_id
         return result
@@ -1826,7 +1837,7 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
         req = urllib.request.Request(url)
         if cluster_token:
             req.add_header("Authorization", f"Bearer {cluster_token}")
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with cluster_urlopen(req, timeout=600) as resp:
             if resp.status == 200:
                 fd, archive_path = tempfile.mkstemp(prefix="cluster-ci-results-", suffix=".zip")
                 os.close(fd)
@@ -1870,7 +1881,7 @@ def fetch_local_results(job_id, headnode_url, cluster_token=None):
                 if cluster_token:
                     delete_req.add_header("Authorization", f"Bearer {cluster_token}")
                 try:
-                    with urllib.request.urlopen(delete_req, timeout=30) as delete_resp:
+                    with cluster_urlopen(delete_req, timeout=30) as delete_resp:
                         if delete_resp.status != 200:
                             print("⚠️  Results were retrieved but headnode cleanup failed.", file=sys.stderr)
                 except Exception as cleanup_error:
@@ -1904,7 +1915,7 @@ def _fetch_headnode_logs(job_id, headnode_url, offset, cluster_token=None, is_pa
             req = urllib.request.Request(url)
             if cluster_token:
                 req.add_header("Authorization", f"Bearer {cluster_token}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with cluster_urlopen(req, timeout=5) as resp:
                 status_code = getattr(resp, "status", getattr(resp, "code", None))
                 if status_code == 200:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -2066,7 +2077,7 @@ def _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token=Non
             req = urllib.request.Request(status_url)
             if cluster_token:
                 req.add_header("Authorization", f"Bearer {cluster_token}")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with cluster_urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     if status_retry_tracker:
                         status_retry_tracker.record_success()
@@ -2186,6 +2197,7 @@ def local_run():
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
     global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE, RUN_IS_LOCAL
     RUN_IS_LOCAL = True
+    os.environ['DVC_NO_ANALYTICS'] = '1'
 
     clean_old_results()
 
@@ -2291,7 +2303,7 @@ def local_run():
 
     print(f"🚀 Sending local workspace archive to Headnode at {headnode_url}...")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with cluster_urlopen(req, timeout=60) as resp:
             res_data = json.loads(resp.read().decode("utf-8"))
             job_id = res_data.get("job_id")
             if not job_id:

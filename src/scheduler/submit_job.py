@@ -426,6 +426,8 @@ def get_config_value(pattern, content, default=None, is_float=False):
 
 def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None, stages=None):
     """Submits a research job to the headnode scheduler."""
+    if is_local:
+        os.environ['DVC_NO_ANALYTICS'] = '1'
     if not headnode_url:
         print("Error: HEADNODE_URL is required to submit a job.")
         sys.exit(1)
@@ -433,7 +435,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     # Active JIT Network Diagnostic
     try:
         print(f"Connecting to headnode at {headnode_url} (checking connectivity)...")
-        requests.get(f"{headnode_url}/check_space", timeout=3)
+        requests.get(f"{headnode_url}/check_space", timeout=3, allow_redirects=False)
     except requests.exceptions.Timeout:
         print(f"Error: Connection to headnode at {headnode_url} timed out (limit: 3s).")
         print("   Please check that the headnode service is running and accessible.")
@@ -675,7 +677,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         if plan is not None:
             payload["plan"] = plan
 
-        resp = requests.post(f"{headnode_url}/submit_job", json=payload, headers=headers, timeout=10)
+        resp = requests.post(f"{headnode_url}/submit_job", json=payload, headers=headers, timeout=10, allow_redirects=False)
         if resp.status_code >= 400:
             err_msg = resp.text
             try:
@@ -702,7 +704,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             requests.post(f"{headnode_url}/update_job_status", json={
                 "job_id": job_id,
                 "detach_gha": True
-            }, headers=headers, timeout=5)
+            }, headers=headers, timeout=5, allow_redirects=False)
         except Exception:
             pass  # Best-effort; failure here is non-critical
 
@@ -810,7 +812,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             # 1. Annulation globale sur le Headnode via POST /api/jobs/{job_id}/stop (A17 / Multi-machines)
             try:
-                stop_resp = requests.post(f"{headnode_url}/api/jobs/{job_id}/stop", headers=headers, timeout=10)
+                stop_resp = requests.post(f"{headnode_url}/api/jobs/{job_id}/stop", headers=headers, timeout=10, allow_redirects=False)
                 if stop_resp.status_code not in (200, 404):
                     cancel_error = f"Headnode returned HTTP {stop_resp.status_code}: {stop_resp.text}"
             except Exception as e:
@@ -818,7 +820,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             # 2. Récupérer l'URL du worker si disponible pour notification de repli direct
             try:
-                resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
+                resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10, allow_redirects=False)
                 if resp.status_code == 200:
                     job = resp.json()
                     worker_url = job.get('worker_service_url')
@@ -828,7 +830,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             if worker_url:
                 try:
-                    requests.post(f"{worker_url}/cancel/{job_id}", timeout=10)
+                    requests.post(f"{worker_url}/cancel/{job_id}", timeout=10, allow_redirects=False)
                 except Exception as e:
                     if not cancel_error:
                         cancel_error = e
@@ -838,7 +840,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     "job_id": job_id,
                     "status": "failed",
                     "exit_code": -signal.SIGTERM
-                }, headers=headers, timeout=10)
+                }, headers=headers, timeout=10, allow_redirects=False)
             except Exception as e:
                 if not cancel_error:
                     cancel_error = e
@@ -861,7 +863,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 requests.post(f"{headnode_url}/update_job_status", json={
                     "job_id": job_id,
                     "detach_gha": True
-                }, headers=headers, timeout=10)
+                }, headers=headers, timeout=10, allow_redirects=False)
             except Exception:
                 pass
             try:
@@ -886,7 +888,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
     while True:
         try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10)
+            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10, allow_redirects=False)
             resp.raise_for_status()
             status_retry_tracker.record_success()
             job = resp.json()
@@ -899,7 +901,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 if now - last_queue_check >= 10:
                     last_queue_check = now
                     try:
-                        status_resp = requests.get(f"{headnode_url}/scheduler_status", timeout=5)
+                        status_resp = requests.get(f"{headnode_url}/scheduler_status", timeout=5, allow_redirects=False)
                         if status_resp.status_code == 200:
                             data = status_resp.json()
                             workers = data.get("workers", [])
@@ -1064,7 +1066,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
             logs_resp = None
             if headnode_url:
                 try:
-                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
+                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", timeout=5, allow_redirects=False)
                     if h_resp.status_code == 200:
                         logs_resp = h_resp
                     elif h_resp.status_code == 404:
@@ -1074,7 +1076,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                 f"Bascule de repli vers /api/jobs/{job_id}/logs.\n"
                             )
                             fallback_warned = True
-                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5)
+                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5, allow_redirects=False)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
                 except requests.exceptions.RequestException as e:
@@ -1092,7 +1094,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             if logs_resp is None and worker_url:
                 try:
-                    logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5)
+                    logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5, allow_redirects=False)
                 except requests.exceptions.RequestException as e:
                     is_exhausted, err_msg = log_retry_tracker.record_error(
                         error=e,
@@ -1194,7 +1196,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     print(f"\n❌ Job {job_id} failed: Worker restarted while the job was running/assigned. (OOM or System Crash)")
                     if worker_url:
                         try:
-                            crash_resp = requests.get(f"{worker_url}/crash_report", timeout=5)
+                            crash_resp = requests.get(f"{worker_url}/crash_report", timeout=5, allow_redirects=False)
                             if crash_resp.status_code == 200:
                                 dmesg = crash_resp.json().get('dmesg', '').strip()
                                 if dmesg:

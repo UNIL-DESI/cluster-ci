@@ -808,7 +808,7 @@ def heartbeat_loop():
     while True:
         try:
             payload = build_registration_payload(is_startup=is_startup)
-            resp = requests.post(f"{HEADNODE_URL}/register_worker", json=payload, headers=get_headers(), timeout=10)
+            resp = requests.post(f"{HEADNODE_URL}/register_worker", json=payload, headers=get_headers(), timeout=10, allow_redirects=False)
             resp.raise_for_status()
             is_startup = False
             startup_heartbeat_event.set()
@@ -818,7 +818,7 @@ def heartbeat_loop():
 
 def poll_for_job():
     try:
-        resp = requests.get(f"{HEADNODE_URL}/worker_poll/{WORKER_ID}", headers=get_headers(), timeout=10)
+        resp = requests.get(f"{HEADNODE_URL}/worker_poll/{WORKER_ID}", headers=get_headers(), timeout=10, allow_redirects=False)
         resp.raise_for_status()
         data = resp.json()
         if data.get("job_id"):
@@ -846,7 +846,7 @@ def update_job_status(job_id, status, exit_code=None, commit_hash=None, viewer_p
     max_attempts = 7  # 1 initial attempt + up to 6 retries
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = requests.post(f"{HEADNODE_URL}/update_job_status", json=payload, headers=get_headers(), timeout=10)
+            resp = requests.post(f"{HEADNODE_URL}/update_job_status", json=payload, headers=get_headers(), timeout=10, allow_redirects=False)
             resp.raise_for_status()
             if attempt > 1:
                 logger.info(f"Successfully updated job status to '{status}' on attempt {attempt}")
@@ -935,6 +935,7 @@ def execute_job(job):
     env["LOGS_DIR"] = LOGS_DIR
     env["IS_LOCAL"] = "1" if job.get("is_local") else "0"
     if job.get('is_local'):
+        env['DVC_NO_ANALYTICS'] = '1'
         logger.info(f"Injecting IS_LOCAL=1 for job {job_id}")
     workspace_key = "_local/" + repo if job.get("is_local") else repo
     commit_hash = job.get('commit_hash')
@@ -1109,7 +1110,7 @@ def execute_job(job):
             if time.time() - last_db_check > 10:
                 last_db_check = time.time()
                 try:
-                    resp = requests.get(f"{HEADNODE_URL}/job_status/{job_id}", headers=get_headers(), timeout=5)
+                    resp = requests.get(f"{HEADNODE_URL}/job_status/{job_id}", headers=get_headers(), timeout=5, allow_redirects=False)
                     if resp.status_code == 200:
                         job_db = resp.json()
                         db_status = job_db.get("status")
@@ -1286,7 +1287,7 @@ def drain_pending_syncs():
         if data.get("sync_status") == "pending":
             logger.info(f"Project {project_name} has pending sync. Checking headnode space...")
             try:
-                resp = requests.get(f"{HEADNODE_URL}/check_space", timeout=5, headers=get_headers())
+                resp = requests.get(f"{HEADNODE_URL}/check_space", timeout=5, headers=get_headers(), allow_redirects=False)
                 resp.raise_for_status()
                 space_info = resp.json()
 
@@ -1946,6 +1947,8 @@ def start_dvc_viewer():
             viewer_env = os.environ.copy()
             viewer_env["CLUSTER_CI_MODE"] = "executor"
             viewer_env["DVC_VIEWER_PROJECT_DIR"] = worktree_dir
+            if local:
+                viewer_env['DVC_NO_ANALYTICS'] = '1'
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
             dvc_viewer_bin = get_executable("dvc-viewer")

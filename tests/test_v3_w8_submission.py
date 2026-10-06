@@ -520,7 +520,7 @@ class TestV3W8Submission(unittest.TestCase):
         import src.cluster.cluster_run as cr
         cr._job_logs_fallback_warned = False
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("src.cluster.cluster_run.cluster_urlopen", side_effect=fake_urlopen):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 logs, offset = _fetch_headnode_logs("test-job-fallback", "http://fake-headnode:5000", 0)
 
@@ -598,7 +598,8 @@ class TestV3W8Submission(unittest.TestCase):
                 return MagicMock(status_code=404)
 
             # Mock planificateur qui retourne un plan selon le répertoire inspecté
-            def fake_run_planner(repo_path):
+            def fake_run_planner(repo_path, stages=None):
+                assert stages is None
                 abspath = os.path.abspath(repo_path)
                 if abspath == os.path.abspath(target_dir):
                     return {"nodes": [{"name": "data_load"}, {"name": "train_eval"}]}
@@ -622,7 +623,7 @@ class TestV3W8Submission(unittest.TestCase):
 
                 self.assertEqual(job_id, "job-target-plan-test")
                 # Le planificateur doit avoir été appelé UNIQUEMENT sur target_dir
-                mock_plan.assert_called_once_with(os.path.abspath(target_dir))
+                mock_plan.assert_called_once_with(os.path.abspath(target_dir), stages=None)
                 # Le payload soumis doit contenir les nœuds de llm-as-recommender et NON ceux de cluster-ci
                 plan_nodes = [n["name"] for n in posted_payload.get("plan", {}).get("nodes", [])]
                 self.assertIn("data_load", plan_nodes)

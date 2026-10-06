@@ -49,6 +49,16 @@ ambiguous old recovery state is treated conservatively. `--local` supports
 submission and `attach`; GitHub-only subcommands are rejected with that flag.
 The legacy shell launcher rejects `--local` rather than starting a shadow push.
 
+Local submission, workers, stage containers and viewers set `DVC_NO_ANALYTICS=1`
+before invoking DVC. This suppresses DVC's external telemetry; it does not change
+dashboard metrics or the network permissions of trusted job code.
+
+Cluster API clients refuse HTTP redirects, including result uploads, peer
+downloads and authenticated control requests. Configure the canonical headnode
+URL directly; a redirect is an error, not permission to forward credentials or
+job content to another server. Standalone `cluster-run` installations use the
+same no-redirect policy.
+
 ## Cleanup
 
 Both modes use the existing `repositories/registry.json` and oldest-idle-first

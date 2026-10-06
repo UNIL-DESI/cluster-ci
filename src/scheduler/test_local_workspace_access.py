@@ -172,6 +172,7 @@ def test_local_viewer_start_uses_workspace_and_loopback_without_git(clients):
     assert response.status_code == 200
     prepare.assert_not_called()
     assert start.call_args.kwargs['cwd'] == str(local)
+    assert start.call_args.kwargs['env']['DVC_NO_ANALYTICS'] == '1'
     assert start.call_args.args[0][-2:] == ['--host', '127.0.0.1']
     assert (local / '.cluster-ci-viewer-port').read_text() == '12345'
 
@@ -198,10 +199,14 @@ def test_headnode_local_listing_remains_available_without_browser_unlock(clients
 def test_public_local_status_and_logs_remain_available(clients):
     _, browser, _, _ = clients
     with patch.object(headnode, 'get_db_conn') as conn:
-        conn.return_value.__enter__.return_value.cursor.return_value.fetchone.return_value = {'job_id': 'example', 'is_local': 1, 'status': 'running', 'started_at': '2026-01-01', 'worker_service_url': 'http://worker', 'service_url': 'http://worker'}
+        job = {'job_id': 'example', 'is_local': 1, 'status': 'running', 'started_at': '2026-01-01', 'worker_service_url': 'http://worker', 'service_url': 'http://worker'}
+        fetch = conn.return_value.__enter__.return_value.cursor.return_value.fetchone
+        fetch.side_effect = [job, (0,)]
         response = browser.get('/job_status/example')
         assert response.status_code == 200
         assert response.json['status'] == 'running'
+        fetch.side_effect = None
+        fetch.return_value = job
         with patch.object(headnode.requests, 'get', return_value=Mock(status_code=200, json=lambda: {'logs': 'synthetic log', 'offset': 13})):
             response = browser.get('/api/jobs/example/logs')
     assert response.status_code == 200

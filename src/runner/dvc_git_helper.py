@@ -17,6 +17,12 @@ import tarfile
 from pathlib import Path
 from typing import List, Optional
 
+try:
+    from src.runner.cluster_http import cluster_urlopen
+except ImportError:
+    # This helper is also invoked directly by its file path inside containers.
+    from cluster_http import cluster_urlopen
+
 if sys.platform.startswith("win"):
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -383,7 +389,7 @@ def _delete_local_transfer(headnode_url, transfer_id, cluster_token=None):
     if cluster_token:
         req.add_header('Authorization', f'Bearer {cluster_token}')
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with cluster_urlopen(req, timeout=30):
             pass
     except Exception:
         pass
@@ -406,7 +412,7 @@ def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_
     )
     if cluster_token:
         create_req.add_header('Authorization', f'Bearer {cluster_token}')
-    with urllib.request.urlopen(create_req, timeout=30) as response:
+    with cluster_urlopen(create_req, timeout=30) as response:
         transfer = json.loads(response.read().decode('utf-8'))
 
     transfer_id = transfer['transfer_id']
@@ -434,7 +440,7 @@ def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_
                         )
                         if cluster_token:
                             chunk_req.add_header('Authorization', f'Bearer {cluster_token}')
-                        with urllib.request.urlopen(chunk_req, timeout=120):
+                        with cluster_urlopen(chunk_req, timeout=120):
                             pass
                         break
                     except Exception:
@@ -455,7 +461,7 @@ def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_
         )
         if cluster_token:
             complete_req.add_header('Authorization', f'Bearer {cluster_token}')
-        with urllib.request.urlopen(complete_req, timeout=600) as response:
+        with cluster_urlopen(complete_req, timeout=600) as response:
             return json.loads(response.read().decode('utf-8'))
     except Exception:
         _delete_local_transfer(headnode_url, transfer_id, cluster_token)
@@ -567,7 +573,7 @@ def _sync_metrics_http():
 
     try:
         log_info(f"Posting {len(files_to_upload)} metric/lock file(s) to {url}...")
-        with urllib.request.urlopen(req, timeout=60) as response:
+        with cluster_urlopen(req, timeout=60) as response:
             payload = response.read()
             if response.status in (200, 201):
                 response_data = json.loads(payload.decode('utf-8'))

@@ -61,10 +61,14 @@ def test_unsupported_local_commands_stop_before_network(command, monkeypatch):
 
 def test_local_mode_selected_before_submission_failure(monkeypatch):
     monkeypatch.setattr(client, 'RUN_IS_LOCAL', None)
+    monkeypatch.setenv('DVC_NO_ANALYTICS', '')
+    monkeypatch.delenv('DVC_TEST', raising=False)
     with patch.object(client, 'clean_old_results', side_effect=RuntimeError('synthetic failure')):
         with pytest.raises(RuntimeError):
             client.local_run()
     assert client.RUN_IS_LOCAL is True
+    from dvc.analytics import is_enabled
+    assert is_enabled() is False
 
 
 @pytest.mark.parametrize('args', [['--local'], ['list', '--local'], ['--local=true'], ['--unknown']])
@@ -90,12 +94,12 @@ def test_installation_env_cannot_downgrade_local_mode(tmp_path):
     script.parent.mkdir(parents=True)
     source = (ROOT / 'src/runner/run_research_pipeline.sh').read_text()
     prefix = source[:source.index('# Normal workspace and volume names stay unchanged.')]
-    script.write_text(prefix + '\nprintf "MODE=%s" "$IS_LOCAL"\n')
-    (tmp_path / '.env').write_text('IS_LOCAL=0\n')
+    script.write_text(prefix + '\nprintf "MODE=%s ANALYTICS_DISABLED=%s" "$IS_LOCAL" "$DVC_NO_ANALYTICS"\n')
+    (tmp_path / '.env').write_text('IS_LOCAL=0\nDVC_NO_ANALYTICS=\n')
     env = dict(os.environ, IS_LOCAL='1', CLUSTER_CI_MODE='executor', CALLER_COMMIT_SHA='synthetic')
     result = subprocess.run(['bash', str(script), 'lab/test', 'local-draft/test'], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    assert 'MODE=1' in result.stdout
+    assert 'MODE=1 ANALYTICS_DISABLED=1' in result.stdout
 
 
 @pytest.mark.parametrize('local', ['0', '1'])
@@ -113,6 +117,7 @@ def test_job_metadata_overrides_stage_secrets(tmp_path, monkeypatch, local):
     obj.current_container = 'synthetic'
     with patch.object(branch.subprocess, 'Popen'):
         obj.execute_node_in_container('stage', attempt=2, env_vars={
+            'DVC_NO_ANALYTICS': '',
             'IS_LOCAL': '0', 'CLUSTER_CI_MODE': 'delegate', 'CLUSTER_TOKEN': 'wrong',
             'HEADNODE_URL': 'https://external.invalid', 'CLUSTER_CI_NODE_ATTEMPT': '100', 'USER_PARAMETER': 'kept'})
     env = docker.exec_in_container.call_args.kwargs['env']
@@ -123,3 +128,4 @@ def test_job_metadata_overrides_stage_secrets(tmp_path, monkeypatch, local):
     assert env['JOB_ID'] == 'synthetic'
     assert env['CLUSTER_CI_NODE_ATTEMPT'] == '2'
     assert env['USER_PARAMETER'] == env['FROM_FILE'] == 'kept'
+    assert env['DVC_NO_ANALYTICS'] == ('1' if local == '1' else '')

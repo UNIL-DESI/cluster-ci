@@ -36,6 +36,8 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if _BASE_DIR not in sys.path:
     sys.path.insert(0, _BASE_DIR)
 
+from src.runner.cluster_http import cluster_urlopen
+
 try:
     from src.runner import dvc_git_helper
 except (ImportError, SystemExit):
@@ -436,7 +438,7 @@ class BranchExecutor:
                 if self.cluster_token:
                     headers["Authorization"] = f"Bearer {self.cluster_token}"
                 req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with cluster_urlopen(req, timeout=5) as resp:
                     pass
             except Exception as exc:
                 logger.debug("Erreur heartbeat runner (non fatale): %s", exc)
@@ -480,7 +482,7 @@ class BranchExecutor:
         if self.cluster_token:
             headers["Authorization"] = f"Bearer {self.cluster_token}"
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with cluster_urlopen(req, timeout=30) as resp:
             content = resp.read().decode("utf-8")
             return json.loads(content)
 
@@ -496,7 +498,7 @@ class BranchExecutor:
                 if self.cluster_token:
                     headers["Authorization"] = f"Bearer {self.cluster_token}"
                 req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with cluster_urlopen(req, timeout=5) as resp:
                     if resp.status == 200:
                         data = json.loads(resp.read().decode("utf-8"))
                         workers = data if isinstance(data, list) else data.get("workers", [])
@@ -827,6 +829,8 @@ class BranchExecutor:
             "CLUSTER_CI_MODE": "executor",
             "IS_LOCAL": os.environ.get("IS_LOCAL", "0"),
         }
+        if local:
+            env['DVC_NO_ANALYTICS'] = '1'
 
         ret = self.docker.run_container(
             image=image,
@@ -1009,6 +1013,8 @@ class BranchExecutor:
             'CLUSTER_TOKEN': self.cluster_token or '',
             'CLUSTER_CI_NODE_ATTEMPT': str(attempt),
         })
+        if env['IS_LOCAL'] == '1':
+            env['DVC_NO_ANALYTICS'] = '1'
 
         # Démarrage du watchdog mémoire hôte si supporté (Grace-Blackwell GB10 Guard)
         watchdog_proc = None

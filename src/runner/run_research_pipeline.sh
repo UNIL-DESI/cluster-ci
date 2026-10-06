@@ -99,6 +99,9 @@ if [ "$IS_LOCAL" = "1" ] && [ "$CLUSTER_CI_MODE" != "executor" ]; then
     echo "Local mode cannot use external log delegation." >&2
     exit 1
 fi
+if [ "$IS_LOCAL" = "1" ]; then
+    export DVC_NO_ANALYTICS=1
+fi
 
 # Prioritize local GITHUB_PAT or GH_TOKEN from local environment files over the CLI token argument
 if [ -n "$GITHUB_PAT" ]; then
@@ -613,6 +616,7 @@ docker run -d \
     -e CLUSTER_TOKEN="$CLUSTER_TOKEN" \
     -e CLUSTER_CI_MODE=executor \
     -e IS_LOCAL="$IS_LOCAL" \
+    -e DVC_NO_ANALYTICS="${DVC_NO_ANALYTICS:-}" \
     -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
     -e CLUSTER_CI_VRAM_LIMIT_GB="$VRAM_LIMIT" \
     -e PYTHONSTARTUP=/cluster-ci/src/runner/gpu_memory_guard.py \
@@ -686,6 +690,7 @@ docker exec \
         -e CLUSTER_TOKEN="$CLUSTER_TOKEN" \
         -e CLUSTER_CI_MODE=executor \
         -e IS_LOCAL="$IS_LOCAL" \
+        -e DVC_NO_ANALYTICS="${DVC_NO_ANALYTICS:-}" \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
         "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
 }
@@ -910,6 +915,7 @@ else
         --user "$(id -u):$(id -g)" -e HOME=/home/user \
         -e CLUSTER_CI_MODE=executor \
         $ENV_FILE_FLAG \
+        -e DVC_NO_ANALYTICS="${DVC_NO_ANALYTICS:-}" \
         $DOCKER_IMAGE \
         bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && dvc-viewer --port $VIEWER_PORT" > "dvc-viewer.log" 2>&1 &
 fi

@@ -110,6 +110,8 @@ def test_container_recreation_preserves_local_mode(tmp_path, monkeypatch, mode):
     assert docker.run_container.call_count == 2
     for call in docker.run_container.call_args_list:
         assert call.kwargs["env"]["IS_LOCAL"] == (mode or "0")
+        if mode == '1':
+            assert call.kwargs['env']['DVC_NO_ANALYTICS'] == '1'
 
 
 def test_local_metrics_keep_existing_http_transport(monkeypatch):
@@ -143,7 +145,7 @@ def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypa
     ])
     monkeypatch.setattr(executor, "call_next_node", next_node)
 
-    def execute(node, gpu_ids_str):
+    def execute(node, gpu_ids_str, **kwargs):
         (repo / "metrics.json").write_text('{"synthetic_stage": "' + node + '"}\n')
         return 0, ""
 

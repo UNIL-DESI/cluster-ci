@@ -45,6 +45,8 @@ def test_poll_preserves_mode_through_worker_startup(tmp_path, monkeypatch, paral
             worker.execute_job(payload)
     env = popen.call_args.kwargs['env']
     assert env['IS_LOCAL'] == str(is_local)
+    if is_local:
+        assert env['DVC_NO_ANALYTICS'] == '1'
     assert env['JOB_ID'] == job['job_id']
     if parallel:
         assert env['CLUSTER_CI_PARALLEL_MODE'] == '1'
