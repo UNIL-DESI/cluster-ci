@@ -671,3 +671,130 @@ exec python3 "$@"
                 calls = f.read()
             assert "--no-deps" not in calls, f"Un repli --no-deps a été exécuté : {calls}"
 
+
+def test_verify_packages_ignores_nvidia_preinstalled_not_declared():
+    """
+    Vérifie qu'en R2, les paquets avec préfixe nvidia_* préinstallés dans l'image
+    (ex: nvidia-dali-cuda130) ne sont PAS ajoutés aux paquets attendus
+    s'ils ne sont pas déclarés dans le projet.
+    """
+    class MockDist:
+        def __init__(self, name, version, path):
+            self.name = name
+            self.version = version
+            self._path = path
+
+    def mock_dists():
+        return [
+            MockDist("torch", "2.6.0", "/usr/local/lib/python3.12/dist-packages/torch-2.6.0.dist-info"),
+            MockDist("nvidia-dali-cuda130", "1.45.0", "/usr/local/lib/python3.12/dist-packages/nvidia_dali_cuda130-1.45.0.dist-info"),
+        ]
+
+    with patch("importlib.metadata.distributions", side_effect=mock_dists), \
+         patch("importlib.metadata.distribution", side_effect=lambda n: MockDist(n, "2.6.0", "/usr/local/lib/python3.12/dist-packages/torch-2.6.0.dist-info")), \
+         patch("importlib.import_module"):
+        res = verify_packages(
+            pythonpath="",
+            base_dir="/home/user/.local",
+            check_subprocesses=False,
+            packages_to_verify=["torch"],
+        )
+        assert res == 0
+
+
+def test_verify_packages_ignores_editable_repo_package():
+    """
+    Vérifie que le paquet du dépôt lui-même (ex: cluster-ci installé en editable)
+    est ignoré de la vérification des dépendances tierces sans faux échec.
+    """
+    with tempfile.TemporaryDirectory() as tmp_work:
+        pyproj = os.path.join(tmp_work, "pyproject.toml")
+        with open(pyproj, "w", encoding="utf-8") as f:
+            f.write('[project]\nname = "my-project"\nversion = "0.1.0"\ndependencies = ["requests"]\n')
+
+        class MockDist:
+            def __init__(self, name, version, path, direct_url=None):
+                self.name = name
+                self.version = version
+                self._path = path
+                self.direct_url = direct_url
+            def read_text(self, filename):
+                if filename == "direct_url.json":
+                    return self.direct_url
+                return None
+
+        user_sp = os.path.join(tmp_work, ".local", "lib", "python3.12", "site-packages")
+        os.makedirs(user_sp, exist_ok=True)
+
+        user_dists = [
+            MockDist("my-project", "0.1.0", os.path.join(user_sp, "my_project-0.1.0.dist-info"), '{"dir_info": {"editable": true}}'),
+            MockDist("requests", "2.31.0", os.path.join(user_sp, "requests-2.31.0.dist-info")),
+        ]
+
+        def mock_distributions(path=None):
+            if path:
+                return user_dists
+            return [MockDist("python", "3.12.0", "/usr/lib/python3.12")]
+
+        def mock_lookup(n):
+            if n in ("my-project", "my_project"):
+                return user_dists[0]
+            if n == "requests":
+                return user_dists[1]
+            raise importlib.metadata.PackageNotFoundError(n)
+
+        with patch("importlib.metadata.distributions", side_effect=mock_distributions), \
+             patch("importlib.metadata.distribution", side_effect=mock_lookup), \
+             patch("importlib.import_module"):
+            res = verify_packages(
+                pythonpath=user_sp,
+                base_dir=os.path.join(tmp_work, ".local"),
+                workspace_dir=tmp_work,
+                check_subprocesses=False,
+            )
+            assert res == 0
+
+
+def test_get_importable_modules_filters_standalone_utility_script():
+    """
+    Vérifie que get_importable_modules filtre les scripts utilitaires (ex: rec2idx.py)
+    et ne conserve que les modules correspondant au nom de la distribution.
+    """
+    class MockDist:
+        def __init__(self, top_content):
+            self.top_content = top_content
+        def read_text(self, filename):
+            if filename == "top_level.txt":
+                return self.top_content
+            return None
+
+    # Distribution avec module principal et script utilitaire auxiliaire
+    dist = MockDist("nvidia\nrec2idx\n")
+    mods = get_importable_modules(dist, "nvidia-dali-cuda130")
+    assert "rec2idx" not in mods
+    assert "nvidia" in mods
+
+
+def test_verify_packages_fails_fast_on_missing_declared_dep():
+    """
+    Vérifie que si une dépendance déclarée dans pyproject.toml
+    est absente de l'environnement, verify_packages échoue fail-fast (code 1).
+    """
+    with tempfile.TemporaryDirectory() as tmp_work:
+        pyproj = os.path.join(tmp_work, "pyproject.toml")
+        with open(pyproj, "w", encoding="utf-8") as f:
+            f.write('[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = ["nonexistent_pkg>=1.0"]\n')
+
+        def mock_dists(path=None):
+            return []
+
+        with patch("importlib.metadata.distributions", side_effect=mock_dists), \
+             patch("importlib.metadata.distribution", side_effect=importlib.metadata.PackageNotFoundError("nonexistent_pkg")):
+            res = verify_packages(
+                pythonpath="",
+                base_dir="/home/user/.local",
+                workspace_dir=tmp_work,
+                check_subprocesses=False,
+            )
+            assert res == 1
+
