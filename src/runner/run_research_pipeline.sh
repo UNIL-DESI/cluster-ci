@@ -907,8 +907,11 @@ docker_exec "uv run --with tomlkit python3 /cluster-ci/src/runner/validate_pypro
 log_info "DVC-Git-Helper: Injecting cache: false for metrics and plots..."
 docker_exec "uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py inject"
 
-log_info "Workspace Sanitizer: Purging stale/untracked files, running dvc checkout, and verifying lock hashes..."
-docker_exec "python3 -m src.runner.workspace_sanitizer /workspace"
+log_info "Workspace Sanitizer: Purging stale outputs, running dvc checkout, and verifying lock hashes..."
+docker_exec "python3 -m src.runner.workspace_sanitizer /workspace" || {
+    log_error "Workspace sanitization or DVC integrity check failed! Aborting pipeline."
+    exit 1
+}
 
 echo "===STAGE:setup:END==="
 echo "===STAGE:dvc_repro:BEGIN==="

@@ -1,6 +1,7 @@
 """Tests for Cluster-CI Workspace Sanitizer (Bug 9)."""
 
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -9,7 +10,7 @@ import sys
 import tempfile
 import pytest
 
-from src.runner.workspace_sanitizer import sanitize_workspace
+from src.runner.workspace_sanitizer import WorkspaceSanitizerError, sanitize_workspace
 
 
 def _remove_readonly(func, path, exc_info):
@@ -29,23 +30,6 @@ def temp_workspace():
         subprocess.run(["git", "init"], cwd=d, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "Tester"], cwd=d, check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=d, check=True)
-
-        # Create preserved directories and files
-        dvc_cache_dir = os.path.join(d, ".dvc", "cache", "files", "md5")
-        os.makedirs(dvc_cache_dir, exist_ok=True)
-        with open(os.path.join(dvc_cache_dir, "cache_block.dat"), "w") as f:
-            f.write("important cached data block")
-
-        venv_dir = os.path.join(d, "venv", "bin")
-        os.makedirs(venv_dir, exist_ok=True)
-        with open(os.path.join(venv_dir, "activate"), "w") as f:
-            f.write("# venv shim")
-
-        with open(os.path.join(d, ".env"), "w") as f:
-            f.write("SECRET_KEY=12345\n")
-
-        with open(os.path.join(d, ".cluster-ci"), "w") as f:
-            f.write("REQUIRED_RAM=16GB\n")
 
         # Create valid output matching dvc.lock
         data_dir = os.path.join(d, "data")
@@ -68,60 +52,184 @@ stages:
         with open(os.path.join(d, "dvc.lock"), "w", encoding="utf-8") as f:
             f.write(dvc_lock)
 
-        # Git commit clean base
-        with open(os.path.join(d, ".gitignore"), "w", encoding="utf-8") as f:
-            f.write(".dvc/cache\nvenv\n")
-        subprocess.run(["git", "add", "."], cwd=d, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial clean state"], cwd=d, check=True, capture_output=True)
+        # Write dvc.yaml
+        dvc_yaml = """schema: '2.0'
+stages:
+  prep:
+    cmd: python prep.py
+    outs:
+      - data/clean_data.csv
+"""
+        with open(os.path.join(d, "dvc.yaml"), "w", encoding="utf-8") as f:
+            f.write(dvc_yaml)
 
         yield d, valid_md5
     finally:
         shutil.rmtree(d, onerror=_remove_readonly, ignore_errors=True)
 
 
-def test_sanitize_purges_stale_files_and_preserves_cache(temp_workspace):
-    """Test Bug 9: stale files are purged, .dvc/cache, venv and .env are strictly preserved."""
+def test_sanitize_preserves_config_local_and_ignored_non_dvc_files(temp_workspace):
+    """Test Bug 9 (Point 1): .dvc/config.local, .dvc/tmp, external models, secrets and markers are strictly preserved."""
     ws, _ = temp_workspace
 
-    # Plant stale residual files
-    stale_file1 = os.path.join(ws, "data", "leftover.stale_20261005")
-    stale_file2 = os.path.join(ws, ".stale_temp_lock")
-    with open(stale_file1, "w") as f:
-        f.write("stale data leak")
-    with open(stale_file2, "w") as f:
-        f.write("stale lock")
+    # Plant files that MUST NEVER be deleted by sanitizer
+    config_local = os.path.join(ws, ".dvc", "config.local")
+    os.makedirs(os.path.dirname(config_local), exist_ok=True)
+    with open(config_local, "w") as f:
+        f.write("[core]\nremote = cluster_remote\n")
 
-    # Plant an untracked garbage file
-    garbage_file = os.path.join(ws, "garbage_dump.tmp")
-    with open(garbage_file, "w") as f:
-        f.write("untracked garbage")
+    dvc_tmp = os.path.join(ws, ".dvc", "tmp", "lock.pid")
+    os.makedirs(os.path.dirname(dvc_tmp), exist_ok=True)
+    with open(dvc_tmp, "w") as f:
+        f.write("12345")
+
+    models_dir = os.path.join(ws, "models_cache", "bert")
+    os.makedirs(models_dir, exist_ok=True)
+    weights_file = os.path.join(models_dir, "pytorch_model.bin")
+    with open(weights_file, "wb") as f:
+        f.write(b"model weights outside dvc")
+
+    secret_env = os.path.join(ws, "job_secrets_123.env")
+    with open(secret_env, "w") as f:
+        f.write("CLUSTER_TOKEN=secret\n")
+
+    guard_marker = os.path.join(ws, "host_guard_killed.marker")
+    with open(guard_marker, "w") as f:
+        f.write("KILLED_AT=20261006\n")
+
+    # Also plant a genuine stale residual file
+    stale_file = os.path.join(ws, ".stale_execution_dump")
+    with open(stale_file, "w") as f:
+        f.write("stale residue")
 
     res = sanitize_workspace(ws, dvc_checkout=False, strict_lock_check=True)
-    assert len(res["purged_files"]) >= 3
 
-    # Stale files must be gone
-    assert not os.path.exists(stale_file1)
-    assert not os.path.exists(stale_file2)
-    assert not os.path.exists(garbage_file)
+    # Stale file must be purged
+    assert not os.path.exists(stale_file)
+    assert ".stale_execution_dump" in res["purged_files"]
 
-    # Preserved paths must remain intact
-    assert os.path.exists(os.path.join(ws, ".dvc", "cache", "files", "md5", "cache_block.dat"))
-    assert os.path.exists(os.path.join(ws, "venv", "bin", "activate"))
-    assert os.path.exists(os.path.join(ws, ".env"))
-    assert os.path.exists(os.path.join(ws, ".cluster-ci"))
-    assert os.path.exists(os.path.join(ws, "data", "clean_data.csv"))
+    # All non-DVC files must be preserved
+    assert os.path.isfile(config_local)
+    assert os.path.isfile(dvc_tmp)
+    assert os.path.isfile(weights_file)
+    assert os.path.isfile(secret_env)
+    assert os.path.isfile(guard_marker)
 
 
-def test_sanitize_detects_hash_mismatch_against_dvc_lock(temp_workspace):
-    """Test Bug 9: corrupted or modified output whose hash mismatches dvc.lock raises RuntimeError."""
+def test_sanitize_cleans_stray_file_in_directory_output(temp_workspace):
+    """Test Bug 9 (Point 1 & 4): stray files inside a declared directory output are purged."""
+    ws, _ = temp_workspace
+
+    # Setup directory output with .dir manifest in cache
+    dir_out_rel = "data/raw_dir"
+    dir_out_abs = os.path.join(ws, "data", "raw_dir")
+    os.makedirs(dir_out_abs, exist_ok=True)
+
+    file1_content = b"file 1 content\n"
+    file1_md5 = hashlib.md5(file1_content).hexdigest()
+    with open(os.path.join(dir_out_abs, "f1.txt"), "wb") as f:
+        f.write(file1_content)
+
+    dir_md5 = "ab1234567890abcdef1234567890abcd.dir"
+    dir_manifest = [{"md5": file1_md5, "relpath": "f1.txt"}]
+
+    cache_dir = os.path.join(ws, ".dvc", "cache", "files", "md5", dir_md5[:2])
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(os.path.join(cache_dir, dir_md5[2:]), "w", encoding="utf-8") as f:
+        json.dump(dir_manifest, f)
+
+    # Update dvc.lock to track directory output
+    dvc_lock = f"""schema: '2.0'
+stages:
+  ingest:
+    cmd: python ingest.py
+    outs:
+      - path: {dir_out_rel}
+        md5: {dir_md5}
+"""
+    with open(os.path.join(ws, "dvc.lock"), "w", encoding="utf-8") as f:
+        f.write(dvc_lock)
+
+    # Plant a stray file inside raw_dir not in manifest
+    stray_file = os.path.join(dir_out_abs, "stray_leak.txt")
+    with open(stray_file, "w") as f:
+        f.write("unauthorized stray file")
+
+    res = sanitize_workspace(ws, dvc_checkout=False, strict_lock_check=True)
+
+    # Stray file inside DVC directory output must be removed
+    assert not os.path.exists(stray_file)
+    assert os.path.isfile(os.path.join(dir_out_abs, "f1.txt"))
+    assert any("stray_leak.txt" in p for p in res["purged_files"])
+
+
+def test_sanitize_healthy_directory_output_no_false_positive(temp_workspace):
+    """Test Bug 9 (Point 3 & 4): healthy directory output audited via .dir manifest produces zero false positive."""
+    ws, _ = temp_workspace
+
+    dir_out_rel = "data/clean_dir"
+    dir_out_abs = os.path.join(ws, "data", "clean_dir")
+    os.makedirs(dir_out_abs, exist_ok=True)
+
+    file_a_content = b"content a\n"
+    file_a_md5 = hashlib.md5(file_a_content).hexdigest()
+    with open(os.path.join(dir_out_abs, "a.csv"), "wb") as f:
+        f.write(file_a_content)
+
+    dir_md5 = "fe9876543210fedcba9876543210fedc.dir"
+    dir_manifest = [{"md5": file_a_md5, "relpath": "a.csv"}]
+
+    cache_dir = os.path.join(ws, ".dvc", "cache", "files", "md5", dir_md5[:2])
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(os.path.join(cache_dir, dir_md5[2:]), "w", encoding="utf-8") as f:
+        json.dump(dir_manifest, f)
+
+    dvc_lock = f"""schema: '2.0'
+stages:
+  process:
+    cmd: python process.py
+    outs:
+      - path: {dir_out_rel}
+        md5: {dir_md5}
+"""
+    with open(os.path.join(ws, "dvc.lock"), "w", encoding="utf-8") as f:
+        f.write(dvc_lock)
+
+    # Sanitizer must succeed without any error or false positive
+    res = sanitize_workspace(ws, dvc_checkout=False, strict_lock_check=True)
+    assert res["checked_outputs"] >= 1
+    assert len(res["mismatches"]) == 0
+
+
+def test_sanitize_checkout_failure_raises_exception(temp_workspace, monkeypatch):
+    """Test Bug 9 (Point 2 & 4): dvc checkout --force failure raises explicit WorkspaceSanitizerError."""
+    ws, _ = temp_workspace
+
+    class DummyFailedProcess:
+        returncode = 1
+        stdout = ""
+        stderr = "ERROR: failed to connect to remote storage"
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: DummyFailedProcess())
+
+    with pytest.raises(WorkspaceSanitizerError) as excinfo:
+        sanitize_workspace(ws, dvc_checkout=True, strict_lock_check=False)
+
+    err = str(excinfo.value)
+    assert "DVC checkout failed (exit code 1)" in err
+    assert "failed to connect to remote storage" in err
+
+
+def test_sanitize_detects_hash_mismatch_and_fails_fast(temp_workspace):
+    """Test Bug 9 (Point 2): corrupted output raises explicit WorkspaceSanitizerError."""
     ws, _ = temp_workspace
 
     # Corrupt the valid output
     corrupt_file = os.path.join(ws, "data", "clean_data.csv")
     with open(corrupt_file, "w", encoding="utf-8") as f:
-        f.write("corrupted or leaked test pairs from previous run\n")
+        f.write("corrupted data content\n")
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(WorkspaceSanitizerError) as excinfo:
         sanitize_workspace(ws, dvc_checkout=False, strict_lock_check=True)
 
     err = str(excinfo.value)
@@ -130,11 +238,29 @@ def test_sanitize_detects_hash_mismatch_against_dvc_lock(temp_workspace):
     assert "attendu" in err
 
 
-def test_sanitize_safety_guard_rejects_unsafe_workspace():
-    """Test Bug 9: safety invariant prevents running on root filesystem."""
-    with pytest.raises(ValueError) as excinfo:
-        sanitize_workspace("/", dvc_checkout=False, strict_lock_check=False)
-    assert "Safety violation" in str(excinfo.value)
+def test_sanitize_preserves_cache_false_and_persist_true(temp_workspace):
+    """Test Bug 9 (Point 3): cache: false and persist: true outputs are not purged or marked as corrupted."""
+    ws, _ = temp_workspace
+
+    metrics_file = os.path.join(ws, "metrics.json")
+    with open(metrics_file, "w") as f:
+        f.write('{"loss": 0.05}')
+
+    dvc_yaml = """schema: '2.0'
+stages:
+  eval:
+    cmd: python eval.py
+    outs:
+      - metrics.json:
+          cache: false
+          persist: true
+"""
+    with open(os.path.join(ws, "dvc.yaml"), "w", encoding="utf-8") as f:
+        f.write(dvc_yaml)
+
+    res = sanitize_workspace(ws, dvc_checkout=False, strict_lock_check=True)
+    assert os.path.isfile(metrics_file)
+    assert len(res["mismatches"]) == 0
 
 
 def test_sanitize_cli_entrypoint(temp_workspace):

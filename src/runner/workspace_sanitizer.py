@@ -1,10 +1,13 @@
 """Workspace sanitizer for Cluster-CI runners (Bug 9).
 
 Provides atomic workspace sanitation before jobs or DAG nodes execute:
-1. Purges stale leftover files (*.stale_*, .stale_*).
-2. Cleans untracked and ignored files outside the preserved whitelist and dvc.lock.
-3. Executes and controls 'dvc checkout --force' with strict return code verification.
-4. Audits MD5 hashes of all present DVC outputs against dvc.lock, failing fast on discrepancies.
+1. Purges stale leftover files and directories (*.stale_*, .stale_*).
+2. Cleans exclusively declared DVC outputs (outs of dvc.yaml/dvc.lock) having stray files
+   or mismatched hashes, leaving all non-DVC ignored and untracked files completely untouched
+   (e.g., .dvc/config.local, .dvc/tmp, models cache, job_secrets_*.env, host_guard markers, FIFOs).
+3. Executes and controls 'dvc checkout --force', failing fast with explicit exception on non-zero exit.
+4. Audits MD5 integrity of DVC outputs (handling .dir directory manifests without false positives,
+   and ignoring cache: false / persist: true outputs), failing fast on discrepancies.
 """
 
 import argparse
@@ -14,7 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
@@ -23,24 +26,10 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-# Whitelist of paths/patterns strictly preserved across job runs:
-# 1. .dvc/cache: Content-Addressed Storage local cache, indispensable to avoid re-downloading/recomputing heavy datasets.
-# 2. .dvc (config, tmp): DVC metadata and lockfiles required for 'dvc checkout' execution.
-# 3. .git: Local Git repository metadata and objects required for branch tracking and commits.
-# 4. venv / .venv / env: Python virtual environment holding installed packages and shims.
-# 5. .env / .env.secrets / *.env / .cluster-ci*: Job secrets and execution configuration injected by runner.
-DEFAULT_PRESERVED_PATTERNS = {
-    ".dvc/cache",
-    ".dvc",
-    ".git",
-    "venv",
-    ".venv",
-    "env",
-    ".env",
-    ".env.secrets",
-    ".cluster-ci",
-    ".cluster-ci.secrets",
-}
+
+class WorkspaceSanitizerError(RuntimeError):
+    """Raised when workspace sanitation or DVC integrity check fails."""
+    pass
 
 
 def _norm(p: str) -> str:
@@ -68,45 +57,112 @@ def _compute_file_md5(file_path: str) -> str:
     return h.hexdigest()
 
 
-def _get_lockfile_outputs(workspace_dir: str) -> Dict[str, Dict[str, Any]]:
-    """Extract expected output paths and their hashes from dvc.lock if present.
-    
-    Returns a mapping of normalized relative path -> {'md5': str, 'stage': str, 'is_dir': bool}.
+def _get_declared_dvc_outputs(workspace_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Extract expected output paths, hashes, and flags from dvc.yaml and dvc.lock.
+
+    Returns mapping of normalized relative path -> {
+        'md5': Optional[str],
+        'stage': str,
+        'is_dir': bool,
+        'cache': bool,
+        'persist': bool,
+    }
     """
-    lock_path = os.path.join(workspace_dir, "dvc.lock")
-    if not os.path.isfile(lock_path):
-        return {}
-
-    try:
-        with open(lock_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except Exception as e:
-        raise ValueError(f"Failed to parse dvc.lock at '{lock_path}': {e}") from e
-
-    if not isinstance(data, dict):
-        return {}
-
-    stages = data.get("stages", {}) or {}
     outputs: Dict[str, Dict[str, Any]] = {}
 
-    for stage_name, stage_data in stages.items():
-        if not isinstance(stage_data, dict):
-            continue
-        for out in stage_data.get("outs", []) or []:
-            if not isinstance(out, dict):
-                continue
-            out_p = out.get("path")
-            out_md5 = out.get("md5")
-            if out_p and out_md5:
-                norm_p = _norm(out_p)
-                is_dir = out_md5.endswith(".dir")
-                outputs[norm_p] = {
-                    "md5": out_md5,
-                    "stage": stage_name,
-                    "is_dir": is_dir,
-                }
+    # 1. Parse dvc.yaml to discover flags (cache, persist)
+    yaml_path = os.path.join(workspace_dir, "dvc.yaml")
+    if os.path.isfile(yaml_path):
+        try:
+            with open(yaml_path, "r", encoding="utf-8", errors="replace") as f:
+                y_data = yaml.safe_load(f)
+            if isinstance(y_data, dict):
+                stages = y_data.get("stages", {}) or {}
+                for stage_name, stage_data in stages.items():
+                    if not isinstance(stage_data, dict):
+                        continue
+                    outs = stage_data.get("outs", []) or []
+                    for out_entry in outs:
+                        out_p = None
+                        out_cache = True
+                        out_persist = False
+                        if isinstance(out_entry, str):
+                            out_p = out_entry
+                        elif isinstance(out_entry, dict):
+                            # Formats: {'path': '...', 'cache': False} or {'data/out.csv': {'cache': False}}
+                            if "path" in out_entry:
+                                out_p = out_entry.get("path")
+                                out_cache = out_entry.get("cache", True)
+                                out_persist = out_entry.get("persist", False)
+                            else:
+                                for k, v in out_entry.items():
+                                    out_p = k
+                                    if isinstance(v, dict):
+                                        out_cache = v.get("cache", True)
+                                        out_persist = v.get("persist", False)
+                                    break
+                        if out_p:
+                            norm_p = _norm(out_p)
+                            outputs[norm_p] = {
+                                "md5": None,
+                                "stage": str(stage_name),
+                                "is_dir": False,
+                                "cache": bool(out_cache),
+                                "persist": bool(out_persist),
+                            }
+        except Exception:
+            pass
+
+    # 2. Parse dvc.lock to bind MD5 hashes and directory flags
+    lock_path = os.path.join(workspace_dir, "dvc.lock")
+    if os.path.isfile(lock_path):
+        try:
+            with open(lock_path, "r", encoding="utf-8", errors="replace") as f:
+                l_data = yaml.safe_load(f)
+            if isinstance(l_data, dict):
+                stages = l_data.get("stages", {}) or {}
+                for stage_name, stage_data in stages.items():
+                    if not isinstance(stage_data, dict):
+                        continue
+                    for out in stage_data.get("outs", []) or []:
+                        if not isinstance(out, dict):
+                            continue
+                        out_p = out.get("path")
+                        out_md5 = out.get("md5")
+                        if out_p:
+                            norm_p = _norm(out_p)
+                            is_dir = bool(out_md5 and str(out_md5).endswith(".dir"))
+                            entry = outputs.setdefault(
+                                norm_p,
+                                {
+                                    "md5": None,
+                                    "stage": str(stage_name),
+                                    "is_dir": is_dir,
+                                    "cache": True,
+                                    "persist": False,
+                                },
+                            )
+                            entry["md5"] = out_md5
+                            entry["is_dir"] = is_dir
+                            entry["stage"] = str(stage_name)
+        except Exception as e:
+            raise WorkspaceSanitizerError(f"Failed to parse dvc.lock at '{lock_path}': {e}") from e
 
     return outputs
+
+
+def _find_dir_cache_manifest(workspace_dir: str, dir_md5: str) -> Optional[str]:
+    """Find the .dir JSON manifest file in .dvc/cache corresponding to a directory output MD5."""
+    candidates = [
+        os.path.join(workspace_dir, ".dvc", "cache", "files", "md5", dir_md5[:2], dir_md5[2:]),
+        os.path.join(workspace_dir, ".dvc", "cache", dir_md5[:2], dir_md5[2:]),
+        os.path.join(workspace_dir, ".dvc", "cache", "files", "md5", dir_md5[:2], dir_md5[2:] + ".dir"),
+        os.path.join(workspace_dir, ".dvc", "cache", dir_md5[:2], dir_md5[2:] + ".dir"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
 
 
 def sanitize_workspace(
@@ -118,72 +174,33 @@ def sanitize_workspace(
 ) -> Dict[str, Any]:
     """Sanitize worker workspace before job or DAG node execution.
 
-    Contract & Guarantees:
-    - Input:
-        * workspace_dir: Root directory of the job workspace (must exist).
-        * dvc_checkout: If True, executes 'dvc checkout --force' and enforces zero exit code.
-        * strict_lock_check: If True, validates MD5 of present outputs against dvc.lock and fails fast.
-        * preserved_paths: Optional list of additional relative paths to protect from deletion.
-    - Safety Invariant:
-        * Never deletes any file or directory outside workspace_dir.
-        * Rejects workspace_dir if set to filesystem root.
-    - Whitelist Protection (strictly preserved):
-        * .dvc/cache : Content-Addressed Storage blocks (avoids re-downloading/recomputing heavy data).
-        * .dvc       : DVC configuration, internal state and locks.
-        * .git       : Git version control objects, branch references and configuration.
-        * venv/.venv : Python virtual environment and execution shims.
-        * *.env / .cluster-ci* : Environment secrets and job configuration parameters.
-    - Actions performed:
-        1. Deletes all leftover stale files matching '*.stale_*' or '.stale_*'.
-        2. Inspects untracked/ignored files via Git: deletes residual files not in the whitelist
-           and not registered as valid outputs in dvc.lock (or whose MD5 mismatches dvc.lock).
-        3. Executes 'dvc checkout --force' without suppressing stderr/stdout, raising on failure.
-        4. Audits MD5 of present DVC outputs against dvc.lock; raises detailed error on discrepancies.
-
-    Returns:
-        Dict[str, Any] containing execution summary:
-        {'purged_files': List[str], 'checked_outputs': int, 'mismatches': List[Dict[str, Any]]}
-
-    Raises:
-        FileNotFoundError: If workspace_dir does not exist.
-        ValueError: If workspace_dir is unsafe or invalid.
-        RuntimeError: If 'dvc checkout' fails or outputs mismatch dvc.lock hashes.
+    Targeted Cleaning Rules:
+    - (a) Stale leftovers: purges all files and directories matching '*.stale_*' or '.stale_*'.
+    - (b) Declared DVC outputs:
+        * Files/contents within declared output folders not present in DVC cache manifest are purged.
+        * Outputs with 'cache: false' or 'persist: true' are never purged or flagged as corrupted.
+    - (c) Preserved scope:
+        * Non-DVC untracked and ignored files (such as .dvc/config.local, .dvc/tmp, external models,
+          job_secrets_*.env, host_guard_killed.marker, log FIFOs) are STRICTLY PRESERVED.
+    - Fail-Fast Guarantees:
+        * Raises WorkspaceSanitizerError if 'dvc checkout --force' fails (non-zero exit).
+        * Raises WorkspaceSanitizerError if any cached DVC output has an MD5 mismatch against dvc.lock.
     """
     abs_ws = os.path.abspath(workspace_dir)
     if not os.path.isdir(abs_ws):
         raise FileNotFoundError(f"Workspace directory not found: '{abs_ws}'")
 
-    # Safety: reject root directories
     if abs_ws in ("/", "\\") or os.path.splitdrive(abs_ws)[1] in ("/", "\\", ""):
         raise ValueError(f"Safety violation: workspace_dir cannot be filesystem root '{abs_ws}'")
 
-    # Compile preserved prefixes
-    preserved_prefixes = set(DEFAULT_PRESERVED_PATTERNS)
-    if preserved_paths:
-        for p in preserved_paths:
-            preserved_prefixes.add(_norm(p))
-
-    def _is_preserved(rel_path: str) -> bool:
-        norm_rel = _norm(rel_path)
-        # Explicit file name or prefix check
-        for p in preserved_prefixes:
-            if norm_rel == p or norm_rel.startswith(p + "/"):
-                return True
-        # Secrets files ending with .env
-        basename = os.path.basename(norm_rel)
-        if basename.endswith(".env") or basename.startswith(".cluster-ci"):
-            return True
-        return False
-
     purged_files: List[str] = []
 
-    # 1. Purge stale marker files (*.stale_* or .stale_*) across workspace (except .git / .dvc/cache)
-    for root, dirs, files in os.walk(abs_ws):
+    # 1. Purge stale marker files (*.stale_* or .stale_*) across workspace (avoiding .git / .dvc/cache)
+    for root, dirs, files in os.walk(abs_ws, topdown=True):
         norm_root = _norm(os.path.relpath(root, abs_ws))
         if norm_root == ".":
             norm_root = ""
 
-        # Avoid walking into .git or .dvc/cache
         if norm_root == ".git" or norm_root.startswith(".git/"):
             dirs.clear()
             continue
@@ -191,8 +208,9 @@ def sanitize_workspace(
             dirs.clear()
             continue
 
-        for f in files:
-            if ".stale_" in f:
+        # Purge stale files
+        for f in list(files):
+            if ".stale_" in f or f.startswith(".stale_") or f.endswith(".stale"):
                 target_file = os.path.join(root, f)
                 if _is_path_safe(abs_ws, target_file):
                     try:
@@ -200,64 +218,59 @@ def sanitize_workspace(
                         rel_del = _norm(os.path.relpath(target_file, abs_ws))
                         purged_files.append(rel_del)
                     except OSError as e:
-                        raise RuntimeError(f"Failed to remove stale file '{target_file}': {e}") from e
+                        raise WorkspaceSanitizerError(f"Failed to remove stale file '{target_file}': {e}") from e
 
-    # 2. Inspect untracked and ignored files via Git (if Git repo is initialized)
-    expected_outs = _get_lockfile_outputs(abs_ws)
-    git_dir = os.path.join(abs_ws, ".git")
+        # Purge stale directories
+        for d in list(dirs):
+            if ".stale_" in d or d.startswith(".stale_") or d.endswith(".stale"):
+                target_dir = os.path.join(root, d)
+                if _is_path_safe(abs_ws, target_dir):
+                    try:
+                        shutil.rmtree(target_dir)
+                        rel_del = _norm(os.path.relpath(target_dir, abs_ws)) + "/"
+                        purged_files.append(rel_del)
+                        dirs.remove(d)
+                    except OSError as e:
+                        raise WorkspaceSanitizerError(f"Failed to remove stale directory '{target_dir}': {e}") from e
 
-    if os.path.exists(git_dir):
-        try:
-            status_res = subprocess.run(
-                ["git", "status", "--porcelain=v1", "--ignored", "-u"],
-                cwd=abs_ws,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-            if status_res.returncode == 0:
-                for line in status_res.stdout.splitlines():
-                    if len(line) < 4:
-                        continue
-                    prefix = line[:2]
-                    rel_item = _norm(line[3:].strip().strip('"'))
+    # 2. Clean declared DVC outputs exclusively
+    declared_outs = _get_declared_dvc_outputs(abs_ws)
 
-                    # We inspect untracked (??) or ignored (!!) items
-                    if prefix not in ("??", "!!"):
-                        continue
+    for out_rel, out_info in declared_outs.items():
+        if not out_info.get("cache", True) or out_info.get("persist", False):
+            # cache: false or persist: true outputs must be left intact
+            continue
 
-                    # If item is preserved (cache, venv, .git, .env...), keep it
-                    if _is_preserved(rel_item):
-                        continue
+        full_out_path = os.path.join(abs_ws, out_rel)
+        if not os.path.exists(full_out_path):
+            continue
 
-                    full_path = os.path.join(abs_ws, rel_item)
-                    if not os.path.exists(full_path):
-                        continue
+        out_md5 = out_info.get("md5")
+        if out_info.get("is_dir") and out_md5:
+            manifest_file = _find_dir_cache_manifest(abs_ws, out_md5)
+            if manifest_file and os.path.isdir(full_out_path):
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as f:
+                        dir_items = json.load(f)
+                    allowed_relpaths: Set[str] = set()
+                    if isinstance(dir_items, list):
+                        for item in dir_items:
+                            if isinstance(item, dict) and "relpath" in item:
+                                allowed_relpaths.add(_norm(item["relpath"]))
 
-                    # If item is a declared DVC output:
-                    # If file exists and matches expected lock MD5, keep it.
-                    # If MD5 mismatches, delete it to force clean checkout / reproduction.
-                    if rel_item in expected_outs and os.path.isfile(full_path):
-                        exp_md5 = expected_outs[rel_item]["md5"]
-                        actual_md5 = _compute_file_md5(full_path)
-                        if actual_md5 == exp_md5:
-                            continue  # Valid output, keep
+                    # Inspect files inside output directory and purge stray files
+                    for sub_root, _, sub_files in os.walk(full_out_path):
+                        for sf in sub_files:
+                            sub_file_path = os.path.join(sub_root, sf)
+                            rel_to_out = _norm(os.path.relpath(sub_file_path, full_out_path))
+                            if rel_to_out not in allowed_relpaths:
+                                if _is_path_safe(abs_ws, sub_file_path):
+                                    os.remove(sub_file_path)
+                                    purged_files.append(_norm(os.path.relpath(sub_file_path, abs_ws)))
+                except Exception as e:
+                    raise WorkspaceSanitizerError(f"Failed inspecting directory output '{out_rel}': {e}") from e
 
-                    # Otherwise, delete untracked/ignored leftover
-                    if _is_path_safe(abs_ws, full_path):
-                        if os.path.isfile(full_path) or os.path.islink(full_path):
-                            os.remove(full_path)
-                            purged_files.append(rel_item)
-                        elif os.path.isdir(full_path):
-                            shutil.rmtree(full_path)
-                            purged_files.append(rel_item + "/")
-        except Exception as e:
-            # Re-raise if Git cleanup fails unexpectedly
-            raise RuntimeError(f"Git workspace hygiene scan failed in '{abs_ws}': {e}") from e
-
-    # 3. Execute 'dvc checkout --force' if requested
+    # 3. Execute 'dvc checkout --force' if requested (Fail-Fast)
     if dvc_checkout:
         dvc_yaml_path = os.path.join(abs_ws, "dvc.yaml")
         if os.path.isfile(dvc_yaml_path):
@@ -271,39 +284,39 @@ def sanitize_workspace(
             )
             if checkout_res.returncode != 0:
                 err_detail = (checkout_res.stderr or checkout_res.stdout or "").strip()
-                raise RuntimeError(
+                raise WorkspaceSanitizerError(
                     f"DVC checkout failed (exit code {checkout_res.returncode}) in '{abs_ws}'.\n"
                     f"Command: dvc checkout --force\n"
                     f"Error output:\n{err_detail}"
                 )
 
-    # 4. Verify MD5 hashes of present outputs against dvc.lock
+    # 4. Verify MD5 hashes of present outputs against dvc.lock (Fail-Fast)
     mismatches: List[Dict[str, Any]] = []
     checked_count = 0
 
-    if strict_lock_check and expected_outs:
-        for out_rel, out_info in expected_outs.items():
+    if strict_lock_check and declared_outs:
+        for out_rel, out_info in declared_outs.items():
+            if not out_info.get("cache", True):
+                # cache: false outputs are intentionally not tracked in DVC cache/lock
+                continue
+
             full_out_path = os.path.join(abs_ws, out_rel)
             if not os.path.exists(full_out_path):
-                # Output not present locally yet (normal if stage hasn't run or wasn't in cache)
+                # Output not present on disk (stage hasn't run yet or not in cache)
+                continue
+
+            expected_md5 = out_info.get("md5")
+            if not expected_md5:
                 continue
 
             checked_count += 1
-            expected_md5 = out_info["md5"]
 
-            if out_info["is_dir"]:
-                # Directory output: check .dir manifest in .dvc/cache if available
-                cache_dir_file = os.path.join(
-                    abs_ws, ".dvc", "cache", "files", "md5", expected_md5[:2], expected_md5[2:]
-                )
-                if not os.path.isfile(cache_dir_file):
-                    cache_dir_file = os.path.join(
-                        abs_ws, ".dvc", "cache", expected_md5[:2], expected_md5[2:]
-                    )
-
-                if os.path.isfile(cache_dir_file):
+            if out_info.get("is_dir"):
+                # Directory output: audit via cache manifest (.dir)
+                manifest_file = _find_dir_cache_manifest(abs_ws, expected_md5)
+                if manifest_file and os.path.isdir(full_out_path):
                     try:
-                        with open(cache_dir_file, "r", encoding="utf-8") as f:
+                        with open(manifest_file, "r", encoding="utf-8") as f:
                             dir_items = json.load(f)
                         if isinstance(dir_items, list):
                             for item in dir_items:
@@ -311,7 +324,16 @@ def sanitize_workspace(
                                 item_md5 = item.get("md5")
                                 if item_rel and item_md5:
                                     sub_p = os.path.join(full_out_path, item_rel)
-                                    if os.path.isfile(sub_p):
+                                    if not os.path.isfile(sub_p):
+                                        mismatches.append(
+                                            {
+                                                "path": _norm(os.path.join(out_rel, item_rel)),
+                                                "expected": item_md5,
+                                                "actual": "MISSING",
+                                                "stage": out_info["stage"],
+                                            }
+                                        )
+                                    else:
                                         act_sub_md5 = _compute_file_md5(sub_p)
                                         if act_sub_md5 != item_md5:
                                             mismatches.append(
@@ -323,7 +345,8 @@ def sanitize_workspace(
                                                 }
                                             )
                     except Exception as e:
-                        raise RuntimeError(f"Failed to read DVC directory cache manifest for '{out_rel}': {e}") from e
+                        raise WorkspaceSanitizerError(f"Failed verifying directory cache manifest for '{out_rel}': {e}") from e
+                # Note: if directory manifest is not locally in cache, we do NOT compute a naive file MD5 on the dir.
             else:
                 # Regular file output
                 if os.path.isfile(full_out_path):
@@ -341,7 +364,7 @@ def sanitize_workspace(
         if mismatches:
             lines = [f"  - {m['path']} (stage '{m['stage']}'): attendu {m['expected']}, obtenu {m['actual']}" for m in mismatches]
             mismatch_summary = "\n".join(lines)
-            raise RuntimeError(
+            raise WorkspaceSanitizerError(
                 f"Écart d'intégrité détecté après assainissement du workspace '{abs_ws}'.\n"
                 f"{len(mismatches)} fichier(s) présent(s) ne correspondent pas aux hashs de dvc.lock :\n"
                 f"{mismatch_summary}\n"
@@ -358,7 +381,7 @@ def sanitize_workspace(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cluster-CI Workspace Sanitizer: clean untracked/stale files, run dvc checkout, verify dvc.lock hashes."
+        description="Cluster-CI Workspace Sanitizer: clean stale outputs, run dvc checkout, verify dvc.lock hashes."
     )
     parser.add_argument(
         "workspace",
@@ -400,8 +423,11 @@ def main():
         if res["checked_outputs"]:
             print(f"🔒 Verified {res['checked_outputs']} present DVC output(s) against dvc.lock (0 hash mismatch).")
         sys.exit(0)
-    except Exception as e:
+    except WorkspaceSanitizerError as e:
         print(f"❌ [Workspace Sanitizer Error] {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ [Workspace Sanitizer Fatal Error] {e}", file=sys.stderr)
         sys.exit(1)
 
 
