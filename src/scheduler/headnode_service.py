@@ -1097,7 +1097,9 @@ def job_status(job_id):
             return jsonify({"error": "Job not found"}), 404
 
         job_dict = dict(job)
-        if job_dict.get("parallel_mode") == 1:
+        cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ?', (job_id,))
+        has_dag_nodes = cursor.fetchone()[0] > 0
+        if job_dict.get("parallel_mode") == 1 or has_dag_nodes:
             agg_status = get_aggregated_job_status(job_id)
             if agg_status:
                 job_dict["status"] = agg_status
@@ -1392,12 +1394,13 @@ def update_job_status():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         
-        cursor.execute('SELECT status, worker_id, ram_required_gb FROM jobs WHERE job_id = ?', (job_id,))
+        cursor.execute('SELECT status, worker_id, ram_required_gb, parallel_mode FROM jobs WHERE job_id = ?', (job_id,))
         job = cursor.fetchone()
         if not job:
             return jsonify({"error": "Job not found"}), 404
-            
-        current_status = job['status']
+
+        job_dict = dict(job)
+        current_status = job_dict['status']
 
         # If it's an external cancellation (indicated by negative exit code from signal propagation like GHA TERM)
         # and the job is currently assigned or running, we must route it via cancel_job_cleanly to notify the worker.
@@ -1423,19 +1426,58 @@ def update_job_status():
                     err_msg = "OOMKilled: Job exceeded memory limit and was killed by system OOM Killer (Exit code 137)"
                 elif exit_code == 137 and "OOMKilled" not in (err_msg or ""):
                     err_msg = f"OOMKilled: {err_msg} (Exit code 137)"
-            cursor.execute('''
-                UPDATE jobs SET
-                    status = ?,
-                    finished_at = CURRENT_TIMESTAMP,
-                    exit_code = COALESCE(?, exit_code),
-                    commit_hash = COALESCE(?, commit_hash),
-                    error_message = COALESCE(?, error_message),
-                    gpu_ids = '[]'
-                WHERE job_id = ?
-            ''', (status, exit_code, commit_hash, err_msg, job_id))
-            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
-            cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
-            cleanup_local_archive(job_id)
+
+            # Bug 10: Vérifier si le job a des nœuds DAG
+            cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ?', (job_id,))
+            has_dag_nodes = cursor.fetchone()[0] > 0
+            if job_dict.get('parallel_mode') == 1 or has_dag_nodes:
+                agg_status = get_aggregated_job_status(job_id)
+                caller_worker = data.get('worker_id') or data.get('worker')
+                caller_runner = data.get('runner_id')
+
+                # Libérer uniquement le worker / runner appelant
+                if caller_worker:
+                    cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ? AND assigned_job_id = ?', (caller_worker, job_id))
+                if caller_runner:
+                    cursor.execute('DELETE FROM runner_heartbeats WHERE runner_id = ?', (caller_runner,))
+                elif caller_worker:
+                    cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND worker = ?', (job_id, caller_worker))
+
+                if agg_status in ['completed', 'failed']:
+                    cursor.execute('''
+                        UPDATE jobs SET
+                            status = ?,
+                            finished_at = CURRENT_TIMESTAMP,
+                            exit_code = COALESCE(?, exit_code),
+                            commit_hash = COALESCE(?, commit_hash),
+                            error_message = COALESCE(?, error_message),
+                            gpu_ids = '[]'
+                        WHERE job_id = ?
+                    ''', (agg_status, exit_code, commit_hash, err_msg, job_id))
+                    cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+                    cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                    cleanup_local_archive(job_id)
+                else:
+                    cursor.execute('''
+                        UPDATE jobs SET
+                            status = 'running',
+                            commit_hash = COALESCE(?, commit_hash)
+                        WHERE job_id = ?
+                    ''', (commit_hash, job_id))
+            else:
+                cursor.execute('''
+                    UPDATE jobs SET
+                        status = ?,
+                        finished_at = CURRENT_TIMESTAMP,
+                        exit_code = COALESCE(?, exit_code),
+                        commit_hash = COALESCE(?, commit_hash),
+                        error_message = COALESCE(?, error_message),
+                        gpu_ids = '[]'
+                    WHERE job_id = ?
+                ''', (status, exit_code, commit_hash, err_msg, job_id))
+                cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+                cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                cleanup_local_archive(job_id)
         else:
             cursor.execute('UPDATE jobs SET status = ? WHERE job_id = ?', (status, job_id))
         conn.commit()
@@ -1445,6 +1487,7 @@ def update_job_status():
             _sync_job_logs_from_workers(job_id)
         except Exception as e:
             app.logger.warning(f"Failed to sync logs from workers for job {job_id}: {e}")
+
         if status == 'failed' and err_msg:
             try:
                 log_path = os.path.join(HEADNODE_LOGS_DIR, f"{job_id}.log")

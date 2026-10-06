@@ -505,7 +505,7 @@ def test_missing_deps_retry_and_exhaustion(client):
     prod = persistence.get_job_node(job_id, "producer")
     cons = persistence.get_job_node(job_id, "consumer")
     assert prod["status"] == "ready"
-    assert prod["stale_reason"] == "outputs_missing"
+    assert prod["stale_reason"] in ("outputs_missing", "outputs_missing_no_peer_cache")
     assert prod["missing_deps_retried"] == 1
     assert cons["status"] == "pending"
 

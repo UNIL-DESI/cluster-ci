@@ -633,6 +633,7 @@ def get_all_job_nodes(job_id):
 def get_aggregated_job_status(job_id):
     """
     Calcule le statut consolidé du job (completed, failed, running, pending).
+    Dérivé strictement de l'agrégat de tous ses nœuds DAG (Bug 10).
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
@@ -640,8 +641,6 @@ def get_aggregated_job_status(job_id):
         job = cursor.fetchone()
         if not job:
             return None
-        if not job["parallel_mode"]:
-            return job["status"]
 
         cursor.execute('SELECT node_name, status, stale FROM job_nodes WHERE job_id = ?', (job_id,))
         nodes = [dict(row) for row in cursor.fetchall()]
@@ -650,27 +649,23 @@ def get_aggregated_job_status(job_id):
         return job["status"]
 
     statuses = [n["status"] for n in nodes]
-    # Si tous les nœuds non-skipped sont done -> completed
-    stale_nodes = [n for n in nodes if n["stale"]]
-    if stale_nodes and all(n["status"] == "done" for n in stale_nodes):
+
+    # 1. Succès complet : 100% des nœuds sont soit done soit skipped
+    if all(s in ("done", "skipped") for s in statuses):
         return "completed"
 
-    if any(s == "running" for s in statuses):
+    # 2. Exécution active : au moins un nœud est en cours ou prêt à être assigné
+    if any(s in ("running", "ready") for s in statuses):
         return "running"
 
-    if any(s == "failed" for s in statuses):
-        # S'il y a un failed et plus aucun running ou ready -> failed
-        if not any(s in ("running", "ready") for s in statuses):
-            return "failed"
-        return "running"
-
-    # Si tous les restants sont blocked -> failed
-    unresolved = [s for s in statuses if s not in ("done", "skipped")]
-    if unresolved and all(s == "blocked" for s in unresolved):
+    # 3. Échec : au moins un échec / blocage et plus aucun nœud ne peut s'exécuter
+    if any(s in ("failed", "blocked") for s in statuses):
         return "failed"
 
-    if any(s in ("ready", "running") for s in statuses):
+    # 4. En cours si au moins un nœud est déjà terminé
+    if any(s == "done" for s in statuses):
         return "running"
 
     return "pending"
+
 
