@@ -1020,13 +1020,9 @@ class BranchExecutor:
         watchdog_proc = None
         watchdog_script = Path(__file__).parent / "gpu_watchdog.sh"
         vram_limit_gb = (resources or {}).get("vram_gb") or 0.0
-        marker_file = "host_guard_killed.marker"
-
-        if os.path.exists(marker_file):
-            try:
-                os.remove(marker_file)
-            except Exception:
-                pass
+        marker_file = os.environ.get("HOST_GUARD_MARKER_FILE", "host_guard_killed.marker")
+        from src.runner.host_guard import purge_host_guard_marker
+        purge_host_guard_marker(workspace_dir=self.repo_dir, marker_file=marker_file)
 
         if watchdog_script.exists() and sys.platform != "win32":
             try:
@@ -1067,6 +1063,8 @@ class BranchExecutor:
         """Boucle principale d'ordonnancement de l'exécuteur."""
         self.is_running = True
         self._start_heartbeat()
+        from src.runner.host_guard import purge_host_guard_marker
+        purge_host_guard_marker(workspace_dir=self.repo_dir)
 
         node_for_req: Optional[str] = None
         status_for_req: Optional[str] = None

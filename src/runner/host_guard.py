@@ -72,7 +72,29 @@ def run_host_memory_watchdog(
         return 1
 
 
+def purge_host_guard_marker(
+    workspace_dir: Optional[str | Path] = None,
+    marker_file: Optional[str | Path] = None,
+) -> bool:
+    """Purge host_guard_killed.marker at start of job/node to prevent stale diagnostic on subsequent runs."""
+    filename = marker_file or os.environ.get(ENV_HOST_GUARD_MARKER_FILE) or DEFAULT_HOST_GUARD_MARKER_FILE
+    targets: List[Path] = [Path(filename)]
+    if workspace_dir:
+        targets.append(Path(workspace_dir) / filename)
+
+    purged = False
+    for t in targets:
+        try:
+            if t.is_file():
+                t.unlink()
+                purged = True
+        except OSError:
+            pass
+    return purged
+
+
 __all__ = [
+    "purge_host_guard_marker",
     "DEFAULT_CONTAINER_OOM_SCORE_ADJ",
     "DEFAULT_CONTAINER_PIDS_LIMIT",
     "DEFAULT_HEADNODE_CGROUP_PARENT",

@@ -507,5 +507,24 @@ def test_gpu_watchdog_zero_vram_limit_does_not_kill_container(tmp_path):
     assert not marker_file.exists(), "Le marqueur ne doit pas être créé lorsque vram_limit_gb=0 !"
 
 
+def test_purge_host_guard_marker(tmp_path):
+    """Vérifie la purge du marqueur host_guard_killed.marker dans le repo et le répertoire courant."""
+    from src.runner.host_guard import purge_host_guard_marker
+
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    marker_in_ws = ws / "host_guard_killed.marker"
+    marker_in_ws.write_text('{"status": "killed"}')
+
+    assert marker_in_ws.exists()
+    purged = purge_host_guard_marker(workspace_dir=ws)
+    assert purged is True
+    assert not marker_in_ws.exists()
+
+    # Idempotent: second call returns False without raising
+    assert purge_host_guard_marker(workspace_dir=ws) is False
+
+
+
 
 

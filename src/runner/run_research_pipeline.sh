@@ -264,6 +264,7 @@ function cleanup_job_resources() {
     # Graceful stop then force remove
     docker stop "${MAIN_CONTAINER_NAME}" "${VIEWER_CONTAINER_NAME}" 2>/dev/null || true
     docker rm -f "${MAIN_CONTAINER_NAME}" "${VIEWER_CONTAINER_NAME}" 2>/dev/null || true
+    rm -f "${HOST_GUARD_MARKER_FILE:-host_guard_killed.marker}" 2>/dev/null || true
 
     log_info "Updating metadata (idle status)..."
     if [ -n "$SAFE_JOB_ID" ]; then
@@ -936,6 +937,9 @@ docker_exec "python3 /cluster-ci/src/runner/workspace_sanitizer.py /workspace" |
 echo "===STAGE:setup:END==="
 echo "===STAGE:dvc_repro:BEGIN==="
 
+# Purge any lingering host guard marker from previous runs
+rm -f "${HOST_GUARD_MARKER_FILE:-host_guard_killed.marker}" 2>/dev/null || true
+
 log_info "Starting DVC Watchdog (background)..."
 bash "$BASE_DIR/src/runner/dvc_watchdog.sh" "${MAIN_CONTAINER_NAME}" > dvc_watchdog.log 2>&1 &
 WATCHDOG_PID=$!
@@ -986,6 +990,7 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     if [ -f "$MARKER_FILE" ]; then
         HOST_GUARD_KILLED=true
         KILL_REASON=$(grep -oE '"reason": "[^"]+"' "$MARKER_FILE" 2>/dev/null | head -1 | cut -d'"' -f4)
+        rm -f "$MARKER_FILE" 2>/dev/null || true
     elif [ -f gpu_watchdog.log ] && grep -qi "killed by host memory guard" gpu_watchdog.log 2>/dev/null; then
         HOST_GUARD_KILLED=true
     fi
