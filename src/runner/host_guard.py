@@ -23,8 +23,84 @@ import argparse
 import json
 import math
 import os
+from pathlib import Path
+import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
+
+# Host Memory Guard Constants (Bug 8 Grace-Blackwell GB10 Guard)
+DEFAULT_HOST_MEMORY_RESERVE_GB: float = 12.0
+DEFAULT_HOST_WATCHDOG_POLL_INTERVAL: float = 1.0
+DEFAULT_HOST_GUARD_MARKER_FILE: str = "host_guard_killed.marker"
+
+ENV_HOST_MEMORY_RESERVE_GB: str = "HOST_MEMORY_RESERVE_GB"
+ENV_WATCHDOG_POLL_INTERVAL: str = "WATCHDOG_POLL_INTERVAL"
+ENV_HOST_GUARD_MARKER_FILE: str = "HOST_GUARD_MARKER_FILE"
+
+WATCHDOG_SCRIPT_PATH: Path = Path(__file__).with_name("gpu_watchdog.sh")
+
+
+def run_host_memory_watchdog(
+    container_name: str,
+    *,
+    reserve_gb: Optional[float] = None,
+    poll_interval_sec: Optional[float] = None,
+    marker_file: Optional[str | Path] = None,
+    vram_limit_gb: float = 0.0,
+) -> int:
+    """Delegate watchdog execution to canonical host watchdog script (gpu_watchdog.sh).
+
+    Ensures single source of truth (DRY) between CLI and pipeline runners.
+    """
+    if not container_name:
+        raise ValueError("container_name cannot be empty")
+
+    env = dict(os.environ)
+    if reserve_gb is not None:
+        env[ENV_HOST_MEMORY_RESERVE_GB] = str(reserve_gb)
+    if poll_interval_sec is not None:
+        env[ENV_WATCHDOG_POLL_INTERVAL] = str(poll_interval_sec)
+    if marker_file is not None:
+        env[ENV_HOST_GUARD_MARKER_FILE] = str(marker_file)
+
+    cmd = ["bash", str(WATCHDOG_SCRIPT_PATH), container_name, str(int(vram_limit_gb))]
+    try:
+        proc = subprocess.run(cmd, env=env)
+        return proc.returncode
+    except Exception as err:
+        sys.stderr.write(f"[Host Guard] Erreur lancement watchdog: {err}\n")
+        return 1
+
+
+__all__ = [
+    "DEFAULT_CONTAINER_OOM_SCORE_ADJ",
+    "DEFAULT_CONTAINER_PIDS_LIMIT",
+    "DEFAULT_HEADNODE_CGROUP_PARENT",
+    "DEFAULT_HEADNODE_CPU_RESERVE",
+    "DEFAULT_HEADNODE_DISK_RESERVE_GB",
+    "DEFAULT_HEADNODE_RAM_RESERVE_GB",
+    "DEFAULT_HOST_GUARD_MARKER_FILE",
+    "DEFAULT_HOST_MEMORY_RESERVE_GB",
+    "DEFAULT_HOST_WATCHDOG_POLL_INTERVAL",
+    "DEFAULT_PLACEMENT_PRIORITY",
+    "DEFAULT_RAM_MARGIN_GB",
+    "ENV_HOST_GUARD_MARKER_FILE",
+    "ENV_HOST_MEMORY_RESERVE_GB",
+    "ENV_WATCHDOG_POLL_INTERVAL",
+    "HEADNODE_PLACEMENT_PRIORITY",
+    "PRIORITY_DEDICATED_DISCRETE",
+    "PRIORITY_DEFAULT_WORKER",
+    "PRIORITY_HEADNODE_LAST",
+    "check_cgroup_memory_limit",
+    "docker_resource_args",
+    "docker_resource_args_string",
+    "format_memory_value",
+    "get_headnode_safe_capacities",
+    "is_headnode_host",
+    "is_unified_memory_host",
+    "placement_priority",
+    "run_host_memory_watchdog",
+]
 
 # Defaults & Constants
 DEFAULT_HEADNODE_RAM_RESERVE_GB: float = 16.0
@@ -337,6 +413,23 @@ def docker_resource_args(
             else:
                 raise ValueError(f"req_gpus={req_gpus} requested but no gpu_ids assigned")
 
+    # 8. PyTorch Allocator Config for Unified Memory / GPU (Bug 8 / Grace-Blackwell GB10)
+    # Prevents aggressive CUDA virtual memory fragmentation and runaway physical allocations
+    # bypassing Docker cgroups on unified memory architectures (NVLink-C2C).
+    # Respect any user-defined PYTORCH_CUDA_ALLOC_CONF (e.g. from node_resources["env"] or explicit field)
+    user_alloc_conf: Optional[str] = None
+    if isinstance(node_resources.get("env"), dict):
+        user_alloc_conf = node_resources["env"].get("PYTORCH_CUDA_ALLOC_CONF")
+    if not user_alloc_conf:
+        raw_conf = node_resources.get("pytorch_cuda_alloc_conf") or node_resources.get("PYTORCH_CUDA_ALLOC_CONF")
+        if raw_conf:
+            user_alloc_conf = str(raw_conf)
+
+    if user_alloc_conf:
+        args.append(f"-e PYTORCH_CUDA_ALLOC_CONF={user_alloc_conf}")
+    elif unified or ("gpus" in node_resources and int(node_resources.get("gpus") or 0) > 0):
+        args.append("-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+
     return args
 
 
@@ -442,8 +535,43 @@ def main() -> None:
         action="store_false",
         help="Explicitly disable container memory limits (deprecated: limits are now unconditional)",
     )
+    parser.add_argument(
+        "--watchdog",
+        type=str,
+        default=None,
+        metavar="CONTAINER_NAME",
+        help="Run host memory watchdog loop on specified container name",
+    )
+    parser.add_argument(
+        "--reserve-gb",
+        type=float,
+        default=None,
+        help="Safety memory reserve in GiB (default: 12.0 GiB or HOST_MEMORY_RESERVE_GB)",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="Polling interval in seconds (default: 1.0s or WATCHDOG_POLL_INTERVAL)",
+    )
+    parser.add_argument(
+        "--marker-file",
+        type=str,
+        default=None,
+        help="Path to marker file written upon termination",
+    )
 
     args = parser.parse_args()
+
+    if args.watchdog:
+        exit_code = run_host_memory_watchdog(
+            args.watchdog,
+            reserve_gb=args.reserve_gb,
+            poll_interval_sec=args.poll_interval,
+            marker_file=args.marker_file,
+            vram_limit_gb=args.vram_gb or 0.0,
+        )
+        sys.exit(exit_code)
 
     # Load host profile
     host_profile: Dict[str, Any] = {}

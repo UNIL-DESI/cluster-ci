@@ -50,6 +50,10 @@ elif name == "awk":
 '''
 
 
+@unittest.skipIf(
+    os.name == "nt",
+    "POSIX bash fixture requires Linux environment (exercised in GitHub Actions CI ubuntu-latest)",
+)
 class GPUWatchdogTests(unittest.TestCase):
     def run_watchdog(self, samples, limit=16, totals="24576\n24576", ram_used=None):
         with tempfile.TemporaryDirectory() as directory:
@@ -117,6 +121,13 @@ class GPUWatchdogTests(unittest.TestCase):
                                           ram_used=[116 * 1024] * 3)
         self.assertEqual([e["tick"] for e in kills], [1])
         self.assertIn("HARD LIMIT BREACHED", output)
+
+    def test_host_memory_reserve_breach_kills_immediately(self):
+        # MemTotal = 128 GiB, ram_used = 118 GiB -> MemAvailable = 10 GiB < 12 GiB reserve
+        kills, output = self.run_watchdog([[]] * 3, limit=120, totals="[N/A]",
+                                          ram_used=[118 * 1024] * 3)
+        self.assertEqual([e["tick"] for e in kills], [1])
+        self.assertIn("killed by host memory guard: MemAvailable=", output)
 
 
 if __name__ == "__main__":

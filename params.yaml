@@ -1,0 +1,6 @@
+# Configuration par défaut du pipeline Cluster-CI simulé (simulate_research.py)
+# Ces valeurs peuvent être surchargées par variables d'environnement (TOY_DURATION_SEC, FAIL_STAGE...)
+toy_duration_sec: 60.0
+fail_stage: null
+fail_attempts: 2
+fail_exit_code: 1

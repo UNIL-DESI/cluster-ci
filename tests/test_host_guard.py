@@ -1,11 +1,7 @@
 """Unit tests for Host Guard module (Cluster-CI v3 W11)."""
 
-import json
 import pytest
 from src.runner.host_guard import (
-    DEFAULT_HEADNODE_CPU_RESERVE,
-    DEFAULT_HEADNODE_DISK_RESERVE_GB,
-    DEFAULT_HEADNODE_RAM_RESERVE_GB,
     docker_resource_args,
     docker_resource_args_string,
     format_memory_value,
@@ -372,6 +368,75 @@ def test_docker_resource_args_gpus_and_shm():
     # gpus = 2 avec device ids -> --gpus="device=0,1"
     args_2 = docker_resource_args(host, {"ram_gb": 16, "gpus": 2, "gpu_ids": [0, 1]})
     assert '--gpus="device=0,1"' in args_2
+
+
+def test_docker_resource_args_pytorch_cuda_alloc_conf_injection():
+    # 1. Sur hôte unified memory (Grace-Blackwell GB10) : injection obligatoire
+    gb10_host = {
+        "hostname": "HEC45801",
+        "role": "worker",
+        "unified_memory": True,
+        "total_ram_gb": 120.0,
+    }
+    args_gb10 = docker_resource_args(gb10_host, {"ram_gb": 16.0})
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gb10
+
+    # 2. Sur hôte discrete standard avec GPU demandé : injection présente
+    discrete_host = {"role": "worker", "total_ram_gb": 64.0, "unified_memory": False}
+    args_gpu = docker_resource_args(discrete_host, {"ram_gb": 16.0, "gpus": 1, "gpu_ids": [0]})
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gpu
+
+    # 3. Sur hôte discrete standard CPU-only : pas d'injection PyTorch CUDA
+    args_cpu = docker_resource_args(discrete_host, {"ram_gb": 8.0, "gpus": 0})
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_cpu
+
+    # 4. Respect de la configuration utilisateur : NE PAS écraser une valeur personnalisée
+    # Cas A: spécifiée via dict env dans node_resources
+    args_user_env = docker_resource_args(
+        gb10_host,
+        {"ram_gb": 16.0, "env": {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"}},
+    )
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128" in args_user_env
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_env
+
+    # Cas B: spécifiée via clé directe pytorch_cuda_alloc_conf
+    args_user_direct = docker_resource_args(
+        discrete_host,
+        {"ram_gb": 16.0, "gpus": 1, "gpu_ids": [0], "pytorch_cuda_alloc_conf": "garbage_collection_threshold:0.8"},
+    )
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8" in args_user_direct
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_direct
+
+
+def test_cli_watchdog_invocation(monkeypatch, tmp_path):
+    from src.runner.host_guard import main
+
+    marker_file = tmp_path / "marker.json"
+
+    # Invoque main() avec --watchdog
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "host_guard.py",
+            "--watchdog",
+            "mock-test-container",
+            "--reserve-gb",
+            "12.0",
+            "--poll-interval",
+            "0.01",
+            "--marker-file",
+            str(marker_file),
+        ],
+    )
+    # Monkeypatch subprocess.run pour déléguer sans lancer bash réel
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: type("Proc", (), {"returncode": 0})(),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
 
 
 
