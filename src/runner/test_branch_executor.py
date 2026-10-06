@@ -397,12 +397,17 @@ class TestBranchExecutor(unittest.TestCase):
         file_bytes = b"PARQUET_MAGIC_BYTES_12345"
         file_md5 = "e1b2c3d4e5f60718293a4b5c6d7e8f90"
 
-        # Simuler un dvc.lock avec la dépendance et son hash md5
+        # Simuler un dvc.lock avec un stage producteur et la dépendance
         dvc_lock_file = os.path.join(self.temp_dir, "dvc.lock")
         with open(dvc_lock_file, "w", encoding="utf-8") as f:
             f.write(
                 "schema: '2.0'\n"
                 "stages:\n"
+                "  prepare_data:\n"
+                "    cmd: python prepare.py\n"
+                "    outs:\n"
+                f"    - path: {rel_path}\n"
+                f"      md5: {file_md5}\n"
                 "  train_model:\n"
                 "    cmd: python train.py\n"
                 "    deps:\n"
@@ -549,12 +554,17 @@ class TestBranchExecutor(unittest.TestCase):
             },
         ]
 
-        # Simuler un dvc.lock avec une dépendance CAS
+        # Simuler un dvc.lock avec un stage producteur et une dépendance CAS
         dvc_lock_file = os.path.join(self.temp_dir, "dvc.lock")
         with open(dvc_lock_file, "w", encoding="utf-8") as f:
             f.write(
                 "schema: '2.0'\n"
                 "stages:\n"
+                "  prepare_weights:\n"
+                "    cmd: python download.py\n"
+                "    outs:\n"
+                "    - path: data/weights.bin\n"
+                "      md5: a1b2c3d4e5f60718293a4b5c6d7e8f90\n"
                 "  cas_node:\n"
                 "    cmd: python train.py\n"
                 "    deps:\n"

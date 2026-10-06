@@ -562,9 +562,6 @@ class BranchExecutor:
 
             local_path = os.path.join(self.repo_dir, norm_p)
             is_stage_out, out_info = is_dag_stage_output(norm_p, exact_outs, dir_outs, pat_outs)
-            if not is_stage_out and norm_p in lock_hash_by_path:
-                is_stage_out = True
-                out_info = {"md5": lock_hash_by_path[norm_p], "cache": True}
 
             if not is_stage_out:
                 # -------------------------------------------------------------
