@@ -444,18 +444,24 @@ def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None,
 
 def handle_missing_deps(job_id, consumer_node_name, missing_paths):
     """
-    Amendement A4 : Si l'exécuteur ne peut récupérer une dep_path.
-    Identifie le nœud producteur (via out_paths).
-    Si le nœud producteur a déjà été relancé : échec explicite.
-    Sinon : remise en ready du producteur, remise en pending du demandeur.
+    Amendement A4 & Bug 7 : Si l'exécuteur ne peut récupérer une dep_path.
+    1. Tente d'abord de localiser l'artefact sur un worker en ligne dans node_artifacts.
+       Si trouvé sur des pairs en ligne : NE PAS replanifier le producteur (qui reste 'done'),
+       mais autoriser un retry du fetch P2P par le consommateur (missing_deps_retried < 2).
+    2. Si AUCUN worker en ligne ne détient l'artefact (ou retries épuisés) :
+       Replanifier le producteur avec raison explicite enregistrée (stale_reason = 'outputs_missing_no_peer_cache').
+    3. Si le producteur a déjà été relancé : échec explicite du consommateur.
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT node_name, out_paths, missing_deps_retried FROM job_nodes WHERE job_id = ?', (job_id,))
+        cursor.execute('SELECT node_name, status, out_paths, missing_deps_retried FROM job_nodes WHERE job_id = ?', (job_id,))
         nodes = [dict(row) for row in cursor.fetchall()]
 
     retriggered_node = None
+    consumer_node = None
     for n in nodes:
+        if n["node_name"] == consumer_node_name:
+            consumer_node = n
         raw_outs = n.get("out_paths")
         if not raw_outs:
             continue
@@ -472,7 +478,6 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
 
         if any(mp in out_file_paths for mp in missing_paths):
             retriggered_node = n
-            break
 
     if not retriggered_node:
         # Aucun producteur identifié, échec direct
@@ -481,24 +486,80 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
         return {"success": False, "reason": "unknown_producer"}
 
     prod_name = retriggered_node["node_name"]
-    retried_count = retriggered_node.get("missing_deps_retried", 0)
+    prod_retried_count = retriggered_node.get("missing_deps_retried", 0)
+    consumer_retried_count = (consumer_node or {}).get("missing_deps_retried", 0)
 
-    if retried_count >= 1:
-        # Déjà relancé une fois -> échec explicite
+    # Vérifier si des workers en ligne détiennent les artefacts manquants dans node_artifacts
+    peer_sources = {}
+    try:
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT worker_id, service_url FROM workers WHERE status = 'online'")
+            online_workers_map = {}
+            for r in cursor.fetchall():
+                w_id, s_url = r[0], r[1]
+                target_url = s_url or w_id
+                if target_url:
+                    try:
+                        from src.runner.fetch_cas_dependencies import normalize_worker_url
+                        online_workers_map[w_id] = normalize_worker_url(target_url)
+                    except Exception:
+                        online_workers_map[w_id] = target_url
+
+            missing_hashes = []
+            if missing_paths:
+                placeholders = ','.join(['?'] * len(missing_paths))
+                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE path IN ({placeholders}) ORDER BY created_at DESC", missing_paths)
+                missing_hashes = [r[0] for r in cursor.fetchall() if r[0]]
+
+            if missing_hashes and online_workers_map:
+                from src.scheduler.artifact_registry import sources_for
+                peer_sources = sources_for(conn, missing_hashes, online_workers_map)
+    except Exception:
+        peer_sources = {}
+
+    has_online_peers = any(len(urls) > 0 for urls in peer_sources.values())
+
+    # CAS A : L'artefact réside chez au moins un worker en ligne
+    if has_online_peers:
+        if consumer_retried_count < 2:
+            # Ne JAMAIS replanifier le producteur : donner une nouvelle chance de fetch au consommateur
+            with get_db_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE job_nodes
+                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
+                        missing_deps_retried = missing_deps_retried + 1
+                    WHERE job_id = ? AND node_name = ?
+                ''', (job_id, consumer_node_name))
+                conn.commit()
+
+            update_dag_ready_states(job_id)
+            return {
+                "success": True,
+                "action": "retry_fetch",
+                "sources": peer_sources,
+                "message": f"Artifacts present on online peers. Consumer '{consumer_node_name}' reset to ready for P2P fetch retry."
+            }
+
+    # CAS B : Aucun worker en ligne ne détient l'artefact, ou retries P2P du consommateur épuisés
+    if prod_retried_count >= 1:
+        # Producteur déjà relancé une fois -> échec explicite
         mark_node_status(job_id, consumer_node_name, "failed", exit_code=1,
-                         error_message=f"Missing dependencies {missing_paths} could not be recovered after retry of {prod_name}")
+                         error_message=f"Missing dependencies {missing_paths} could not be recovered after retry of producer {prod_name}")
         return {"success": False, "reason": "retry_exhausted", "producer": prod_name}
 
-    # Relancer le producteur une fois
+    # Relancer le producteur avec raison explicite
+    stale_reason = "outputs_missing_no_peer_cache" if not has_online_peers else "outputs_unfetchable_from_peers"
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE job_nodes
-            SET status = 'ready', stale_reason = 'outputs_missing',
+            SET status = 'ready', stale_reason = ?,
                 worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
                 missing_deps_retried = missing_deps_retried + 1
             WHERE job_id = ? AND node_name = ?
-        ''', (job_id, prod_name))
+        ''', (stale_reason, job_id, prod_name))
         cursor.execute('''
             UPDATE job_nodes
             SET status = 'pending', worker_id = NULL, runner_id = NULL, gpu_ids = '[]'
@@ -507,7 +568,7 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
         conn.commit()
 
     update_dag_ready_states(job_id)
-    return {"success": True, "retriggered_node": prod_name}
+    return {"success": True, "retriggered_node": prod_name, "reason": stale_reason}
 
 def record_runner_heartbeat(job_id, runner_id, worker_id, current_node):
     """Enregistre le heartbeat d'un runner pour un job."""
