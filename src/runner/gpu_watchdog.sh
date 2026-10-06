@@ -78,7 +78,12 @@ if [ "$VRAM_LIMIT_MIB" -gt "$HARD_LIMIT_MIB" ]; then
     VRAM_LIMIT_GB=$HARD_LIMIT_GB
 fi
 
-echo "[GPU Watchdog] Started — Container: $CONTAINER_NAME, Soft limit: ${VRAM_LIMIT_GB}GB, Hard limit: ${HARD_LIMIT_GB}GB (90% of ${TOTAL_RAM_MIB}MiB), Host reserve: ${HOST_MEMORY_RESERVE_GB}GB, Mode: $MONITORING_MODE"
+if [ "$VRAM_LIMIT_MIB" -gt 0 ]; then
+    SOFT_DESC="${VRAM_LIMIT_GB}GB"
+else
+    SOFT_DESC="disabled (0GB)"
+fi
+echo "[GPU Watchdog] Started — Container: $CONTAINER_NAME, Soft limit: $SOFT_DESC, Hard limit: ${HARD_LIMIT_GB}GB (90% of ${TOTAL_RAM_MIB}MiB), Host reserve: ${HOST_MEMORY_RESERVE_GB}GB, Mode: $MONITORING_MODE"
 echo "[GPU Watchdog] Poll interval: ${POLL_INTERVAL}s, Soft threshold: 2 violations, Hard/Reserve threshold: IMMEDIATE"
 
 CONSECUTIVE_OVER=0
@@ -203,7 +208,7 @@ while true; do
     fi
 
     # 3. SOFT LIMIT CHECK (user-declared limit) — Kill after consecutive violations
-    if [ "$USED_MIB" -gt "$VRAM_LIMIT_MIB" ]; then
+    if [ "$VRAM_LIMIT_MIB" -gt 0 ] && [ "$USED_MIB" -gt "$VRAM_LIMIT_MIB" ]; then
         CONSECUTIVE_OVER=$((CONSECUTIVE_OVER + 1))
         echo "[GPU Watchdog] ⚠️  Memory usage ${USED_GB}GB > ${VRAM_LIMIT_GB}GB limit (violation $CONSECUTIVE_OVER/$SOFT_THRESHOLD) [mode: $MONITORING_MODE]"
 

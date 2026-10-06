@@ -439,4 +439,73 @@ def test_cli_watchdog_invocation(monkeypatch, tmp_path):
     assert exc_info.value.code == 0
 
 
+def test_run_host_memory_watchdog_vram_zero_command(monkeypatch):
+    """Vérifie que run_host_memory_watchdog transmet bien 0 pour désactiver le soft limit VRAM."""
+    from src.runner.host_guard import run_host_memory_watchdog
+
+    captured_cmd = []
+
+    def mock_run(cmd, env=None):
+        captured_cmd.extend(cmd)
+        return type("Proc", (), {"returncode": 0})()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+    ret = run_host_memory_watchdog("test-container", vram_limit_gb=0.0)
+    assert ret == 0
+    assert captured_cmd[-2:] == ["test-container", "0"]
+
+
+def test_gpu_watchdog_zero_vram_limit_does_not_kill_container(tmp_path):
+    """Test de non-régression: vram_limit_gb=0 ne doit pas tuer le conteneur dès 1 MiB."""
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    bash_bin = shutil.which("bash")
+    if not bash_bin or sys.platform == "win32":
+        pytest.skip("Bash/Linux requis pour l'exécution directe de gpu_watchdog.sh")
+
+    if not Path("/proc/meminfo").is_file():
+        pytest.skip("/proc/meminfo absent sur ce système")
+
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+
+    # Mock docker: inspect returns true, kill records call
+    (mock_bin / "docker").write_text("#!/bin/bash\nif [[ \"$*\" == *\"State.Running\"* ]]; then echo \"true\"; exit 0; fi\nexit 0\n")
+    (mock_bin / "docker").chmod(0o755)
+
+    # Mock nvidia-smi: total 16GB, used 100MB
+    (mock_bin / "nvidia-smi").write_text("#!/bin/bash\nif [[ \"$*\" == *\"memory.total\"* ]]; then echo \"16384\"; elif [[ \"$*\" == *\"memory.used\"* ]]; then echo \"100\"; fi\nexit 0\n")
+    (mock_bin / "nvidia-smi").chmod(0o755)
+
+    marker_file = tmp_path / "host_guard_killed.marker"
+    watchdog_script = Path(__file__).parent.parent / "src" / "runner" / "gpu_watchdog.sh"
+
+    env = dict(
+        PATH=f"{mock_bin}:{sys.path}",
+        WATCHDOG_POLL_INTERVAL="0.05",
+        HOST_GUARD_MARKER_FILE=str(marker_file),
+    )
+
+    proc = subprocess.Popen(
+        ["bash", str(watchdog_script), "test-container", "0"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    try:
+        # Laisser tourner 0.2s (plusieurs vérifications)
+        proc.wait(timeout=0.2)
+    except subprocess.TimeoutExpired:
+        # Le watchdog tourne toujours sans tuer le conteneur: comportement attendu
+        proc.terminate()
+        proc.wait(timeout=1)
+
+    assert not marker_file.exists(), "Le marqueur ne doit pas être créé lorsque vram_limit_gb=0 !"
+
+
+
 
