@@ -212,6 +212,7 @@ class DockerRunner:
         node_res.setdefault("vram_gb", vram_limit)
 
         guard_args = docker_resource_args(host_profile, node_res)
+        cache_prefix = 'cluster-ci-local' if (env or {}).get('IS_LOCAL') == '1' else 'cluster-ci'
 
         cmd = [
             self.docker_cmd, "run", "-d",
@@ -223,8 +224,8 @@ class DockerRunner:
             "-v", f"{repo_dir}:/workspace",
             "-w", "/workspace",
             "-v", f"{home_volume}:/home/user",
-            "-v", "cluster-ci-uv-cache:/home/user/.cache/uv",
-            "-v", "cluster-ci-pip-cache:/home/user/.cache/pip",
+            "-v", f"{cache_prefix}-uv-cache:/home/user/.cache/uv",
+            "-v", f"{cache_prefix}-pip-cache:/home/user/.cache/pip",
             "-v", f"{base_dir}:/cluster-ci:ro",
             "-v", "/etc/passwd:/etc/passwd:ro",
             "-v", "/etc/group:/etc/group:ro",
@@ -799,6 +800,9 @@ class BranchExecutor:
 
         image_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", image).strip("-")
         repo_slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", self.target_repo).strip("-")
+        local = os.environ.get('IS_LOCAL') == '1'
+        if local:
+            repo_slug = '_local-' + repo_slug
         home_volume = f"cluster-ci-home-{repo_slug}-{image_slug}"
         container_name = f"{self.container_prefix}{self.safe_job_id}-{image_slug}"
 
@@ -809,8 +813,9 @@ class BranchExecutor:
             home_volume,
         )
         self.docker.create_volume(home_volume)
-        self.docker.create_volume("cluster-ci-uv-cache")
-        self.docker.create_volume("cluster-ci-pip-cache")
+        cache_prefix = 'cluster-ci-local' if local else 'cluster-ci'
+        self.docker.create_volume(f"{cache_prefix}-uv-cache")
+        self.docker.create_volume(f"{cache_prefix}-pip-cache")
 
         env = {
             "HOME": "/home/user",

@@ -29,6 +29,18 @@ Parallel `next_node` and `runner_heartbeat` control APIs also require the token;
 they reject requests when the server token is unconfigured. Dashboard metadata
 and console logs retain their existing access rules.
 
+Artifact discovery, dependency recovery and cache-affinity lookup exclude local
+producers for ordinary jobs. An artifact whose producing job is unknown is not
+assumed public. Local jobs may reuse both public and protected artifacts because
+their outputs remain local. Parallel local jobs use separate home, pip and uv
+volumes; normal volume names remain unchanged.
+
+Before deploying this separation, inventory old parallel home/package volumes
+that were shared between modes. A newly separated name does not sanitize an old
+volume or an already contaminated public workspace. Preserve and quarantine any
+such data through the existing administrator procedure; this patch does not
+delete or migrate volumes automatically.
+
 ## Cleanup
 
 Both modes use the existing `repositories/registry.json` and oldest-idle-first

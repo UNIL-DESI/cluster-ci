@@ -84,6 +84,8 @@ def test_cross_job_artifact_resolution(tmp_path):
     db_path = str(tmp_path / "test.db")
     conn = sqlite3.connect(db_path)
     ensure_schema(conn)
+    conn.execute("CREATE TABLE jobs(job_id TEXT PRIMARY KEY, is_local INTEGER)")
+    conn.execute("INSERT INTO jobs VALUES ('job-prev', 0)")
 
     cursor = conn.cursor()
     # Job antérieur job-prev produit un artefact sur HEC45801

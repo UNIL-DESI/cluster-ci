@@ -522,15 +522,14 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
                     except Exception:
                         online_workers_map[w_id] = target_url
 
-            missing_hashes = []
-            if missing_paths:
-                placeholders = ','.join(['?'] * len(missing_paths))
-                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE path IN ({placeholders}) ORDER BY created_at DESC", missing_paths)
-                missing_hashes = [r[0] for r in cursor.fetchall() if r[0]]
+            from src.scheduler.artifact_registry import hashes_for_paths, sources_for
+            consumer = conn.execute('SELECT is_local FROM jobs WHERE job_id = ?', (job_id,)).fetchone()
+            local_consumer = bool(consumer and consumer[0])
+            missing_hashes = hashes_for_paths(conn, missing_paths, is_local=local_consumer)
 
             if missing_hashes and online_workers_map:
-                from src.scheduler.artifact_registry import sources_for
-                peer_sources = sources_for(conn, missing_hashes, online_workers_map)
+                peer_sources = sources_for(conn, missing_hashes, online_workers_map,
+                                           is_local=local_consumer)
     except Exception:
         peer_sources = {}
 
@@ -683,5 +682,4 @@ def get_aggregated_job_status(job_id):
         return "running"
 
     return "pending"
-
 

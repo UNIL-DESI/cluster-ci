@@ -726,7 +726,8 @@ def get_data_affinity_score(job, worker):
 
         if all_dep_hashes:
             try:
-                bytes_aff = affinity_bytes(conn, all_dep_hashes, worker.get("worker_id"))
+                bytes_aff = affinity_bytes(conn, all_dep_hashes, worker.get("worker_id"),
+                                           is_local=bool(job.get('is_local')))
                 total_score += bytes_aff
             except Exception as e:
                 logger.debug(f"affinity_bytes check failed: {e}")
@@ -1215,18 +1216,11 @@ def handle_next_node(req):
                     except Exception:
                         online_workers_map[w_id] = target_url
 
-            dep_hashes = []
-            if dep_paths_list:
-                placeholders = ','.join(['?'] * len(dep_paths_list))
-                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE job_id = ? AND path IN ({placeholders})", [job_id, *dep_paths_list])
-                dep_hashes = [r[0] for r in cursor.fetchall() if r[0]]
-                # Bug 6: si des artefacts n'ont pas été trouvés dans le job courant, chercher cross-jobs
-                cursor.execute(f"SELECT DISTINCT md5 FROM node_artifacts WHERE path IN ({placeholders}) ORDER BY created_at DESC", dep_paths_list)
-                for r in cursor.fetchall():
-                    if r[0] and r[0] not in dep_hashes:
-                        dep_hashes.append(r[0])
-
-            dep_sources_map = sources_for(conn, dep_hashes, online_workers_map)
+            from src.scheduler.artifact_registry import hashes_for_paths
+            local_consumer = bool(job.get('is_local'))
+            dep_hashes = hashes_for_paths(conn, dep_paths_list, is_local=local_consumer)
+            dep_sources_map = sources_for(conn, dep_hashes, online_workers_map,
+                                         is_local=local_consumer)
     except Exception as e:
         logger.debug(f"Failed to query artifact sources: {e}")
 
@@ -1872,4 +1866,3 @@ def schedule_jobs():
 if __name__ == '__main__':
     init_db()
     schedule_jobs()
-

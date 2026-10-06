@@ -43,6 +43,8 @@ class TestArtifactRegistry(unittest.TestCase):
 
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
+        self.conn.execute("CREATE TABLE jobs(job_id TEXT PRIMARY KEY, is_local INTEGER)")
+        self.conn.executemany("INSERT INTO jobs VALUES (?, 0)", [("job-1",), ("job-2",)])
 
     def tearDown(self):
         self.conn.close()

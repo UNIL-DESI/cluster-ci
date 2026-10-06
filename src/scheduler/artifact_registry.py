@@ -69,6 +69,32 @@ def normalize_hash(h: Any) -> str:
     return str(h).strip().lower()
 
 
+def _visible_artifact(alias: str, is_local: bool) -> str:
+    """Public consumers need positive public provenance; orphan rows fail closed.
+
+    Local consumers may reuse either kind of artifact because their outputs stay
+    local. Alias names are internal SQL identifiers, never request parameters.
+    """
+    if is_local:
+        return "1"
+    return (f"EXISTS (SELECT 1 FROM jobs producer WHERE producer.job_id = {alias}.job_id "
+            "AND producer.is_local = 0)")
+
+
+def hashes_for_paths(conn, paths, *, is_local=False):
+    """Find reusable hashes without advertising private outputs to public jobs."""
+    if not paths:
+        return []
+    ensure_schema(conn)
+    placeholders = ','.join('?' for _ in paths)
+    rows = conn.execute(
+        f"SELECT DISTINCT md5 FROM node_artifacts WHERE path IN ({placeholders}) "
+        f"AND {_visible_artifact('node_artifacts', is_local)} ORDER BY created_at DESC",
+        list(paths),
+    )
+    return [row[0] for row in rows if row[0]]
+
+
 def record_node_outputs(
     conn: sqlite3.Connection,
     job_id: str,
@@ -153,6 +179,7 @@ def affinity_bytes(
     conn: sqlite3.Connection,
     dep_hashes: Iterable[str] | None,
     worker_id: str | None,
+    *, is_local: bool = False,
 ) -> int:
     """
     Computes the total volume (in bytes) of required dependency hashes already
@@ -185,6 +212,7 @@ def affinity_bytes(
                 SELECT md5, MAX(size_bytes) as size_bytes
                 FROM node_artifacts
                 WHERE worker_id = ? AND (md5 IN ({placeholders}) OR parent_dir_hash IN ({placeholders}))
+                  AND {_visible_artifact('node_artifacts', is_local)}
                 GROUP BY md5
             )
         """
@@ -252,6 +280,7 @@ def sources_for(
     conn: sqlite3.Connection,
     dep_hashes: Iterable[str] | None,
     online_workers: Any,
+    *, is_local: bool = False,
 ) -> dict[str, list[str]]:
     """
     Maps each dependency MD5 hash to the list of URLs of online workers currently
@@ -294,6 +323,7 @@ def sources_for(
             FROM node_artifacts
             WHERE worker_id IN ({w_placeholders})
               AND (md5 IN ({h_placeholders}) OR parent_dir_hash IN ({h_placeholders}))
+              AND {_visible_artifact('node_artifacts', is_local)}
             GROUP BY md5, worker_id
             ORDER BY latest_created DESC
         """
@@ -319,6 +349,8 @@ def sources_for(
             JOIN node_artifacts parent ON sub.parent_dir_hash = parent.md5
             WHERE sub.md5 IN ({h_placeholders})
               AND parent.worker_id IN ({w_placeholders})
+              AND {_visible_artifact('sub', is_local)}
+              AND {_visible_artifact('parent', is_local)}
             GROUP BY sub.md5, parent.worker_id
             ORDER BY latest_created DESC
         """
