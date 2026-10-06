@@ -270,12 +270,13 @@ def sanitize_workspace(
                 except Exception as e:
                     raise WorkspaceSanitizerError(f"Failed inspecting directory output '{out_rel}': {e}") from e
 
-    # 3. Execute 'dvc checkout --force' if requested (Fail-Fast)
+    # 3. Execute 'dvc checkout --force --allow-missing' if requested
+    # On new or distributed workers, missing cache items are normal (fetched via CAS or recomputed).
     if dvc_checkout:
         dvc_yaml_path = os.path.join(abs_ws, "dvc.yaml")
         if os.path.isfile(dvc_yaml_path):
             checkout_res = subprocess.run(
-                ["dvc", "checkout", "--force"],
+                ["dvc", "checkout", "--force", "--allow-missing"],
                 cwd=abs_ws,
                 capture_output=True,
                 text=True,
@@ -284,14 +285,25 @@ def sanitize_workspace(
             )
             if checkout_res.returncode != 0:
                 err_detail = (checkout_res.stderr or checkout_res.stdout or "").strip()
-                raise WorkspaceSanitizerError(
-                    f"DVC checkout failed (exit code {checkout_res.returncode}) in '{abs_ws}'.\n"
-                    f"Command: dvc checkout --force\n"
-                    f"Error output:\n{err_detail}"
+                # If error is purely due to missing cache objects, log as expected warning on distributed worker
+                is_missing_cache = checkout_res.returncode == 255 and (
+                    "missing-files" in err_detail or "Checkout failed for following targets" in err_detail
                 )
+                if is_missing_cache:
+                    print(
+                        f"ℹ️ [Workspace Sanitizer] Some DVC cache objects are missing locally (expected on fresh worker):\n{err_detail}",
+                        file=sys.stderr,
+                    )
+                else:
+                    raise WorkspaceSanitizerError(
+                        f"DVC checkout failed (exit code {checkout_res.returncode}) in '{abs_ws}'.\n"
+                        f"Command: dvc checkout --force --allow-missing\n"
+                        f"Error output:\n{err_detail}"
+                    )
 
-    # 4. Verify MD5 hashes of present outputs against dvc.lock (Fail-Fast)
+    # 4. Verify MD5 hashes of present outputs against dvc.lock (Fail-Fast on discrepancies)
     mismatches: List[Dict[str, Any]] = []
+    missing_outputs: List[str] = []
     checked_count = 0
 
     if strict_lock_check and declared_outs:
@@ -302,7 +314,8 @@ def sanitize_workspace(
 
             full_out_path = os.path.join(abs_ws, out_rel)
             if not os.path.exists(full_out_path):
-                # Output not present on disk (stage hasn't run yet or not in cache)
+                # Output not present on disk: normal on new worker or pending stage, logged without error
+                missing_outputs.append(out_rel)
                 continue
 
             expected_md5 = out_info.get("md5")
@@ -375,6 +388,7 @@ def sanitize_workspace(
         "workspace": abs_ws,
         "purged_files": purged_files,
         "checked_outputs": checked_count,
+        "missing_outputs": missing_outputs,
         "mismatches": mismatches,
     }
 
@@ -422,6 +436,8 @@ def main():
                 print(f"   - {p}")
         if res["checked_outputs"]:
             print(f"🔒 Verified {res['checked_outputs']} present DVC output(s) against dvc.lock (0 hash mismatch).")
+        if res["missing_outputs"]:
+            print(f"ℹ️ [Workspace Sanitizer] {len(res['missing_outputs'])} output(s) not present on disk (expected on fresh worker / pending execution).")
         sys.exit(0)
     except WorkspaceSanitizerError as e:
         print(f"❌ [Workspace Sanitizer Error] {e}", file=sys.stderr)

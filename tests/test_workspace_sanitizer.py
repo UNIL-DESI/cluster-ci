@@ -270,3 +270,44 @@ def test_sanitize_cli_entrypoint(temp_workspace):
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     assert "Workspace" in proc.stdout
     assert "is clean and verified" in proc.stdout
+
+
+def test_empty_cache_no_exception_listed_as_missing():
+    """Test Bug 9 (Critique): empty cache on fresh worker does not raise exception, missing outputs are listed."""
+    td = tempfile.mkdtemp(prefix="test_fresh_worker_")
+    try:
+        subprocess.run(["git", "init"], cwd=td, check=True, capture_output=True)
+        subprocess.run(["dvc", "init", "--no-scm"], cwd=td, check=True, capture_output=True)
+
+        # dvc.yaml and dvc.lock declare outputs that do not exist in local cache or on disk
+        with open(os.path.join(td, "dvc.yaml"), "w", encoding="utf-8") as f:
+            f.write("stages:\n  train:\n    cmd: python train.py\n    outs:\n    - model.bin\n    - eval_results.csv\n")
+
+        with open(os.path.join(td, "dvc.lock"), "w", encoding="utf-8") as f:
+            f.write(
+                "schema: '2.0'\nstages:\n  train:\n    cmd: python train.py\n    outs:\n"
+                "      - path: model.bin\n        md5: '11111111111111111111111111111111'\n"
+                "      - path: eval_results.csv\n        md5: '22222222222222222222222222222222'\n"
+            )
+
+        # Execute full sanitize with checkout and lock verification
+        res = sanitize_workspace(td, dvc_checkout=True, strict_lock_check=True)
+
+        # Must not raise, and missing outputs must be tracked
+        assert len(res["mismatches"]) == 0
+        assert "model.bin" in res["missing_outputs"]
+        assert "eval_results.csv" in res["missing_outputs"]
+        assert res["checked_outputs"] == 0
+
+        # Contrast: if a file IS present on disk with mismatched hash (e.g. without checkout restoring/purging), it MUST fail
+        with open(os.path.join(td, "model.bin"), "wb") as f:
+            f.write(b"corrupted or wrong epoch model\n")
+
+        with pytest.raises(WorkspaceSanitizerError) as excinfo:
+            sanitize_workspace(td, dvc_checkout=False, strict_lock_check=True)
+
+        assert "Écart d'intégrité détecté" in str(excinfo.value)
+        assert "model.bin" in str(excinfo.value)
+    finally:
+        shutil.rmtree(td, onerror=_remove_readonly, ignore_errors=True)
+
