@@ -1485,6 +1485,73 @@
         let navigationSeq = 0;
         let projectAbortController = null;
 
+        // ===== Strict DateTime & Sorting Helpers (DRY, Issue #101) =====
+        function parseDateSafely(val) {
+            if (val === null || val === undefined || val === '') {
+                return null;
+            }
+            let d;
+            if (val instanceof Date) {
+                d = val;
+            } else if (typeof val === 'number') {
+                d = new Date(val);
+            } else if (typeof val === 'string') {
+                let str = val.trim();
+                if (!str) return null;
+                // If format is SQLite "YYYY-MM-DD HH:MM:SS" without timezone or T, normalize to UTC ISO
+                if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(str)) {
+                    str = str.replace(' ', 'T') + 'Z';
+                }
+                d = new Date(str);
+            } else {
+                console.error("Invalid date value type:", typeof val, val);
+                return null;
+            }
+
+            const time = d.getTime();
+            if (isNaN(time)) {
+                console.error("Invalid date value encountered:", val);
+                return null;
+            }
+            return d;
+        }
+
+        function parseDateTimestamp(val) {
+            const d = parseDateSafely(val);
+            return d !== null ? d.getTime() : null;
+        }
+
+        function compareDates(dateA, dateB, desc = true) {
+            const timeA = parseDateTimestamp(dateA);
+            const timeB = parseDateTimestamp(dateB);
+            if (timeA === null && timeB === null) return 0;
+            if (timeA === null) return 1; // Put invalid or absent dates at the end
+            if (timeB === null) return -1;
+            return desc ? (timeB - timeA) : (timeA - timeB);
+        }
+
+        function formatDateSafely(val, options = null, fallback = '—') {
+            if (val === null || val === undefined || val === '') {
+                return fallback;
+            }
+            const d = parseDateSafely(val);
+            if (!d) {
+                return fallback;
+            }
+            try {
+                if (options) {
+                    return d.toLocaleString('en-US', options);
+                }
+                return d.toLocaleString('en-US', {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                }).replace(',', '');
+            } catch (err) {
+                console.error("Error formatting date:", val, err);
+                return fallback;
+            }
+        }
+
         // ===== Theme Switcher Logic =====
         function updateThemeIcon(theme) {
             const icon = document.getElementById('theme-toggle-icon');
@@ -2087,9 +2154,9 @@
         function createActiveRunCard(run) {
             const [owner, name] = run.repo.split('/');
             const viewerUrl = (run.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
-            const startedAt = run.created_at ? new Date(run.created_at + 'Z') : null;
+            const startedAt = parseDateSafely(run.created_at);
             const elapsedStr = startedAt ? formatElapsed(startedAt) : '';
-            const launchDate = startedAt ? startedAt.toLocaleString('en-US', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+            const launchDate = formatDateSafely(run.created_at, {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
             const isMaintenance = run.job_type === 'maintenance' || run.is_maintenance;
             const isV3 = (run.parallel_mode === 1);
 
@@ -2118,7 +2185,7 @@
                             <div style="min-width: 0;">
                                 <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
                                     <h6 class="mb-0 text-truncate" style="color: ${isMaintenance ? '#9333ea' : (isV3 ? '#4f46e5' : 'var(--primary)')}; font-weight: 700; max-width: 320px;">${escapeHtml(run.repo)}</h6>
-                                    ${elapsedStr ? `<span class="active-run-elapsed" data-started="${run.created_at + 'Z'}">${elapsedStr}</span>` : ''}
+                                    ${elapsedStr ? `<span class="active-run-elapsed" data-started="${startedAt ? startedAt.toISOString() : ''}">${elapsedStr}</span>` : ''}
                                 </div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                     ${isMaintenance ? '<span class="badge-premium badge-maintenance-premium"><i class="bi bi-tools me-1"></i>🛠️ Maintenance Barrier</span>' : ''}
@@ -2264,6 +2331,16 @@
                     }
 
                     // Sort unique versions chronologically (newest first)
+                    modalUniqueVersions.forEach(v => {
+                        v.allRuns.sort((a, b) => compareDates(a.created_at, b.created_at, true));
+                        v.firstRun = v.allRuns[0];
+                    });
+                    modalUniqueVersions.sort((a, b) => {
+                        const dateA = a.firstRun ? a.firstRun.created_at : null;
+                        const dateB = b.firstRun ? b.firstRun.created_at : null;
+                        return compareDates(dateA, dateB, true);
+                    });
+
                     if (modalUniqueVersions.length > 0) {
                         modalCurrentVersionIndex = 0;
                         renderVersionNavigation();
@@ -2424,12 +2501,12 @@
 
             let selectOptionsHtml = '';
             modalUniqueVersions.forEach((v, idx) => {
-                const dateStr = new Date(v.firstRun.created_at).toLocaleString('en-US', {
+                const dateStr = formatDateSafely(v.firstRun && v.firstRun.created_at, {
                     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
                 });
-                const commitTitle = v.firstRun.commit_title || v.firstRun.job_id.substring(0, 8);
+                const commitTitle = (v.firstRun && (v.firstRun.commit_title || (v.firstRun.job_id && v.firstRun.job_id.substring(0, 8)))) || 'Unknown commit';
                 const sizeStr = v.size ? formatBytes(v.size) : 'Unknown size';
-                const branchStr = v.firstRun.branch ? ` [${v.firstRun.branch}]` : '';
+                const branchStr = (v.firstRun && v.firstRun.branch) ? ` [${v.firstRun.branch}]` : '';
                 const isSelected = idx === modalCurrentVersionIndex ? 'selected' : '';
                 selectOptionsHtml += `<option value="${idx}" ${isSelected}>Version ${modalUniqueVersions.length - idx} (${dateStr})${branchStr} - ${escapeHtml(commitTitle)} [${sizeStr}]</option>`;
             });
@@ -2619,6 +2696,7 @@
         }
 
         function formatElapsed(startDate) {
+            if (!startDate || isNaN(startDate.getTime())) return '';
             const diff = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 1000));
             if (diff < 60) return `${diff}s`;
             if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;
@@ -2649,11 +2727,8 @@
                 const runLi = document.createElement('li');
                 runLi.className = 'breadcrumb-item ' + (currentState.subPath ? '' : 'active');
                 if (currentState.createdAt) {
-                    const runDate = new Date(currentState.createdAt);
-                    runLi.textContent = runDate.toLocaleString('en-US', {
-                        year: 'numeric', month: '2-digit', day: '2-digit',
-                        hour: '2-digit', minute: '2-digit', second: '2-digit'
-                    }).replace(',', '');
+                    const runDate = formatDateSafely(currentState.createdAt);
+                    runLi.textContent = runDate !== '—' ? runDate : (currentState.jobId.substring(0, 8) + '...');
                 } else {
                     runLi.textContent = currentState.jobId.substring(0, 8) + '...';
                 }
@@ -2793,11 +2868,12 @@
                                 };
                                 const reasonsHtml = reasons.map(r => `<span class="badge bg-light text-dark border me-1 py-1 px-2" style="font-size: 0.78rem;">${reasonLabels[r] || r}</span>`).join('');
 
-                                const queueDateFull = new Date(job.created_at + 'Z').toLocaleString('en-US', {
+                                const queueDateFull = formatDateSafely(job.created_at, {
                                     day: '2-digit', month: '2-digit', year: 'numeric',
                                     hour: '2-digit', minute: '2-digit', second: '2-digit'
                                 });
-                                const elapsed = Math.floor((Date.now() - new Date(job.created_at + 'Z').getTime()) / 1000);
+                                const jobDate = parseDateSafely(job.created_at);
+                                const elapsed = jobDate ? Math.max(0, Math.floor((Date.now() - jobDate.getTime()) / 1000)) : 0;
                                 const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
                                 const repoShort = job.repo ? job.repo.split('/').pop() : '?';
                                 const isOwnJob = job.username && job.username === currentUser;
@@ -2820,7 +2896,7 @@
                                             </div>
                                             <div class="d-flex align-items-center">
                                                 <div class="text-muted small text-end" style="min-width: 80px;" title="Submitted on ${queueDateFull}">
-                                                    <div><i class="bi bi-clock me-1"></i>${elapsedStr}</div>
+                                                    <div data-queue-started="${jobDate ? jobDate.toISOString() : ''}"><i class="bi bi-clock me-1"></i>${elapsedStr}</div>
                                                     <div class="text-muted" style="font-size: 0.7rem;">${queueDateFull}</div>
                                                 </div>
                                                 ${cancelBtn}
@@ -3074,6 +3150,9 @@
                 const runningRuns = runs.filter(r => r.status === 'running');
                 const otherRuns = runs.filter(r => r.status !== 'running');
 
+                runningRuns.sort((a, b) => compareDates(a.created_at, b.created_at, true));
+                otherRuns.sort((a, b) => compareDates(a.created_at, b.created_at, true));
+
                 if (runningRuns.length > 0) {
                     const runningHeader = document.createElement('div');
                     runningHeader.className = 'col-12 full-width mb-3';
@@ -3086,10 +3165,7 @@
                         const [owner, name] = repo.split('/');
                         const viewerUrl = (run.is_local ? '/local-view/' : '/view/') + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/';
                         
-                        const runDate = new Date(run.created_at).toLocaleString('en-US', {
-                            year: 'numeric', month: '2-digit', day: '2-digit',
-                            hour: '2-digit', minute: '2-digit', second: '2-digit'
-                        }).replace(',', '');
+                        const runDate = formatDateSafely(run.created_at);
 
                         const isMaintenance = run.job_type === 'maintenance' || run.is_maintenance;
                         col.innerHTML = `
@@ -3141,11 +3217,7 @@
 
                     const title = document.createElement('h6');
                     title.className = 'card-title mb-1';
-                    const runDate = new Date(run.created_at);
-                    title.textContent = runDate.toLocaleString('en-US', {
-                        year: 'numeric', month: '2-digit', day: '2-digit',
-                        hour: '2-digit', minute: '2-digit', second: '2-digit'
-                    }).replace(',', '');
+                    title.textContent = formatDateSafely(run.created_at);
 
                     const statusDiv = document.createElement('div');
                     const statusClass = run.status === 'completed' ? 'text-success' : 'text-danger';
@@ -3163,7 +3235,7 @@
 
                     const date = document.createElement('small');
                     date.className = 'text-muted';
-                    date.textContent = new Date(run.created_at).toLocaleString();
+                    date.textContent = formatDateSafely(run.created_at);
 
                     card.appendChild(icon);
                     card.appendChild(title);
@@ -3321,7 +3393,7 @@
                     const bName = typeof b === 'string' ? b : (b?.name || '');
                     const bLastRun = typeof b === 'object' ? b?.last_run : null;
                     const isActive = window._selectedBranch === bName;
-                    const dateStr = bLastRun ? new Date(bLastRun).toLocaleString('en-US', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+                    const dateStr = bLastRun ? formatDateSafely(bLastRun, {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
                     const isMain = bName === 'main' || bName === 'master';
                     const isDraft = bName.startsWith('cluster-draft/');
                     const iconClass = isMain ? 'bi-shield-check text-success' : isDraft ? 'bi-lightning text-warning' : 'bi-diagram-2 text-primary';
@@ -3394,8 +3466,8 @@
                 case 'path-desc': sorted.sort((a,b) => b.path.localeCompare(a.path)); break;
                 case 'name-asc':  sorted.sort((a,b) => a.path.split('/').pop().localeCompare(b.path.split('/').pop())); break;
                 case 'name-desc': sorted.sort((a,b) => b.path.split('/').pop().localeCompare(a.path.split('/').pop())); break;
-                case 'date-desc': sorted.sort((a,b) => (b.created_at || '').localeCompare(a.created_at || '')); break;
-                case 'date-asc':  sorted.sort((a,b) => (a.created_at || '').localeCompare(b.created_at || '')); break;
+                case 'date-desc': sorted.sort((a,b) => compareDates(a.created_at, b.created_at, true)); break;
+                case 'date-asc':  sorted.sort((a,b) => compareDates(a.created_at, b.created_at, false)); break;
             }
 
             const [owner, name] = targetRepo.split('/');
@@ -3408,7 +3480,7 @@
                 else if (ext === 'csv') icon = 'bi-file-earmark-spreadsheet';
                 else if (['json','yaml','yml'].includes(ext)) icon = 'bi-file-earmark-code';
 
-                const dateStr = f.created_at ? new Date(f.created_at).toLocaleString('en-US', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+                const dateStr = formatDateSafely(f.created_at, {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(f.path)}`;
                 const stageBadge = f.stage ? `<span class="badge rounded-pill ms-2" style="font-size:0.7rem;font-weight:500;padding:2px 8px;background:${f.artifact_type==='metric'?'var(--primary-light)':f.artifact_type==='plot'?'var(--success-light)':'var(--bg-subtle)'};color:${f.artifact_type==='metric'?'var(--primary)':f.artifact_type==='plot'?'var(--success)':'var(--text-secondary)'};border:1px solid var(--border-color);">${escapeHtml(f.stage)}</span>` : '';
                 const branchBadge = makeBranchBadge(f.branch);
@@ -3495,7 +3567,7 @@
                 else if (ext === 'csv') icon = 'bi-file-earmark-spreadsheet';
                 else if (['json', 'yaml', 'yml'].includes(ext)) icon = 'bi-file-earmark-code';
 
-                const sizeStr = node.size ? formatBytes(node.size) : (node.createdAt ? new Date(node.createdAt).toLocaleString('en-US', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—');
+                const sizeStr = node.size ? formatBytes(node.size) : formatDateSafely(node.createdAt, {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
                 const [owner, name] = targetRepo.split('/');
                 const downloadUrl = `/artifacts/${owner}/${name}/${rev}/${encodeURIComponent(node.path)}`;
 
@@ -5304,13 +5376,13 @@
         setInterval(() => {
             // Update active-run-elapsed elements
             document.querySelectorAll('.active-run-elapsed[data-started]').forEach(el => {
-                const started = new Date(el.dataset.started);
-                el.textContent = formatElapsed(started);
+                const started = parseDateSafely(el.dataset.started);
+                if (started) el.textContent = formatElapsed(started);
             });
             // Update queue elapsed elements
             document.querySelectorAll('[data-queue-started]').forEach(el => {
-                const started = new Date(el.dataset.queueStarted);
-                el.textContent = formatElapsed(started);
+                const started = parseDateSafely(el.dataset.queueStarted);
+                if (started) el.textContent = formatElapsed(started);
             });
             // Update "last updated" indicator
             const updateEl = document.getElementById('stats-last-update');

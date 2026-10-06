@@ -3233,6 +3233,36 @@ git_fetch_lock = threading.Lock()
 GIT_FETCH_MIN_INTERVAL = 60.0
 
 
+def normalize_iso_utc(date_val):
+    """Normalize date representations (SQLite 'YYYY-MM-DD HH:MM:SS', Git '%aI',
+    or datetime objects) into strict ISO 8601 UTC ('YYYY-MM-DDTHH:MM:SSZ').
+    Returns None if date_val is None or empty. Raises ValueError on malformed inputs.
+    """
+    if not date_val:
+        return None
+    if isinstance(date_val, datetime.datetime):
+        dt = date_val
+    elif isinstance(date_val, str):
+        cleaned = date_val.strip()
+        if not cleaned:
+            return None
+        if cleaned.endswith('Z'):
+            cleaned = cleaned[:-1] + '+00:00'
+        dt = datetime.datetime.fromisoformat(cleaned)
+    else:
+        raise ValueError(f"Unsupported date type: {type(date_val)}")
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    else:
+        dt = dt.astimezone(datetime.timezone.utc)
+
+    if dt.microsecond == 0:
+        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    else:
+        return dt.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+
 def _extract_branch_artifacts(branch, job_info, repo, local_repo_path):
     """
     Extract artifacts for a single branch, using commit-level caching if rev is an immutable SHA.
@@ -3299,6 +3329,13 @@ def _extract_branch_artifacts(branch, job_info, repo, local_repo_path):
             )
             if res_date.returncode == 0 and res_date.stdout.strip():
                 branch_date = res_date.stdout.strip()
+
+    if branch_date:
+        try:
+            branch_date = normalize_iso_utc(branch_date)
+        except Exception as e:
+            app.logger.warning(f"Failed to normalize branch_date {branch_date!r} for {branch}: {e}")
+            branch_date = None
 
     if is_sha:
         with commit_artifacts_lock:
@@ -3518,15 +3555,28 @@ def api_artifact_history(repo):
                 metadata = parse_dvc_metadata(dvc_lock_content, norm_file_path)
 
         if metadata and metadata.get('md5'):
+            raw_date = run.get('created_at')
+            norm_date = None
+            if raw_date:
+                try:
+                    norm_date = normalize_iso_utc(raw_date)
+                except Exception as e:
+                    app.logger.warning(f"Failed to normalize run created_at {raw_date!r}: {e}")
             history.append({
                 'job_id': run['job_id'],
                 'branch': run['branch'],
                 'commit_hash': commit,
                 'commit_title': title_map.get(commit, commit[:8]),
-                'created_at': run['created_at'],
+                'created_at': norm_date,
                 'md5': metadata['md5'],
                 'size': metadata['size']
             })
+
+    # Sort history chronologically (newest first) by normalized ISO UTC date
+    history.sort(
+        key=lambda x: x.get('created_at') or '',
+        reverse=True
+    )
 
     return jsonify(history)
 
