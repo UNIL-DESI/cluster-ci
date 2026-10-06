@@ -1280,6 +1280,7 @@ def worker_poll(worker_id):
            "status": "assigned",
            "job_id": "<job_id_uuid>",
            "parallel_mode": 1,
+           "is_local": 0 | 1,
            "role": "executor",
            "repo": "<owner/repo>",
            "branch": "<branch_name>",
@@ -1322,6 +1323,9 @@ def worker_poll(worker_id):
                     "status": "assigned",
                     "job_id": job_dict["job_id"],
                     "parallel_mode": 1,
+                    # The worker selects local archive startup and protected
+                    # workspace paths from this flag, including in parallel mode.
+                    "is_local": job_dict["is_local"],
                     "role": "executor",
                     "repo": job_dict["repo"],
                     "branch": job_dict["branch"],
