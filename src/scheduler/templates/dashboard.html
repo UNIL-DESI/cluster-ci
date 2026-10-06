@@ -898,26 +898,6 @@
             display: block;
         }
 
-        /* ===== Live Indicator ===== */
-        .live-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-        .live-indicator-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: var(--success);
-            animation: pulse-dot 2s infinite;
-        }
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(0.85); }
-        }
 
         /* ===== Enhanced Active Run Cards ===== */
         .active-run-card {
@@ -1257,7 +1237,7 @@
     </nav>
 
     <div class="container mt-4">
-        <nav aria-label="breadcrumb">
+        <nav aria-label="breadcrumb" id="breadcrumb-nav" style="display: none;">
             <ol class="breadcrumb breadcrumb-premium" id="breadcrumb">
                 <li class="breadcrumb-item active" id="breadcrumb-home" onclick="navigateToRoot()"><i class="bi bi-house-door-fill me-1"></i>Home</li>
             </ol>
@@ -2168,7 +2148,6 @@
             let v3BadgesHtml = '';
             if (isV3) {
                 v3BadgesHtml = `
-                    <span class="v3-badge v3-badge-dag"><i class="bi bi-diagram-3-fill"></i> v3 DAG</span>
                     ${run.home_worker ? `<span class="v3-badge v3-badge-home" title="Home machine"><i class="bi bi-house-door-fill"></i> Home : ${escapeHtml(run.home_worker)}</span>` : ''}
                     ${activeWorkersList.filter(w => w !== run.home_worker).map(w => `<span class="v3-badge v3-badge-extra" title="Auxiliary machine"><i class="bi bi-lightning-charge-fill"></i> Auxiliary : ${escapeHtml(w)}</span>`).join('')}
                 `;
@@ -2753,6 +2732,12 @@
                     }
                     breadcrumb.appendChild(li);
                 });
+            }
+
+            // Show breadcrumb only when it contains more than 1 level (hide on Home / root view)
+            const navEl = document.getElementById('breadcrumb-nav') || breadcrumb.closest('nav');
+            if (navEl) {
+                navEl.style.display = (breadcrumb.children.length > 1) ? '' : 'none';
             }
         }
 
@@ -4040,10 +4025,6 @@
                             <span class="badge-premium badge-warning-premium">
                                 <i class="bi bi-hourglass-split"></i> ${Array.isArray(queue) ? queue.length : 0} queued
                             </span>
-                            <span class="live-indicator">
-                                <span class="live-indicator-dot"></span>
-                                <span>live</span>
-                            </span>
                         </div>
                     </div>
                 `;
@@ -4267,15 +4248,14 @@
                             // Point 1: Submit user display (replace Inconnu with actual submitter or '—')
                             const displayUser = (ex.user && ex.user !== 'Inconnu' && ex.user !== 'Unknown') ? ex.user : '—';
 
-                            // Point 2: Card badges & title deduplication (ONE mode badge, explicit Primary Machine badge with tooltip, identifier title)
-                            const modeBadge = isV3 ? 
-                                `<span class="v3-badge v3-badge-dag" style="font-size:0.68rem; padding: 1px 6px;">v3 DAG</span>` :
+                            // Point 2: Card badges & title deduplication (explicit Primary Machine badge with tooltip, identifier title)
+                            const modeBadge = isV3 ? '' : 
                                 `<span class="badge-classic-pill" style="font-size:0.68rem; padding: 1px 6px;">Classic</span>`;
                             const primaryBadge = ex.isHome ? 
                                 `<span class="v3-badge v3-badge-home" style="font-size:0.68rem; padding: 1px 6px;" title="Primary machine guaranteed for pipeline coordination & main runner"><i class="bi bi-house-door me-1"></i>Primary Machine</span>` : '';
                             const cardTitle = ex.type === 'classic_job' ? 
                                 `Job ${ex.jobId ? ex.jobId.substring(0, 8) : ''}` : 
-                                (ex.type === 'v3_coordinator' ? `Coordinator · Job ${ex.jobId ? ex.jobId.substring(0, 8) : ''}` : escapeHtml(ex.nodeName));
+                                (ex.type === 'v3_coordinator' ? `Coordinator · Job ${ex.jobId ? ex.jobId.substring(0, 8) : ''}` : `Stage : ${escapeHtml(ex.nodeName)}`);
 
                             // Point 3: Admitted Resource Format (explicit notation: 4 CPUs · 4 GB RAM · 0 GPU · 0 GB VRAM)
                             const gpusCount = (ex.gpus !== undefined && ex.gpus !== null) ? Number(ex.gpus) : (ex.vramGb > 0 ? 1 : 0);
@@ -4293,8 +4273,8 @@
                                             <div class="fw-semibold text-dark text-truncate" style="max-width: 260px;" title="${escapeHtml(ex.repo)} @${escapeHtml(ex.branch)}">
                                                 <i class="bi bi-folder me-1 text-secondary"></i>${escapeHtml(ex.repo)} <span class="text-muted fw-normal">@${escapeHtml(ex.branch)}</span>
                                             </div>
-                                            <div class="text-muted" style="font-size: 0.72rem;">
-                                                <i class="bi bi-person me-1"></i>${escapeHtml(displayUser)} &bull; Runner: <code>${escapeHtml(ex.runnerId)}</code>
+                                            <div class="text-muted" style="font-size: 0.72rem;" title="Runner: ${escapeHtml(ex.runnerId)}">
+                                                <i class="bi bi-person me-1"></i>${escapeHtml(displayUser)}
                                             </div>
                                         </div>
                                         ${isV3 ? `
