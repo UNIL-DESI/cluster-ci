@@ -390,14 +390,27 @@ def test_docker_resource_args_pytorch_cuda_alloc_conf_injection():
     args_cpu = docker_resource_args(discrete_host, {"ram_gb": 8.0, "gpus": 0})
     assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_cpu
 
+    # 4. Respect de la configuration utilisateur : NE PAS écraser une valeur personnalisée
+    # Cas A: spécifiée via dict env dans node_resources
+    args_user_env = docker_resource_args(
+        gb10_host,
+        {"ram_gb": 16.0, "env": {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"}},
+    )
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128" in args_user_env
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_env
+
+    # Cas B: spécifiée via clé directe pytorch_cuda_alloc_conf
+    args_user_direct = docker_resource_args(
+        discrete_host,
+        {"ram_gb": 16.0, "gpus": 1, "gpu_ids": [0], "pytorch_cuda_alloc_conf": "garbage_collection_threshold:0.8"},
+    )
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8" in args_user_direct
+    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_direct
+
 
 def test_cli_watchdog_invocation(monkeypatch, tmp_path):
     from src.runner.host_guard import main
 
-    meminfo_file = tmp_path / "meminfo"
-    meminfo_file.write_text(
-        "MemTotal: 128790528 kB\nMemAvailable: 52428800 kB\n", encoding="utf-8"
-    )
     marker_file = tmp_path / "marker.json"
 
     # Invoque main() avec --watchdog
@@ -411,16 +424,14 @@ def test_cli_watchdog_invocation(monkeypatch, tmp_path):
             "12.0",
             "--poll-interval",
             "0.01",
-            "--meminfo-path",
-            str(meminfo_file),
             "--marker-file",
             str(marker_file),
         ],
     )
-    # Monkeypatch subprocess.run pour docker inspect
+    # Monkeypatch subprocess.run pour déléguer sans lancer bash réel
     monkeypatch.setattr(
         "subprocess.run",
-        lambda *args, **kwargs: type("Proc", (), {"returncode": 0, "stdout": "false"})(),
+        lambda *args, **kwargs: type("Proc", (), {"returncode": 0})(),
     )
 
     with pytest.raises(SystemExit) as exc_info:

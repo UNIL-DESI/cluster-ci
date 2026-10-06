@@ -99,6 +99,42 @@ get_available_memory_mib() {
     awk '/^MemAvailable:/ {printf "%d", $2 / 1024}' /proc/meminfo
 }
 
+get_culprit_container() {
+    # In multi-job scenarios (multiple containers on the same host),
+    # identify the highest memory consumer to avoid killing innocent jobs.
+    local running_containers
+    running_containers=$(docker ps --filter "name=cluster-" --format "{{.Names}}" 2>/dev/null)
+    local count
+    count=$(echo "$running_containers" | grep -v '^$' | wc -l 2>/dev/null || echo 0)
+
+    if [ "$count" -le 1 ]; then
+        echo "$CONTAINER_NAME"
+        return
+    fi
+
+    local max_container="$CONTAINER_NAME"
+    local max_bytes=0
+    for c in $running_containers; do
+        local cid
+        cid=$(docker inspect "$c" --format '{{.Id}}' 2>/dev/null)
+        local cur_bytes=0
+        if [ -n "$cid" ]; then
+            if [ -f "/sys/fs/cgroup/system.slice/docker-${cid}.scope/memory.current" ]; then
+                cur_bytes=$(cat "/sys/fs/cgroup/system.slice/docker-${cid}.scope/memory.current" 2>/dev/null || echo 0)
+            elif [ -f "/sys/fs/cgroup/docker/${cid}/memory.current" ]; then
+                cur_bytes=$(cat "/sys/fs/cgroup/docker/${cid}/memory.current" 2>/dev/null || echo 0)
+            elif [ -f "/sys/fs/cgroup/memory/docker/${cid}/memory.usage_in_bytes" ]; then
+                cur_bytes=$(cat "/sys/fs/cgroup/memory/docker/${cid}/memory.usage_in_bytes" 2>/dev/null || echo 0)
+            fi
+        fi
+        if [ "$cur_bytes" -gt "$max_bytes" ] 2>/dev/null; then
+            max_bytes="$cur_bytes"
+            max_container="$c"
+        fi
+    done
+    echo "$max_container"
+}
+
 kill_container() {
     local reason="$1"
     local used_gb="$2"
@@ -153,7 +189,12 @@ while true; do
 
     # 1. HOST MEMORY RESERVE CHECK (MemAvailable < reserve) — IMMEDIATE KILL
     if [ "$AVAIL_MIB" -lt "$HOST_RESERVE_MIB" ]; then
-        kill_container "HARD LIMIT BREACHED: killed by host memory guard: MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB" "$USED_GB" "$AVAIL_GB"
+        CULPRIT_CONTAINER=$(get_culprit_container)
+        if [ "$CULPRIT_CONTAINER" != "$CONTAINER_NAME" ]; then
+            echo "[GPU Watchdog] ⚠️ Host memory pressure detected (MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB), but highest consumer is $CULPRIT_CONTAINER (sparing $CONTAINER_NAME)."
+        else
+            kill_container "HARD LIMIT BREACHED: killed by host memory guard: MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB" "$USED_GB" "$AVAIL_GB"
+        fi
     fi
 
     # 2. HARD LIMIT CHECK (90% of total RAM) — IMMEDIATE KILL, no grace period

@@ -23,26 +23,54 @@ import argparse
 import json
 import math
 import os
+from pathlib import Path
+import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-# Re-export host memory guard functions and defaults (Bug 8 Grace-Blackwell GB10 Guard)
-from src.runner.host_memory_guard import (
-    DEFAULT_HOST_MEMORY_RESERVE_GB,
-    DEFAULT_MARKER_FILE_NAME,
-    DEFAULT_POLL_INTERVAL_SEC,
-    ENV_HOST_GUARD_MARKER_FILE,
-    ENV_HOST_MEMORY_RESERVE_GB,
-    ENV_WATCHDOG_POLL_INTERVAL,
-    check_host_memory_headroom,
-    format_kill_message,
-    get_configured_reserve_gb,
-    kill_container_process,
-    parse_meminfo_content,
-    read_host_meminfo,
-    run_host_memory_watchdog,
-    write_host_guard_marker,
-)
+# Host Memory Guard Constants (Bug 8 Grace-Blackwell GB10 Guard)
+DEFAULT_HOST_MEMORY_RESERVE_GB: float = 12.0
+DEFAULT_HOST_WATCHDOG_POLL_INTERVAL: float = 1.0
+DEFAULT_HOST_GUARD_MARKER_FILE: str = "host_guard_killed.marker"
+
+ENV_HOST_MEMORY_RESERVE_GB: str = "HOST_MEMORY_RESERVE_GB"
+ENV_WATCHDOG_POLL_INTERVAL: str = "WATCHDOG_POLL_INTERVAL"
+ENV_HOST_GUARD_MARKER_FILE: str = "HOST_GUARD_MARKER_FILE"
+
+WATCHDOG_SCRIPT_PATH: Path = Path(__file__).with_name("gpu_watchdog.sh")
+
+
+def run_host_memory_watchdog(
+    container_name: str,
+    *,
+    reserve_gb: Optional[float] = None,
+    poll_interval_sec: Optional[float] = None,
+    marker_file: Optional[str | Path] = None,
+    vram_limit_gb: float = 0.0,
+) -> int:
+    """Delegate watchdog execution to canonical host watchdog script (gpu_watchdog.sh).
+
+    Ensures single source of truth (DRY) between CLI and pipeline runners.
+    """
+    if not container_name:
+        raise ValueError("container_name cannot be empty")
+
+    env = dict(os.environ)
+    if reserve_gb is not None:
+        env[ENV_HOST_MEMORY_RESERVE_GB] = str(reserve_gb)
+    if poll_interval_sec is not None:
+        env[ENV_WATCHDOG_POLL_INTERVAL] = str(poll_interval_sec)
+    if marker_file is not None:
+        env[ENV_HOST_GUARD_MARKER_FILE] = str(marker_file)
+
+    cmd = ["bash", str(WATCHDOG_SCRIPT_PATH), container_name, str(int(vram_limit_gb))]
+    try:
+        proc = subprocess.run(cmd, env=env)
+        return proc.returncode
+    except Exception as err:
+        sys.stderr.write(f"[Host Guard] Erreur lancement watchdog: {err}\n")
+        return 1
+
 
 __all__ = [
     "DEFAULT_CONTAINER_OOM_SCORE_ADJ",
@@ -51,10 +79,10 @@ __all__ = [
     "DEFAULT_HEADNODE_CPU_RESERVE",
     "DEFAULT_HEADNODE_DISK_RESERVE_GB",
     "DEFAULT_HEADNODE_RAM_RESERVE_GB",
+    "DEFAULT_HOST_GUARD_MARKER_FILE",
     "DEFAULT_HOST_MEMORY_RESERVE_GB",
-    "DEFAULT_MARKER_FILE_NAME",
+    "DEFAULT_HOST_WATCHDOG_POLL_INTERVAL",
     "DEFAULT_PLACEMENT_PRIORITY",
-    "DEFAULT_POLL_INTERVAL_SEC",
     "DEFAULT_RAM_MARGIN_GB",
     "ENV_HOST_GUARD_MARKER_FILE",
     "ENV_HOST_MEMORY_RESERVE_GB",
@@ -64,21 +92,14 @@ __all__ = [
     "PRIORITY_DEFAULT_WORKER",
     "PRIORITY_HEADNODE_LAST",
     "check_cgroup_memory_limit",
-    "check_host_memory_headroom",
     "docker_resource_args",
     "docker_resource_args_string",
-    "format_kill_message",
     "format_memory_value",
-    "get_configured_reserve_gb",
     "get_headnode_safe_capacities",
     "is_headnode_host",
     "is_unified_memory_host",
-    "kill_container_process",
-    "parse_meminfo_content",
     "placement_priority",
-    "read_host_meminfo",
     "run_host_memory_watchdog",
-    "write_host_guard_marker",
 ]
 
 # Defaults & Constants
@@ -395,7 +416,18 @@ def docker_resource_args(
     # 8. PyTorch Allocator Config for Unified Memory / GPU (Bug 8 / Grace-Blackwell GB10)
     # Prevents aggressive CUDA virtual memory fragmentation and runaway physical allocations
     # bypassing Docker cgroups on unified memory architectures (NVLink-C2C).
-    if unified or ("gpus" in node_resources and int(node_resources.get("gpus") or 0) > 0):
+    # Respect any user-defined PYTORCH_CUDA_ALLOC_CONF (e.g. from node_resources["env"] or explicit field)
+    user_alloc_conf: Optional[str] = None
+    if isinstance(node_resources.get("env"), dict):
+        user_alloc_conf = node_resources["env"].get("PYTORCH_CUDA_ALLOC_CONF")
+    if not user_alloc_conf:
+        raw_conf = node_resources.get("pytorch_cuda_alloc_conf") or node_resources.get("PYTORCH_CUDA_ALLOC_CONF")
+        if raw_conf:
+            user_alloc_conf = str(raw_conf)
+
+    if user_alloc_conf:
+        args.append(f"-e PYTORCH_CUDA_ALLOC_CONF={user_alloc_conf}")
+    elif unified or ("gpus" in node_resources and int(node_resources.get("gpus") or 0) > 0):
         args.append("-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
     return args
@@ -528,12 +560,6 @@ def main() -> None:
         default=None,
         help="Path to marker file written upon termination",
     )
-    parser.add_argument(
-        "--meminfo-path",
-        type=str,
-        default="/proc/meminfo",
-        help="Path to meminfo file (default: /proc/meminfo)",
-    )
 
     args = parser.parse_args()
 
@@ -543,7 +569,7 @@ def main() -> None:
             reserve_gb=args.reserve_gb,
             poll_interval_sec=args.poll_interval,
             marker_file=args.marker_file,
-            meminfo_path=args.meminfo_path,
+            vram_limit_gb=args.vram_gb or 0.0,
         )
         sys.exit(exit_code)
 
