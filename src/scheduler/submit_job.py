@@ -1113,7 +1113,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     new_logs = logs_data.get('logs', '')
                     if new_logs:
                         import re
-                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|Host Memory Guard|tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
                             oom_detected = True
                         if not status_printed:
                             print(f"\n\n[Streaming logs for job {job_id}]")
@@ -1204,7 +1204,10 @@ def wait_for_job(headnode_url, job_id, branch=None):
                         except Exception:
                             pass
                 elif exit_code == 137 or oom_detected:
-                    print(f"\n❌ Error: Job exceeded allocated REQUIRED_RAM limit ({ram_required} GB) and was killed by system (OOM Killer). Please increase this limit in .cluster-ci")
+                    if oom_detected and "Host Memory Guard" in (new_logs if 'new_logs' in locals() else ''):
+                        print(f"\n❌ Error: Job was terminated by Host Memory Guard (host RAM/MemAvailable reserve breached). Please check host memory pressure or decrease memory requirements.")
+                    else:
+                        print(f"\n❌ Error: Job exceeded allocated REQUIRED_RAM limit ({ram_required} GB) and was killed by system (OOM Killer). Please increase this limit in .cluster-ci")
                 elif exit_code == 255:
                     print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
                 elif exit_code < 0:

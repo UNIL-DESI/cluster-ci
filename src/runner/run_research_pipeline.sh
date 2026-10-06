@@ -949,12 +949,25 @@ fi
 
 if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
     OOM_KILLED=$(timeout 10 docker inspect "${MAIN_CONTAINER_NAME}" --format '{{.State.OOMKilled}}' 2>/dev/null || echo "false")
+    MARKER_FILE="${HOST_GUARD_MARKER_FILE:-host_guard_killed.marker}"
+    HOST_GUARD_KILLED=false
+    KILL_REASON=""
+    if [ -f "$MARKER_FILE" ]; then
+        HOST_GUARD_KILLED=true
+        KILL_REASON=$(grep -oE '"reason": "[^"]+"' "$MARKER_FILE" 2>/dev/null | head -1 | cut -d'"' -f4)
+    elif [ -f gpu_watchdog.log ] && grep -qi "killed by host memory guard" gpu_watchdog.log 2>/dev/null; then
+        HOST_GUARD_KILLED=true
+    fi
+
     GPU_WATCHDOG_KILLED=false
     if [ -f gpu_watchdog.log ] && grep -q "VRAM limit exceeded" gpu_watchdog.log 2>/dev/null; then
         GPU_WATCHDOG_KILLED=true
     fi
 
-    if [ "$GPU_WATCHDOG_KILLED" = "true" ]; then
+    if [ "$HOST_GUARD_KILLED" = "true" ]; then
+        EXEC_RET=137
+        log_error "❌ Error: Job terminated by Host Memory Guard: ${KILL_REASON:-Host memory pressure reserve breached (MemAvailable < reserve)}."
+    elif [ "$GPU_WATCHDOG_KILLED" = "true" ]; then
         EXEC_RET=137
         log_error "❌ Error: Job exceeded allocated REQUIRED_VRAM limit (${VRAM_LIMIT} GB) and was preemptively stopped by GPU Watchdog to protect the worker. Please decrease VRAM consumption or increase REQUIRED_VRAM in .cluster-ci"
     elif [ $EXEC_RET -eq 137 ] || [ "$OOM_KILLED" = "true" ]; then
