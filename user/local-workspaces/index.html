@@ -1162,6 +1162,39 @@ worker proxy. Normal viewer addresses are unchanged. This does not restrict
 trusted job code, administrator access, custom Docker network overrides, or
 other lab members who possess the shared token. Use the existing trusted network
 or HTTPS for token transport.</p>
+<p>Hash-based peer downloads (<code>/fetch_cas/&lt;hash&gt;</code>) search public caches only, even
+when the caller supplies a token. Local consumers explicitly request <code>local=1</code>
+and supply <code>Authorization: Bearer &lt;CLUSTER_TOKEN&gt;</code> to include protected caches.
+A hash is an integrity check, not an access credential. The runner client sends
+the token only in local mode and does not follow download redirects.
+Parallel <code>next_node</code> and <code>runner_heartbeat</code> control APIs also require the token;
+they reject requests when the server token is unconfigured. Dashboard metadata
+and console logs retain their existing access rules.</p>
+<p>Artifact discovery, dependency recovery and cache-affinity lookup exclude local
+producers for ordinary jobs. An artifact whose producing job is unknown is not
+assumed public. Local jobs may reuse both public and protected artifacts because
+their outputs remain local. Parallel local jobs use separate home, pip and uv
+volumes; normal volume names remain unchanged.</p>
+<p>Before deploying this separation, inventory old parallel home/package volumes
+that were shared between modes. A newly separated name does not sanitize an old
+volume or an already contaminated public workspace. Preserve and quarantine any
+such data through the existing administrator procedure; this patch does not
+delete or migrate volumes automatically.</p>
+<p>The runner owns <code>IS_LOCAL</code>, <code>CLUSTER_CI_MODE</code>, <code>JOB_ID</code>, <code>HEADNODE_URL</code>,
+<code>CLUSTER_TOKEN</code> and the node attempt counter. Custom stage variables/secret files
+cannot override those values. A local pipeline refuses external log delegation.
+The maintained CLI remembers local mode before submission work can fail, and
+ambiguous old recovery state is treated conservatively. <code>--local</code> supports
+submission and <code>attach</code>; GitHub-only subcommands are rejected with that flag.
+The legacy shell launcher rejects <code>--local</code> rather than starting a shadow push.</p>
+<p>Local submission, workers, stage containers and viewers set <code>DVC_NO_ANALYTICS=1</code>
+before invoking DVC. This suppresses DVC's external telemetry; it does not change
+dashboard metrics or the network permissions of trusted job code.</p>
+<p>Cluster API clients refuse HTTP redirects, including result uploads, peer
+downloads and authenticated control requests. Configure the canonical headnode
+URL directly; a redirect is an error, not permission to forward credentials or
+job content to another server. Standalone <code>cluster-run</code> installations use the
+same no-redirect policy.</p>
 <h2 id="cleanup">Cleanup</h2>
 <p>Both modes use the existing <code>repositories/registry.json</code> and oldest-idle-first
 cleanup order. The local registry key is <code>_local/&lt;owner&gt;/&lt;repo&gt;</code>. The default
