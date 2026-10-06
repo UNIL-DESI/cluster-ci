@@ -1086,7 +1086,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     new_logs = logs_data.get('logs', '')
                     if new_logs:
                         import re
-                        if re.search(r'tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
+                        if re.search(r'tué par le système \(OOM Killer\)|arrêté préventivement par le GPU Watchdog|tu\xe9 par le syst\xe8me \(OOM Killer\)|arr\xeat\xe9 pr\xe9ventivement par le GPU Watchdog|killed by system \(OOM Killer\)|preemptively stopped by GPU Watchdog|Exit code 137|Out of Memory|exited with -9', new_logs, re.IGNORECASE):
                             oom_detected = True
                         if not status_printed:
                             print(f"\n\n[Streaming logs for job {job_id}]")
