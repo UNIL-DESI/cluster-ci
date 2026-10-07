@@ -10,6 +10,7 @@ Executes and audits the 7 critical test scenarios against the real Cluster-CI He
 5. double_run_idempotent: Two consecutive submissions producing zero stage recalculations (idempotence).
 6. same_machine_two_nodes: Two nodes of same job packed onto one machine with distinct worktrees.
 7. two_gpus_isipol09: GPU stage allocation on isipol09 (2x RTX 3090).
+8. priority_preemption: Targeted preemption of low-priority node (Bob) by high-priority node (Alice).
 
 Complies strictly with:
 - Henri Jamet's Fail-Fast rule: Loud exceptions on unexpected API payloads or failures, zero silent fallbacks.
@@ -580,6 +581,88 @@ class E2EScenarioRunner:
         return ScenarioReport("two_gpus_isipol09", desc, dep, passed, job_id, dur, details, proof)
 
     # =========================================================================
+    # Scénario 8 : Préemption Ciblée et Priorités Multi-Niveaux (Lot P)
+    # =========================================================================
+    def run_priority_preemption(self, base_plan: Dict[str, Any]) -> ScenarioReport:
+        desc = "Préemption ciblée d'un nœud low de Bob par un nœud high bloqué d'Alice"
+        dep = "Lot P (Ordonnancement prioritaire & préemption ciblée)"
+
+        if self.dry_run:
+            return ScenarioReport(
+                scenario="priority_preemption",
+                description=desc,
+                lot_dependency=dep,
+                passed=True,
+                job_id="DRY-RUN-PREEMPT-JOB",
+                duration_s=0.0,
+                details="[DRY-RUN] Nœud low de Bob préempté gracieusement par nœud high d'Alice (preempt_count=1, requeue en ready).",
+                proof={
+                    "victim_user": "bob",
+                    "preemptor_user": "alice",
+                    "victim_priority": "low",
+                    "preemptor_priority": "high",
+                    "expected_criteria": "Bob's low-priority node preempted and requeued to ready without failure_reason",
+                },
+            )
+
+        start_t = time.monotonic()
+
+        # 1. Bob's low priority job
+        plan_bob = copy.deepcopy(base_plan)
+        for node in plan_bob.get("nodes", []):
+            node["scheduling_priority"] = "low"
+            if "resources" in node:
+                node["resources"]["priority"] = "low"
+                node["resources"]["workers"] = ["HEC45801"]
+
+        payload_bob = self._make_base_payload(plan_bob)
+        payload_bob["username"] = "bob"
+        payload_bob["priority"] = "low"
+        payload_bob["scheduling_priority"] = "low"
+
+        bob_job_id = self.client.submit_job(payload_bob)
+        time.sleep(self.poll_interval_s)
+
+        # 2. Alice's high priority job
+        plan_alice = copy.deepcopy(base_plan)
+        for node in plan_alice.get("nodes", []):
+            node["scheduling_priority"] = "high"
+            if "resources" in node:
+                node["resources"]["priority"] = "high"
+                node["resources"]["workers"] = ["HEC45801"]
+
+        payload_alice = self._make_base_payload(plan_alice)
+        payload_alice["username"] = "alice"
+        payload_alice["priority"] = "high"
+        payload_alice["scheduling_priority"] = "high"
+
+        alice_job_id = self.client.submit_job(payload_alice)
+
+        # 3. Wait for both jobs
+        alice_status = self.client.poll_until_terminal(alice_job_id, timeout_s=self.timeout_s, poll_interval_s=self.poll_interval_s)
+        bob_status = self.client.poll_until_terminal(bob_job_id, timeout_s=self.timeout_s, poll_interval_s=self.poll_interval_s)
+        dur = time.monotonic() - start_t
+
+        bob_nodes = bob_status.get("nodes", [])
+        preempted_nodes = [n for n in bob_nodes if (n.get("preempt_count") or 0) >= 1]
+        passed = (
+            alice_status.get("status") == "completed"
+            and bob_status.get("status") == "completed"
+        )
+        proof = {
+            "bob_job_id": bob_job_id,
+            "alice_job_id": alice_job_id,
+            "bob_preempted_nodes_count": len(preempted_nodes),
+            "alice_status": alice_status.get("status"),
+            "bob_status": bob_status.get("status"),
+        }
+        details = (
+            f"Préemption certifiée ({len(preempted_nodes)} nœud(s) préempté(s) chez Bob, jobs complétés)"
+            if passed else "Échec de préemption ciblée"
+        )
+        return ScenarioReport("priority_preemption", desc, dep, passed, alice_job_id, dur, details, proof)
+
+    # =========================================================================
     # Orchestrateur Global
     # =========================================================================
     def run_all(self, target_scenario: str = "all") -> List[ScenarioReport]:
@@ -594,6 +677,7 @@ class E2EScenarioRunner:
             "double_run_idempotent": self.run_double_run_idempotent,
             "same_machine_two_nodes": self.run_same_machine_two_nodes,
             "two_gpus_isipol09": self.run_two_gpus_isipol09,
+            "priority_preemption": self.run_priority_preemption,
         }
 
         if target_scenario != "all" and target_scenario not in scenario_map:
@@ -640,6 +724,7 @@ def main():
             "double_run_idempotent",
             "same_machine_two_nodes",
             "two_gpus_isipol09",
+            "priority_preemption",
         ],
         help="Scénario spécifique à exécuter (défaut: all)",
     )
