@@ -6,6 +6,7 @@ repositories/
 .env
 runners/
 *.log
+job_logs/
 gh_*
 runs.json
 cluster-ci-runs.log

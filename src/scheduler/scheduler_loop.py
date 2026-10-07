@@ -1981,6 +1981,8 @@ def schedule_iteration():
     ]
     available_extra_workers.sort(key=lambda w: get_worker_placement_priority(w), reverse=True)
 
+    workers_by_id = {w["worker_id"]: w for w in workers}
+
     for w in list(available_extra_workers):
         eligible_jobs = []
         for p_job in parallel_jobs:
@@ -1993,23 +1995,35 @@ def schedule_iteration():
                 cursor = conn.cursor()
                 cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ? AND status IN ("ready", "running")', (jid,))
                 parallelizable_count = cursor.fetchone()[0]
-                if len(current_active) >= parallelizable_count:
-                    continue
 
                 cursor.execute('SELECT resources, dep_paths FROM job_nodes WHERE job_id = ? AND status = "ready"', (jid,))
                 ready_rows = cursor.fetchall()
 
             w_alloc = allocated_map[w["worker_id"]]
-            can_run_any = any(
-                is_worker_admissible_for_node(
-                    w,
-                    dict(json.loads(rr["resources"]) if rr["resources"] else {}, job_id=jid),
-                    allocated=w_alloc
-                )
-                for rr in ready_rows
-            )
-            if can_run_any:
-                eligible_jobs.append((p_job, current_active))
+            admissible_ready_nodes = []
+            for rr in ready_rows:
+                node_res = dict(json.loads(rr["resources"]) if rr["resources"] else {}, job_id=jid)
+                if is_worker_admissible_for_node(w, node_res, allocated=w_alloc):
+                    admissible_ready_nodes.append(node_res)
+
+            if not admissible_ready_nodes:
+                continue
+
+            if len(current_active) >= parallelizable_count:
+                has_orphan_node = False
+                for node_res in admissible_ready_nodes:
+                    can_active_run = any(
+                        workers_by_id.get(act_wid) is not None and
+                        is_worker_admissible_for_node(workers_by_id[act_wid], node_res, allocated=None)
+                        for act_wid in current_active
+                    )
+                    if not can_active_run:
+                        has_orphan_node = True
+                        break
+                if not has_orphan_node:
+                    continue
+
+            eligible_jobs.append((p_job, current_active))
 
         if eligible_jobs:
             # Règle d'ordonnancement unifiée : priorité > équité machine > équité user > ancienneté > affinité
