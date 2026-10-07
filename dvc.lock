@@ -94,7 +94,7 @@ stages:
       size: 52428800
     - path: metrics/branch_b1.json
       hash: md5
-      md5: 9751b7165e666f5f59f9b408183ba393
+      md5: 44ed744b05dfca084f37d693b84efa65
       size: 139
   branch_b_step2:
     cmd: python3 simulate_research.py branch_b_step2
