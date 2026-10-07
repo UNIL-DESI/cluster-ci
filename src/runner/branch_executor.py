@@ -201,6 +201,7 @@ class DockerRunner:
         user_id: int = 1000,
         group_id: int = 1000,
         resources: Optional[Dict[str, Any]] = None,
+        labels: Optional[Dict[str, str]] = None,
     ) -> int:
         from src.runner.host_guard import docker_resource_args
 
@@ -221,6 +222,9 @@ class DockerRunner:
             "--init",
             "--name", container_name,
         ]
+        if labels:
+            for lk, lv in labels.items():
+                cmd.extend(["--label", f"{lk}={lv}"])
         cmd.extend(guard_args)
         cmd.extend([
             "-v", f"{repo_dir}:/workspace",
@@ -829,6 +833,12 @@ class BranchExecutor:
         if local:
             env['DVC_NO_ANALYTICS'] = '1'
 
+        labels = {
+            "cluster-ci.runner-id": self.runner_id,
+            "cluster-ci.runner": self.runner_id,
+            "cluster-ci.job-id": self.safe_job_id,
+        }
+
         ret = self.docker.run_container(
             image=image,
             container_name=container_name,
@@ -841,6 +851,7 @@ class BranchExecutor:
             user_id=self.user_id,
             group_id=self.group_id,
             resources=resources,
+            labels=labels,
         )
         if ret != 0:
             raise RuntimeError(f"docker run failed for {container_name} (code {ret})")

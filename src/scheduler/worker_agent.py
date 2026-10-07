@@ -1570,12 +1570,32 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30)
             logger.error(f"❌ [PREEMPTION] Error terminating runner {runner_id}: {e}")
 
     try:
+        # Recherche par label canonique cluster-ci.runner-id ou cluster-ci.runner, fallback sur name
         res = subprocess.run(
-            ["docker", "ps", "-a", "--filter", f"name={runner_id}", "--format", "{{.Names}}"],
+            ["docker", "ps", "-a", "--filter", f"label=cluster-ci.runner-id={runner_id}", "--format", "{{.Names}}"],
             capture_output=True, text=True, timeout=5
         )
+        containers = []
         if res.returncode == 0 and res.stdout.strip():
             containers = [c.strip() for c in res.stdout.strip().split("\n") if c.strip()]
+
+        if not containers:
+            res_alt = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"label=cluster-ci.runner={runner_id}", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res_alt.returncode == 0 and res_alt.stdout.strip():
+                containers = [c.strip() for c in res_alt.stdout.strip().split("\n") if c.strip()]
+
+        if not containers:
+            res_legacy = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"name={runner_id}", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res_legacy.returncode == 0 and res_legacy.stdout.strip():
+                containers = [c.strip() for c in res_legacy.stdout.strip().split("\n") if c.strip()]
+
+        if containers:
             safe_docker_rm_f(containers, timeout=8)
     except Exception as e:
         logger.warning(f"Error cleaning docker containers for runner {runner_id}: {e}")

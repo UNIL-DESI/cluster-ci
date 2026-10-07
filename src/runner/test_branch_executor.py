@@ -64,6 +64,8 @@ class MockDockerRunner(DockerRunner):
         user_id: int = 1000,
         group_id: int = 1000,
         resources: Optional[Dict[str, Any]] = None,
+        labels: Optional[Dict[str, str]] = None,
+        **kwargs,
     ) -> int:
         self.containers_started.append({
             "name": container_name,
@@ -72,6 +74,7 @@ class MockDockerRunner(DockerRunner):
             "repo_dir": repo_dir,
             "ram_limit": ram_limit,
             "vram_limit": vram_limit,
+            "labels": labels,
         })
         return 0
 

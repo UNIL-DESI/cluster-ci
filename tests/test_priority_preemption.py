@@ -284,3 +284,76 @@ def test_worker_agent_preempt_runner_endpoint():
     data = resp.get_json()
     assert data["status"] == "preempted"
     assert data["runner_id"] == "test-runner-123"
+
+
+def test_docker_runner_labels_and_worker_preempt_cleanup_by_label(monkeypatch):
+    import subprocess
+    from src.runner.branch_executor import DockerRunner
+    from src.scheduler.worker_agent import _async_runner_preempt_cleanup
+
+    # 1. Vérification de la commande émise par DockerRunner.run_container
+    captured_cmds = []
+
+    def fake_subprocess_run(cmd, *args, **kwargs):
+        captured_cmds.append(cmd)
+        class DummyRes:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return DummyRes()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    runner = DockerRunner(docker_cmd="docker")
+    labels = {
+        "cluster-ci.runner-id": "runner-xyz-999",
+        "cluster-ci.job-id": "job-12345",
+    }
+    ret = runner.run_container(
+        image="test-img:latest",
+        container_name="cluster-job-job12345-test-img",
+        home_volume="vol-home",
+        repo_dir="/tmp/repo",
+        base_dir="/tmp/base",
+        labels=labels,
+    )
+    assert ret == 0
+    assert len(captured_cmds) == 1
+    cmd = captured_cmds[0]
+    assert "docker" in cmd
+    assert "run" in cmd
+    assert "--label" in cmd
+    assert "cluster-ci.runner-id=runner-xyz-999" in cmd
+    assert "cluster-ci.job-id=job-12345" in cmd
+
+    # 2. Vérification que _async_runner_preempt_cleanup interroge bien docker ps avec le label canonique
+    ps_filter_calls = []
+    removed_containers = []
+
+    def fake_cleanup_run(cmd, *args, **kwargs):
+        if "docker" in cmd and "ps" in cmd:
+            ps_filter_calls.append(cmd)
+            class PsRes:
+                returncode = 0
+                stdout = "cluster-job-job12345-test-img\n"
+                stderr = ""
+            return PsRes()
+        class OtherRes:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return OtherRes()
+
+    monkeypatch.setattr(subprocess, "run", fake_cleanup_run)
+    monkeypatch.setattr("src.scheduler.worker_agent.safe_docker_rm_f", lambda c, timeout=8: removed_containers.extend(c))
+    monkeypatch.setattr("src.scheduler.worker_agent.purge_ollama_vram_on_host", lambda: None)
+    monkeypatch.setattr("src.scheduler.worker_agent.kill_dvc_viewer_processes", lambda: None)
+
+    _async_runner_preempt_cleanup("runner-xyz-999", process_to_kill=None, grace_period_s=0)
+
+    assert len(ps_filter_calls) >= 1
+    first_ps = ps_filter_calls[0]
+    assert "--filter" in first_ps
+    assert "label=cluster-ci.runner-id=runner-xyz-999" in first_ps
+    assert "cluster-job-job12345-test-img" in removed_containers
+
