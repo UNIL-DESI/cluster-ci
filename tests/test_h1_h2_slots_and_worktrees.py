@@ -13,10 +13,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.scheduler.persistence import init_db, get_db_conn
-from src.scheduler.scheduler_loop import allocate_gpus, get_worker_allocated_resources, handle_next_node
+from src.scheduler.scheduler_loop import handle_next_node
 from src.runner.branch_executor import BranchExecutor, DockerRunner
 
 

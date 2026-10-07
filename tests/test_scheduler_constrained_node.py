@@ -1,17 +1,9 @@
-import os
-import sys
 import json
 import uuid
 import pytest
 
-# Ensure scheduler directory is on sys.path
-sched_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "scheduler")
-if sched_dir not in sys.path:
-    sys.path.insert(0, sched_dir)
-
-import persistence
-import scheduler_loop
-from persistence import get_db_conn
+from src.scheduler import persistence, scheduler_loop
+from src.scheduler.persistence import get_db_conn
 
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):

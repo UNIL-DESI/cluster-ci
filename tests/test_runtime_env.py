@@ -182,7 +182,6 @@ def test_headnode_and_worker_get_executable(monkeypatch):
     """Test Case 7: get_executable in headnode_service and worker_agent uses resolve_venv_executable without silent fallback."""
     import src.scheduler.headnode_service as hs
     import src.scheduler.worker_agent as wa
-    from src.runner.runtime_env import resolve_venv_executable
 
     assert hs.get_executable is hs.resolve_venv_executable
     assert wa.get_executable is wa.resolve_venv_executable
