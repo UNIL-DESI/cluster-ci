@@ -205,65 +205,95 @@ class TestH1H2SlotsAndWorktrees(unittest.TestCase):
         dvc_cache = os.path.join(repo_dir, ".dvc", "cache")
         os.makedirs(dvc_cache, exist_ok=True)
 
-        mock_docker_1 = MagicMock(spec=DockerRunner)
-        mock_docker_1.create_volume.return_value = 0
-        mock_docker_1.run_container.return_value = 0
-        mock_docker_1.exec_in_container.return_value = (0, "ok")
+        captured_docker_cmds = []
+        orig_subproc_run = subprocess.run
 
-        mock_docker_2 = MagicMock(spec=DockerRunner)
-        mock_docker_2.create_volume.return_value = 0
-        mock_docker_2.run_container.return_value = 0
-        mock_docker_2.exec_in_container.return_value = (0, "ok")
+        def fake_docker_subproc(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd and cmd[0] == "docker":
+                captured_docker_cmds.append(list(cmd))
+                class DummyRes:
+                    returncode = 0
+                    stdout = ""
+                    stderr = ""
+                return DummyRes()
+            return orig_subproc_run(cmd, *args, **kwargs)
 
-        executor_1 = BranchExecutor(
-            headnode_url="http://localhost:5000",
-            job_id="job123",
-            runner_id="runner_alpha",
-            worker_id="worker1",
-            repo_dir=repo_dir,
-            target_repo="owner/test_repo",
-            target_branch="main",
-            docker=mock_docker_1,
-        )
+        import io
+        orig_popen = subprocess.Popen
 
-        executor_2 = BranchExecutor(
-            headnode_url="http://localhost:5000",
-            job_id="job123",
-            runner_id="runner_beta",
-            worker_id="worker1",
-            repo_dir=repo_dir,
-            target_repo="owner/test_repo",
-            target_branch="main",
-            docker=mock_docker_2,
-        )
+        def fake_popen(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd and cmd[0] == "docker":
+                class DummyDockerPopen:
+                    def __init__(self):
+                        self.stdout = io.StringIO("")
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        pass
+                    def wait(self):
+                        return 0
+                return DummyDockerPopen()
+            return orig_popen(cmd, *args, **kwargs)
 
-        # Vérifier que les worktrees sont distincts
-        self.assertIsNotNone(executor_1.worktree_dir)
-        self.assertIsNotNone(executor_2.worktree_dir)
-        self.assertNotEqual(executor_1.worktree_dir, executor_2.worktree_dir)
-        self.assertTrue(os.path.isdir(executor_1.worktree_dir))
-        self.assertTrue(os.path.isdir(executor_2.worktree_dir))
+        with patch("subprocess.run", side_effect=fake_docker_subproc), patch("subprocess.Popen", side_effect=fake_popen):
+            real_docker_1 = DockerRunner(docker_cmd="docker")
+            real_docker_2 = DockerRunner(docker_cmd="docker")
 
-        # Vérifier le nommage des conteneurs avec safe_runner_id
-        executor_1.start_container_for_image("python:3.11-slim")
-        executor_2.start_container_for_image("python:3.11-slim")
+            executor_1 = BranchExecutor(
+                headnode_url="http://localhost:5000",
+                job_id="job123",
+                runner_id="runner_alpha",
+                worker_id="worker1",
+                repo_dir=repo_dir,
+                target_repo="owner/test_repo",
+                target_branch="main",
+                docker=real_docker_1,
+            )
 
-        call_args_1 = mock_docker_1.run_container.call_args[1]
-        call_args_2 = mock_docker_2.run_container.call_args[1]
+            executor_2 = BranchExecutor(
+                headnode_url="http://localhost:5000",
+                job_id="job123",
+                runner_id="runner_beta",
+                worker_id="worker1",
+                repo_dir=repo_dir,
+                target_repo="owner/test_repo",
+                target_branch="main",
+                docker=real_docker_2,
+            )
 
-        self.assertIn("runner_alpha", call_args_1["container_name"])
-        self.assertIn("runner_beta", call_args_2["container_name"])
-        self.assertNotEqual(call_args_1["container_name"], call_args_2["container_name"])
+            # Vérifier que les worktrees sont distincts
+            self.assertIsNotNone(executor_1.worktree_dir)
+            self.assertIsNotNone(executor_2.worktree_dir)
+            self.assertNotEqual(executor_1.worktree_dir, executor_2.worktree_dir)
+            self.assertTrue(os.path.isdir(executor_1.worktree_dir))
+            self.assertTrue(os.path.isdir(executor_2.worktree_dir))
 
-        # Vérifier le montage du cache DVC central
-        self.assertEqual(call_args_1.get("dvc_cache_dir"), dvc_cache)
-        self.assertEqual(call_args_2.get("dvc_cache_dir"), dvc_cache)
+            # Vérifier le nommage des conteneurs avec safe_runner_id
+            executor_1.start_container_for_image("python:3.11-slim")
+            executor_2.start_container_for_image("python:3.11-slim")
 
-        # Nettoyage
-        executor_1.cleanup_worktree()
-        executor_2.cleanup_worktree()
-        self.assertFalse(os.path.exists(executor_1.worktree_dir or ""))
-        self.assertFalse(os.path.exists(executor_2.worktree_dir or ""))
+            self.assertIn("runner_alpha", executor_1.current_container)
+            self.assertIn("runner_beta", executor_2.current_container)
+            self.assertNotEqual(executor_1.current_container, executor_2.current_container)
+
+            # Vérifier les commandes docker run réelles construites
+            run_cmds = [c for c in captured_docker_cmds if "run" in c]
+            self.assertGreaterEqual(len(run_cmds), 2)
+            c1, c2 = run_cmds[0], run_cmds[1]
+
+            # Vérifier argument --user réel
+            self.assertIn("--user", c1)
+            self.assertEqual(c1[c1.index("--user") + 1], "1000:1000")
+
+            # Vérifier le montage du cache DVC central
+            self.assertTrue(any(f"{dvc_cache}:/workspace/.dvc/cache" in arg for arg in c1))
+            self.assertTrue(any(f"{dvc_cache}:/workspace/.dvc/cache" in arg for arg in c2))
+
+            # Nettoyage
+            executor_1.cleanup_worktree()
+            executor_2.cleanup_worktree()
+            self.assertFalse(os.path.exists(executor_1.worktree_dir or ""))
+            self.assertFalse(os.path.exists(executor_2.worktree_dir or ""))
 
     def test_worker_poll_multi_job_and_active_jobs_filtering(self):
         """Vérifie que worker_poll saute les jobs classiques actifs et sert les autres jobs éligibles."""
@@ -322,6 +352,31 @@ class TestH1H2SlotsAndWorktrees(unittest.TestCase):
         self.assertEqual(resp4.status_code, 200)
         data4 = resp4.get_json()
         self.assertEqual(data4.get("status"), "no_job")
+
+    def test_branch_executor_worktree_creation_failure_raises_explicitly(self):
+        """Vérifie que l'échec de git worktree add lève un RuntimeError sans repli silencieux."""
+        repo_dir = os.path.join(self.temp_dir, "test_repo_fail")
+        os.makedirs(repo_dir, exist_ok=True)
+        subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+
+        with patch("subprocess.run") as mock_subproc:
+            class DummyFailedProc:
+                returncode = 128
+                stdout = ""
+                stderr = "fatal: not a valid object name"
+            mock_subproc.return_value = DummyFailedProc()
+
+            with self.assertRaises(RuntimeError) as cm:
+                BranchExecutor(
+                    headnode_url="http://localhost:5000",
+                    job_id="job_fail",
+                    runner_id="runner_fail",
+                    worker_id="worker1",
+                    repo_dir=repo_dir,
+                    target_repo="owner/test_repo",
+                    target_branch="main",
+                )
+            self.assertIn("Failed to create isolated worktree", str(cm.exception))
 
 
 if __name__ == "__main__":

@@ -388,11 +388,12 @@ class BranchExecutor:
                     self.repo_dir = wt_path
                     logger.info("Runner %s allocated isolated worktree at %s", self.runner_id, wt_path)
                 else:
-                    logger.warning("Failed to create isolated worktree (%s), falling back to %s", res.stderr.strip() if res.stderr else "unknown", self.main_repo_dir)
-                    self.repo_dir = self.main_repo_dir
+                    err_msg = res.stderr.strip() if res.stderr else "unknown error"
+                    raise RuntimeError(f"Failed to create isolated worktree for runner {self.runner_id}: {err_msg}")
             except Exception as e:
-                logger.warning("Exception creating worktree: %s, falling back to %s", e, self.main_repo_dir)
-                self.repo_dir = self.main_repo_dir
+                if isinstance(e, RuntimeError):
+                    raise
+                raise RuntimeError(f"Failed to create isolated worktree for runner {self.runner_id}: {e}") from e
         else:
             self.repo_dir = self.main_repo_dir
 
