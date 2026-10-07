@@ -469,3 +469,95 @@ def test_preempting_node_success_prevails(prem_db):
     assert node["exit_code"] == 0
 
 
+@pytest.mark.parametrize("exit_code", [-15, -9, 137, 143])
+def test_preempting_node_requeues_and_keeps_job_active(prem_db, exit_code):
+    from src.scheduler.headnode_service import app as head_app
+    conn, _ = prem_db
+    cursor = conn.cursor()
+
+    job_id = f"job-victim-{abs(exit_code)}"
+    runner_id = f"runner-victim-{abs(exit_code)}"
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
+        VALUES (?, 'bob', 'running', 1, 'worker-1', '["worker-1"]')
+    """, (job_id,))
+    cursor.execute("""
+        INSERT INTO job_nodes (
+            job_id, node_name, status, scheduling_priority, worker_id, runner_id,
+            started_at, resources, attempt, retry_count, preempt_count, preempted_by
+        ) VALUES (
+            ?, 'stage-preempted', 'preempting', 'low', 'worker-1', ?,
+            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, 0, 'job-pri:high-node'
+        )
+    """, (job_id, runner_id))
+    conn.commit()
+
+    client = head_app.test_client()
+    resp = client.post("/update_job_status", json={
+        "job_id": job_id,
+        "status": "failed",
+        "exit_code": exit_code,
+        "error_message": f"Process terminated with exit code {exit_code}",
+        "worker_id": "worker-1",
+        "runner_id": runner_id
+    })
+    assert resp.status_code == 200
+
+    # Vérification nœud : requeue en 'ready', preempt_count incrementé, retry intact
+    node = get_job_node(job_id, "stage-preempted")
+    assert node["status"] == "ready"
+    assert node["preempt_count"] == 1
+    assert node["retry_count"] == 0
+    assert node["attempt"] == 1
+    assert node["failure_reason"] is None
+    assert node["preempted_by"] == "job-pri:high-node"
+
+    # Vérification job : le job doit TOUJOURS être actif ('running'), pas annulé ni échoué
+    cursor.execute("SELECT status, retry_count, failure_reason FROM jobs WHERE job_id = ?", (job_id,))
+    job_row = cursor.fetchone()
+    assert job_row["status"] == "running"
+    assert job_row["retry_count"] == 0 or job_row["retry_count"] is None
+    assert job_row["failure_reason"] is None
+
+
+def test_non_preempting_node_user_cancellation_preserves_behavior(prem_db):
+    from src.scheduler.headnode_service import app as head_app
+    conn, _ = prem_db
+    cursor = conn.cursor()
+
+    job_id = "job-user-cancel"
+    runner_id = "runner-cancel-1"
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
+        VALUES (?, 'bob', 'running', 1, 'worker-1', '["worker-1"]')
+    """, (job_id,))
+    cursor.execute("""
+        INSERT INTO job_nodes (
+            job_id, node_name, status, scheduling_priority, worker_id, runner_id,
+            started_at, resources, attempt, retry_count, preempt_count
+        ) VALUES (
+            ?, 'stage-running', 'running', 'normal', 'worker-1', ?,
+            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, 0
+        )
+    """, (job_id, runner_id))
+    conn.commit()
+
+    # Annulation externe utilisateur avec exit_code -15 sur un nœud NON-preempting
+    client = head_app.test_client()
+    resp = client.post("/update_job_status", json={
+        "job_id": job_id,
+        "status": "failed",
+        "exit_code": -15,
+        "error_message": "User sent SIGTERM",
+        "worker_id": "worker-1",
+        "runner_id": runner_id
+    })
+    assert resp.status_code == 200
+
+    # Vérification job : doit être routé vers cancel_job_cleanly et annulé/échoué
+    cursor.execute("SELECT status FROM jobs WHERE job_id = ?", (job_id,))
+    job_row = cursor.fetchone()
+    assert job_row["status"] in ("failed", "cancelled")
+
+
+

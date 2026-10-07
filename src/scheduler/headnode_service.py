@@ -1456,6 +1456,90 @@ def update_job_status():
         job_dict = dict(job)
         current_status = job_dict['status']
 
+        # Interception explicite et prioritaire des nœuds en état 'preempting' :
+        # Doit s'exécuter AVANT toute logique d'annulation sur exit_code négatif (ex: SIGTERM -15 ou SIGKILL -9).
+        cursor.execute('''
+            SELECT node_name, status, retry_count, preempted_by, runner_id, worker_id
+            FROM job_nodes
+            WHERE job_id = ? AND status = 'preempting'
+        ''', (job_id,))
+        preempting_nodes = cursor.fetchall()
+
+        if preempting_nodes and status in ['failed', 'completed', 'done']:
+            caller_worker = data.get('worker_id') or data.get('worker')
+            caller_runner = data.get('runner_id')
+            matched_nodes = []
+            if caller_runner:
+                matched_nodes = [p for p in preempting_nodes if p[4] == caller_runner]
+            if not matched_nodes and caller_worker:
+                matched_nodes = [p for p in preempting_nodes if p[5] == caller_worker]
+            if not matched_nodes:
+                matched_nodes = preempting_nodes
+
+            for p_row in matched_nodes:
+                p_name = p_row[0]
+                p_preempted_by = p_row[3]
+                if (status in ['completed', 'done']) and (exit_code == 0 or exit_code is None):
+                    # Le succès naturel prévaut
+                    cursor.execute('''
+                        UPDATE job_nodes
+                        SET status = 'done', exit_code = 0, finished_at = CURRENT_TIMESTAMP
+                        WHERE job_id = ? AND node_name = ?
+                    ''', (job_id, p_name))
+                else:
+                    # Interception préemption : requeue en 'ready', preempt_count + 1, pas de retry, pas de failure_reason
+                    handle_node_failure_or_retry(
+                        conn,
+                        job_id=job_id,
+                        node_name=p_name,
+                        is_preempted=True,
+                        preempted_by=p_preempted_by,
+                    )
+
+            try:
+                from src.scheduler.scheduler_loop import update_dag_ready_states
+                update_dag_ready_states(job_id)
+            except Exception as e:
+                app.logger.warning(
+                    "Erreur lors de la mise à jour des états DAG pour le job %s: %s",
+                    job_id, e
+                )
+
+            # Libérer le worker / runner appelant
+            if caller_worker:
+                cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ? AND assigned_job_id = ?', (caller_worker, job_id))
+            if caller_runner:
+                cursor.execute('DELETE FROM runner_heartbeats WHERE runner_id = ?', (caller_runner,))
+            elif caller_worker:
+                cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND worker_id = ?', (job_id, caller_worker))
+
+            agg_status = get_aggregated_job_status(job_id)
+            if agg_status in ['completed', 'failed']:
+                cursor.execute('''
+                    UPDATE jobs SET
+                        status = ?,
+                        finished_at = CURRENT_TIMESTAMP,
+                        exit_code = COALESCE(?, exit_code),
+                        commit_hash = COALESCE(?, commit_hash),
+                        error_message = COALESCE(?, error_message),
+                        failure_reason = COALESCE(?, failure_reason),
+                        gpu_ids = '[]'
+                    WHERE job_id = ?
+                ''', (agg_status, exit_code, commit_hash, data.get('error_message'), data.get('failure_reason'), job_id))
+                cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
+                cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                cleanup_local_archive(job_id)
+            else:
+                cursor.execute('''
+                    UPDATE jobs SET
+                        status = 'running',
+                        commit_hash = COALESCE(?, commit_hash)
+                    WHERE job_id = ?
+                ''', (commit_hash, job_id))
+
+            conn.commit()
+            return jsonify({"status": "ok", "message": "Preemption handled and node requeued cleanly"})
+
         # If it's an external cancellation (indicated by negative exit code from signal propagation like GHA TERM)
         # and the job is currently assigned or running, we must route it via cancel_job_cleanly to notify the worker.
         if status == 'failed' and current_status in ['assigned', 'running'] and exit_code is not None and int(exit_code) < 0:
@@ -1489,33 +1573,6 @@ def update_job_status():
                 caller_worker = data.get('worker_id') or data.get('worker')
                 caller_runner = data.get('runner_id')
                 max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
-
-                # Interception explicite des nœuds en état 'preempting' :
-                cursor.execute('''
-                    SELECT node_name, status, retry_count, preempted_by
-                    FROM job_nodes
-                    WHERE job_id = ? AND status = 'preempting'
-                ''', (job_id,))
-                preempting_nodes = cursor.fetchall()
-                for p_row in preempting_nodes:
-                    p_name = p_row[0]
-                    p_preempted_by = p_row[3]
-                    if (status in ['completed', 'done']) and (exit_code == 0 or exit_code is None):
-                        # Le succès prévaut !
-                        cursor.execute('''
-                            UPDATE job_nodes
-                            SET status = 'done', exit_code = 0, finished_at = CURRENT_TIMESTAMP
-                            WHERE job_id = ? AND node_name = ?
-                        ''', (job_id, p_name))
-                    else:
-                        # Interception préemption : requeue en 'ready', preempt_count + 1, pas de retry, pas d'OOM
-                        handle_node_failure_or_retry(
-                            conn,
-                            job_id=job_id,
-                            node_name=p_name,
-                            is_preempted=True,
-                            preempted_by=p_preempted_by,
-                        )
 
                 # Si le worker rapporte un échec global alors que le job a des nœuds DAG:
                 if status == 'failed':
