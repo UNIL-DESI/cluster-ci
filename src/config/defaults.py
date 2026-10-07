@@ -52,7 +52,7 @@ OS_HEADROOM_GB: float = 8.0
 RUNNER_HEARTBEAT_TIMEOUT_S: float = 60.0
 RUNNER_HEARTBEAT_INTERVAL_S: float = 15.0
 MAX_WORKERS_PER_JOB: int = int(
-    os.environ.get("CLUSTER_CI_MAX_WORKERS_PER_JOB", os.environ.get("MAX_WORKERS_PER_JOB", "2"))
+    os.environ.get("CLUSTER_CI_MAX_WORKERS_PER_JOB", os.environ.get("MAX_WORKERS_PER_JOB", "8"))
 )
 
 # Scheduling: Worker placement priority defaults (Amendement A13/A14)

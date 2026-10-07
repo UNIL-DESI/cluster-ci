@@ -23,9 +23,9 @@ def isolated_db(tmp_path, monkeypatch):
     persistence.init_db()
     yield db_file
 
-def test_h4_default_max_workers_per_job_is_two():
-    """H4: Vérifie que MAX_WORKERS_PER_JOB est à 2 par défaut."""
-    assert MAX_WORKERS_PER_JOB == 2
+def test_h4_default_max_workers_per_job_is_eight():
+    """H4: Vérifie que MAX_WORKERS_PER_JOB est à 8 par défaut."""
+    assert MAX_WORKERS_PER_JOB == 8
 
 
 def test_h4_extra_worker_sort_key_order():
@@ -52,10 +52,11 @@ def test_h4_extra_worker_sort_key_order():
     assert key_user_0 < key_user_1, "User with 0 assigned machines must precede user with 1"
 
 
-def test_h4_max_workers_ceiling_enforced_in_scheduling():
+def test_h4_max_workers_ceiling_enforced_in_scheduling(monkeypatch):
     """
-    H4: Vérifie que le scheduler plafonne à MAX_WORKERS_PER_JOB (2) l'attribution de machines à un job.
+    H4: Vérifie que le scheduler plafonne l'attribution de machines lorsque configuré.
     """
+    monkeypatch.setenv("CLUSTER_CI_MAX_WORKERS_PER_JOB", "2")
     jid = "job-ceiling-01"
     workers = []
     for i in range(1, 5):
