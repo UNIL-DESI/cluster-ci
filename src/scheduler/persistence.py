@@ -1,6 +1,7 @@
 import sqlite3
 import os
 from contextlib import contextmanager
+from typing import Any, Dict, Optional, Tuple
 
 def get_db_path():
     return os.environ.get("CLUSTER_DB_PATH", "cluster_scheduler.db")
@@ -684,4 +685,152 @@ def get_aggregated_job_status(job_id):
         return "running"
 
     return "pending"
+
+
+def is_non_retryable_failure(
+    failure_reason: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Détecte si une défaillance de nœud/job est non-retryable selon les directives système.
+
+    Cas non-retryables :
+    1. HostMemoryPressureExceeded : garde mémoire GB10 hôte
+    2. PackageVerificationFailed : incompatibilité ou absence de paquets vérifiée
+
+    Retourne (is_non_retryable: bool, canonical_reason: Optional[str]).
+    """
+    err_str = str(error_message or "")
+    if (
+        failure_reason == "HostMemoryPressureExceeded"
+        or "HostMemoryPressureExceeded" in err_str
+    ):
+        return True, "HostMemoryPressureExceeded"
+    if (
+        failure_reason == "PackageVerificationFailed"
+        or "PackageVerificationFailed" in err_str
+        or "Fail-fast package verification failed" in err_str
+        or "FAIL-FAST:" in err_str
+    ):
+        return True, "PackageVerificationFailed"
+    return False, None
+
+
+def handle_node_failure_or_retry(
+    conn,
+    job_id: str,
+    node_name: str,
+    failure_reason: Optional[str] = None,
+    error_message: Optional[str] = None,
+    exit_code: Optional[int] = None,
+    duration_s: Optional[float] = None,
+    cas_transfers: Optional[Any] = None,
+    max_retries: Optional[int] = None,
+    is_preempted: bool = False,
+    preempted_by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Point d'entrée UNIFIÉ pour la gestion des retries, échecs et préemptions de nœuds.
+
+    Utilisé à la fois par :
+    - scheduler_loop.py (handle_next_node, chemin v3)
+    - headnode_service.py (/update_job_status, chemin classique / worker failure)
+
+    Garanties :
+    - Si is_preempted=True : réinsère le nœud à 'ready', incrémente preempt_count,
+      ne touche JAMAIS à retry_count ni attempt, et n'enregistre aucune raison d'échec.
+    - Si is_non_retryable=True : passe immédiatement à 'failed' avec la raison canonique.
+    - Si retries disponibles (retry_count < max_retries) : repasse à 'ready' avec retry_count+1.
+    - Si retries épuisés : passe à 'failed' avec 'retries_exhausted'.
+    """
+    cursor = conn.cursor()
+
+    if is_preempted:
+        cursor.execute('''
+            UPDATE job_nodes
+            SET status = 'ready',
+                worker_id = NULL,
+                runner_id = NULL,
+                gpu_ids = '[]',
+                preempt_count = COALESCE(preempt_count, 0) + 1,
+                preempted_at = CURRENT_TIMESTAMP,
+                preempted_by = ?,
+                duration_s = COALESCE(?, duration_s)
+            WHERE job_id = ? AND node_name = ?
+        ''', (preempted_by, duration_s, job_id, node_name))
+        conn.commit()
+        return {
+            "action": "preempted",
+            "status": "ready",
+            "preempted_by": preempted_by,
+        }
+
+    is_non_retryable, canonical_reason = is_non_retryable_failure(
+        failure_reason=failure_reason,
+        error_message=error_message,
+    )
+
+    if max_retries is None:
+        max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
+
+    cursor.execute(
+        "SELECT retry_count FROM job_nodes WHERE job_id = ? AND node_name = ?",
+        (job_id, node_name),
+    )
+    row = cursor.fetchone()
+    current_retries = row[0] if row and row[0] is not None else 0
+
+    cas_json = json.dumps(cas_transfers) if cas_transfers is not None else "[]"
+    effective_exit_code = exit_code if exit_code is not None else 1
+
+    if not is_non_retryable and current_retries < max_retries:
+        new_retries = current_retries + 1
+        f_reason = failure_reason or f"retry_{new_retries}"
+        cursor.execute('''
+            UPDATE job_nodes
+            SET status = 'ready',
+                retry_count = ?,
+                worker_id = NULL,
+                runner_id = NULL,
+                gpu_ids = '[]',
+                duration_s = ?,
+                exit_code = ?,
+                error_message = ?,
+                failure_reason = ?,
+                cas_transfers = ?
+            WHERE job_id = ? AND node_name = ?
+        ''', (
+            new_retries, duration_s, effective_exit_code, error_message,
+            f_reason, cas_json, job_id, node_name
+        ))
+        conn.commit()
+        return {
+            "action": "retry",
+            "status": "ready",
+            "retry_count": new_retries,
+            "failure_reason": f_reason,
+        }
+    else:
+        final_reason = canonical_reason or failure_reason or "retries_exhausted"
+        cursor.execute('''
+            UPDATE job_nodes
+            SET status = 'failed',
+                worker_id = NULL,
+                runner_id = NULL,
+                gpu_ids = '[]',
+                duration_s = ?,
+                exit_code = ?,
+                error_message = ?,
+                failure_reason = ?,
+                cas_transfers = ?,
+                finished_at = CURRENT_TIMESTAMP
+            WHERE job_id = ? AND node_name = ?
+        ''', (
+            duration_s, effective_exit_code, error_message,
+            final_reason, cas_json, job_id, node_name
+        ))
+        conn.commit()
+        return {
+            "action": "failed",
+            "status": "failed",
+            "failure_reason": final_reason,
+        }
 

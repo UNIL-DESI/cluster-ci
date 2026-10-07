@@ -13,7 +13,7 @@ try:
         init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
         mark_node_status, handle_missing_deps, record_runner_heartbeat,
         check_runner_heartbeat_timeouts, get_job_node, get_all_job_nodes,
-        get_aggregated_job_status
+        get_aggregated_job_status, handle_node_failure_or_retry
     )
     from defaults import (
         DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
@@ -30,7 +30,7 @@ except ImportError:
         init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
         mark_node_status, handle_missing_deps, record_runner_heartbeat,
         check_runner_heartbeat_timeouts, get_job_node, get_all_job_nodes,
-        get_aggregated_job_status
+        get_aggregated_job_status, handle_node_failure_or_retry
     )
     from src.scheduler.defaults import (
         DEFAULT_DOCKER_IMAGE, DEFAULT_CPUS, DEFAULT_RAM_GB, DEFAULT_VRAM_GB,
@@ -1467,10 +1467,6 @@ def update_job_status():
 
                 # Si le worker rapporte un échec global alors que le job a des nœuds DAG:
                 if status == 'failed':
-                    is_fatal_failure = (
-                        failure_reason in ("PackageVerificationFailed", "HostMemoryPressureExceeded")
-                        or (err_msg and ("PackageVerificationFailed" in err_msg or "FAIL-FAST:" in err_msg or "HostMemoryPressureExceeded" in err_msg))
-                    )
                     # Identifier les nœuds actifs ou candidats à faire échouer / retenter
                     cursor.execute('''
                         SELECT node_name, status, retry_count
@@ -1488,28 +1484,25 @@ def update_job_status():
                         active_nodes = cursor.fetchall()
 
                     for n_row in active_nodes:
-                        n_name, n_status, n_retries = n_row[0], n_row[1], n_row[2] or 0
-                        if is_fatal_failure or n_retries >= max_retries:
-                            f_reason = failure_reason or ("PackageVerificationFailed" if is_fatal_failure else "retries_exhausted")
-                            cursor.execute('''
-                                UPDATE job_nodes
-                                SET status = 'failed', failure_reason = ?, exit_code = COALESCE(?, exit_code, 1),
-                                    error_message = COALESCE(?, error_message)
-                                WHERE job_id = ? AND node_name = ?
-                            ''', (f_reason, exit_code, err_msg, job_id, n_name))
-                        else:
-                            cursor.execute('''
-                                UPDATE job_nodes
-                                SET status = 'ready', retry_count = retry_count + 1, worker_id = NULL, runner_id = NULL,
-                                    failure_reason = ?, exit_code = COALESCE(?, exit_code, 1), error_message = COALESCE(?, error_message)
-                                WHERE job_id = ? AND node_name = ?
-                            ''', (failure_reason or f"retry_{n_retries+1}", exit_code, err_msg, job_id, n_name))
+                        n_name = n_row[0]
+                        handle_node_failure_or_retry(
+                            conn,
+                            job_id=job_id,
+                            node_name=n_name,
+                            failure_reason=failure_reason,
+                            error_message=err_msg,
+                            exit_code=exit_code,
+                            max_retries=max_retries,
+                        )
 
                     try:
                         from src.scheduler.scheduler_loop import update_dag_ready_states
                         update_dag_ready_states(job_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        app.logger.warning(
+                            "Erreur lors de la mise à jour des états DAG pour le job %s: %s",
+                            job_id, e
+                        )
 
                 agg_status = get_aggregated_job_status(job_id)
 
