@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Host Memory Guard Constants (Bug 8 Grace-Blackwell GB10 Guard)
@@ -244,6 +245,13 @@ def kill_culprit_container(
     }
     try:
         with open(mf, "w", encoding="utf-8") as f:
+            json.dump(marker_data, f, indent=2)
+    except Exception:
+        pass
+
+    try:
+        tmp_marker = Path(tempfile.gettempdir()) / f"host_guard_{culprit_container}.marker"
+        with open(tmp_marker, "w", encoding="utf-8") as f:
             json.dump(marker_data, f, indent=2)
     except Exception:
         pass

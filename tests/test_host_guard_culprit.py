@@ -7,7 +7,6 @@ Verifies:
 """
 
 import json
-import os
 import shutil
 import tempfile
 import unittest
@@ -104,6 +103,13 @@ class TestHostGuardCulprit(unittest.TestCase):
         self.assertEqual(data["used_gb"], "28.5")
         self.assertEqual(data["available_gb"], "8.2")
         self.assertEqual(data["exit_code"], 137)
+
+        # Vérifier le marker dédié au conteneur dans tempdir
+        tmp_marker = Path(tempfile.gettempdir()) / f"host_guard_{culprit}.marker"
+        self.assertTrue(tmp_marker.is_file())
+        tmp_data = json.loads(tmp_marker.read_text(encoding="utf-8"))
+        self.assertEqual(tmp_data["container"], culprit)
+        tmp_marker.unlink()
 
 
 if __name__ == "__main__":

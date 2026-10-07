@@ -174,8 +174,12 @@ kill_container() {
     echo "[GPU Watchdog] ❌ Error: Job exceeded allocated memory limit (used: ${used_gb}GB, available: ${avail_gb}GB). Container $target_container was preemptively stopped to protect the worker."
     echo "[GPU Watchdog] ❌ VRAM limit exceeded: Host memory guard enforced."
 
-    # Write marker file for runner detection
-    cat > "$MARKER_FILE" 2>/dev/null << EOF
+    # Identify worktree directory of the target container via Docker mounts
+    local target_worktree
+    target_worktree=$(docker inspect "$target_container" --format '{{ range .Mounts }}{{ if eq .Destination "/workspace" }}{{ .Source }}{{ end }}{{ end }}' 2>/dev/null || true)
+
+    local marker_payload
+    marker_payload=$(cat << EOF
 {
   "status": "killed",
   "reason": "$reason",
@@ -186,10 +190,25 @@ kill_container() {
   "exit_code": 137
 }
 EOF
+)
 
-    # Kill the culprit container — this will cause docker exec to return 137
-    docker kill "$target_container" 2>/dev/null || true
-    exit 0
+    # Write marker for the target container
+    if [ -n "$target_worktree" ] && [ -d "$target_worktree" ]; then
+        echo "$marker_payload" > "$target_worktree/host_guard_killed.marker" 2>/dev/null || true
+    fi
+    echo "$marker_payload" > "/tmp/host_guard_${target_container}.marker" 2>/dev/null || true
+    echo "$marker_payload" > "${TMPDIR:-/tmp}/host_guard_${target_container}.marker" 2>/dev/null || true
+
+    if [ "$target_container" = "$CONTAINER_NAME" ]; then
+        echo "$marker_payload" > "$MARKER_FILE" 2>/dev/null || true
+        # Kill the culprit container — this will cause docker exec to return 137
+        docker kill "$target_container" 2>/dev/null || true
+        exit 0
+    else
+        docker kill "$target_container" 2>/dev/null || true
+        echo "[GPU Watchdog] ⚠️ Killed third-party culprit container $target_container. Continuing watchdog loop for $CONTAINER_NAME."
+        return 0
+    fi
 }
 
 while true; do

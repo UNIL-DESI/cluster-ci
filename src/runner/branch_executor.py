@@ -1340,11 +1340,14 @@ class BranchExecutor:
                     failure_reason_for_req = None
                     marker_file = "host_guard_killed.marker"
                     marker_in_repo = os.path.join(self.repo_dir, "host_guard_killed.marker")
+                    marker_in_tmp = os.path.join(tempfile.gettempdir(), f"host_guard_{self.current_container}.marker") if self.current_container else None
                     found_marker = None
                     if os.path.exists(marker_file):
                         found_marker = marker_file
                     elif os.path.exists(marker_in_repo):
                         found_marker = marker_in_repo
+                    elif marker_in_tmp and os.path.exists(marker_in_tmp):
+                        found_marker = marker_in_tmp
 
                     if node_exit_code == 137 and found_marker:
                         try:
