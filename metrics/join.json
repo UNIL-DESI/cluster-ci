@@ -1,0 +1,16 @@
+{
+  "stage": "join",
+  "verified_hashes": {
+    "artifacts/branch_a2_1.bin": "d9ea490137e1bec669d52ab01e42ebcc",
+    "artifacts/branch_a2_2.bin": "d364b78d65514cb4a964ca0eb2b5e398",
+    "artifacts/branch_b2.bin": "f94e9b21d43115aca412cc31c2d0d2d6",
+    "artifacts/pack_light_1.bin": "59a3b7bc05565aa8f3329e636629a97d",
+    "artifacts/pack_light_2.bin": "7a3da3fe48338bb7a947936ea99e64f6"
+  },
+  "gpu_info": {
+    "cuda_available": true,
+    "device_name": "NVIDIA GB10",
+    "allocated_vram_mb": 100.0
+  },
+  "status": "success"
+}

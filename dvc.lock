@@ -176,3 +176,39 @@ stages:
       hash: md5
       md5: fd70549dba76c597353c1a5cc5771057
       size: 137
+  join:
+    cmd: python3 simulate_research.py join
+    deps:
+    - path: artifacts/branch_a2_1.bin
+      hash: md5
+      md5: d9ea490137e1bec669d52ab01e42ebcc
+      size: 52428800
+    - path: artifacts/branch_a2_2.bin
+      hash: md5
+      md5: d364b78d65514cb4a964ca0eb2b5e398
+      size: 52428800
+    - path: artifacts/branch_b2.bin
+      hash: md5
+      md5: f94e9b21d43115aca412cc31c2d0d2d6
+      size: 52428800
+    - path: artifacts/pack_light_1.bin
+      hash: md5
+      md5: 59a3b7bc05565aa8f3329e636629a97d
+      size: 10485760
+    - path: artifacts/pack_light_2.bin
+      hash: md5
+      md5: 7a3da3fe48338bb7a947936ea99e64f6
+      size: 10485760
+    - path: simulate_research.py
+      hash: md5
+      md5: cd80dbe96894efa4bd6d87b7d002e14c
+      size: 23231
+    outs:
+    - path: artifacts/join_summary.txt
+      hash: md5
+      md5: ee6f529e1e2ada6f69fbeafac23e0932
+      size: 507
+    - path: metrics/join.json
+      hash: md5
+      md5: d28038797d85db33e8b0caf432dd0c98
+      size: 530
