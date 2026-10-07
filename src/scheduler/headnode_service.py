@@ -60,6 +60,10 @@ except ImportError:
     from src.runner.host_guard import (
         DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
     )
+try:
+    from runner.runtime_env import resolve_venv_executable
+except ImportError:
+    from src.runner.runtime_env import resolve_venv_executable
 from authlib.integrations.flask_client import OAuth
 import uuid
 import datetime
@@ -88,16 +92,11 @@ load_dotenv()
 
 # Helper to find executables
 def get_executable(name):
-    """Finds an executable in system PATH, local bin, or current venv."""
-    cmd = shutil.which(name)
-    if cmd: return cmd
-    # Fallback to local user installation
-    local_path = os.path.expanduser(f"~/.local/bin/{name}")
-    if os.path.exists(local_path): return local_path
-    # Fallback to virtual environment
-    venv_path = os.path.join(os.path.dirname(sys.executable), name)
-    if os.path.exists(venv_path): return venv_path
-    return name
+    """Finds an executable in venv, local bin, or system PATH."""
+    try:
+        return resolve_venv_executable(name)
+    except FileNotFoundError:
+        return name
 
 DVC_CMD = get_executable("dvc")
 UV_CMD = get_executable("uv")

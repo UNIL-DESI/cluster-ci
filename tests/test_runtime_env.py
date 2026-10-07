@@ -42,21 +42,59 @@ def test_resolve_venv_executable_found_in_venv_with_empty_path(tmp_path, monkeyp
 
 
 def test_resolve_venv_executable_found_via_path(tmp_path, monkeypatch):
-    """Test Case 2: Executable found via system PATH when absent from venv directory."""
+    """Test Case 2: Executable found via system PATH when absent from venv and ~/.local/bin."""
     empty_venv = tmp_path / "empty_venv" / "bin"
     empty_venv.mkdir(parents=True)
     mock_py = empty_venv / ("python.exe" if sys.platform.startswith("win") else "python")
     _create_mock_executable(str(empty_venv), "python")
 
+    empty_local = tmp_path / "empty_local" / "bin"
+    empty_local.mkdir(parents=True)
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(empty_local) if "~/.local/bin" in p else os.path.expanduser(p))
+
     custom_path = tmp_path / "custom_path"
-    _create_mock_executable(str(custom_path), "uv")
+    _create_mock_executable(str(custom_path), "custom_cli_tool")
 
     monkeypatch.setattr(sys, "executable", str(mock_py))
     monkeypatch.setenv("PATH", str(custom_path))
 
-    resolved = resolve_venv_executable("uv")
+    resolved = resolve_venv_executable("custom_cli_tool")
     assert os.path.isfile(resolved)
     assert os.path.dirname(resolved) == str(custom_path)
+
+
+def test_resolve_venv_executable_priority_order(tmp_path, monkeypatch):
+    """Test Case 2b: Strict priority order venv -> ~/.local/bin -> PATH."""
+    venv_bin = tmp_path / "venv" / "bin"
+    mock_py = venv_bin / ("python.exe" if sys.platform.startswith("win") else "python")
+    _create_mock_executable(str(venv_bin), "python")
+    local_bin = tmp_path / "local" / "bin"
+    sys_path = tmp_path / "sys_path"
+
+    # Tool A in all three -> must resolve to venv
+    _create_mock_executable(str(venv_bin), "tool_a")
+    _create_mock_executable(str(local_bin), "tool_a")
+    _create_mock_executable(str(sys_path), "tool_a")
+
+    # Tool B in local_bin and sys_path -> must resolve to local_bin
+    _create_mock_executable(str(local_bin), "tool_b")
+    _create_mock_executable(str(sys_path), "tool_b")
+
+    # Tool C only in sys_path -> must resolve to sys_path
+    _create_mock_executable(str(sys_path), "tool_c")
+
+    monkeypatch.setattr(sys, "executable", str(mock_py))
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(local_bin) if "~/.local/bin" in p else os.path.expanduser(p))
+    monkeypatch.setenv("PATH", str(sys_path))
+
+    res_a = resolve_venv_executable("tool_a")
+    assert os.path.dirname(res_a) == str(venv_bin)
+
+    res_b = resolve_venv_executable("tool_b")
+    assert os.path.dirname(res_b) == str(local_bin)
+
+    res_c = resolve_venv_executable("tool_c")
+    assert os.path.dirname(res_c) == str(sys_path)
 
 
 def test_resolve_venv_executable_missing_raises_explicit_error(tmp_path, monkeypatch):
@@ -65,7 +103,11 @@ def test_resolve_venv_executable_missing_raises_explicit_error(tmp_path, monkeyp
     venv_dir.mkdir(parents=True)
     mock_py = venv_dir / "python"
 
+    fake_local = tmp_path / "local" / "bin"
+    fake_local.mkdir(parents=True)
+
     monkeypatch.setattr(sys, "executable", str(mock_py))
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(fake_local) if "~/.local/bin" in p else os.path.expanduser(p))
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
     with pytest.raises(FileNotFoundError) as exc_info:
@@ -74,6 +116,7 @@ def test_resolve_venv_executable_missing_raises_explicit_error(tmp_path, monkeyp
     msg = str(exc_info.value)
     assert "nonexistent_binary_xyz_123" in msg
     assert str(venv_dir) in msg
+    assert str(fake_local) in msg
     assert "/usr/bin:/bin" in msg
 
 
@@ -133,3 +176,24 @@ def test_sanitize_workspace_fails_explicitly_when_dvc_not_found(tmp_path, monkey
         sanitize_workspace(str(ws), dvc_checkout=True, strict_lock_check=False)
 
     assert "Cannot perform DVC checkout" in str(exc_info.value)
+
+
+def test_headnode_and_worker_get_executable(monkeypatch):
+    """Test Case 7: get_executable in headnode_service and worker_agent delegates to resolve_venv_executable."""
+    from src.scheduler.headnode_service import get_executable as headnode_get_exec
+    from src.scheduler.worker_agent import get_executable as worker_get_exec
+
+    monkeypatch.setattr("src.scheduler.headnode_service.resolve_venv_executable", lambda name: f"/mock/path/{name}")
+    assert headnode_get_exec("mytool") == "/mock/path/mytool"
+
+    def fail_resolve(name):
+        raise FileNotFoundError("not found")
+
+    monkeypatch.setattr("src.scheduler.headnode_service.resolve_venv_executable", fail_resolve)
+    assert headnode_get_exec("mytool") == "mytool"
+
+    monkeypatch.setattr("src.scheduler.worker_agent.resolve_venv_executable", lambda name: f"/mock/worker/{name}")
+    assert worker_get_exec("mytool") == "/mock/worker/mytool"
+
+    monkeypatch.setattr("src.scheduler.worker_agent.resolve_venv_executable", fail_resolve)
+    assert worker_get_exec("mytool") == "mytool"

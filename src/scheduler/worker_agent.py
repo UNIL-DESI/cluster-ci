@@ -26,6 +26,10 @@ try:
     from redaction import redact_secrets
 except ImportError:
     from src.scheduler.redaction import redact_secrets
+try:
+    from runner.runtime_env import resolve_venv_executable
+except ImportError:
+    from src.runner.runtime_env import resolve_venv_executable
 
 try:
     from src.config.defaults import DEFAULT_RESOURCES
@@ -1337,7 +1341,8 @@ def drain_pending_syncs():
                             subprocess.run(["python3", os.path.join(base_dir, "src/runner/gc_orchestrator.py"), "mark-sync-done", project_name])
                         else:
                             # Execute dvc push via uv
-                            res = subprocess.run(["uv", "run", "dvc", "push"], cwd=project_dir)
+                            uv_bin = resolve_venv_executable("uv")
+                            res = subprocess.run([uv_bin, "run", "dvc", "push"], cwd=project_dir)
                             if res.returncode == 0:
                                 # Mark as done
                                 subprocess.run(["python3", os.path.join(base_dir, "src/runner/gc_orchestrator.py"), "mark-sync-done", project_name])
@@ -1845,14 +1850,11 @@ def get_free_port():
     return port
 
 def get_executable(name):
-    """Finds an executable in system PATH, local bin, or current venv."""
-    cmd = shutil.which(name)
-    if cmd: return cmd
-    local_path = os.path.expanduser(f"~/.local/bin/{name}")
-    if os.path.exists(local_path): return local_path
-    venv_path = os.path.join(os.path.dirname(sys.executable), name)
-    if os.path.exists(venv_path): return venv_path
-    return name
+    """Finds an executable in venv, local bin, or system PATH."""
+    try:
+        return resolve_venv_executable(name)
+    except FileNotFoundError:
+        return name
 
 DVC_CMD = get_executable("dvc")
 

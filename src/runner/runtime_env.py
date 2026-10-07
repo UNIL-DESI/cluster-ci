@@ -16,10 +16,11 @@ def resolve_venv_executable(name: str) -> str:
     Resolution order:
     1. Direct file check if 'name' is already an absolute executable path.
     2. The directory containing sys.executable (the active venv's bin/ or Scripts/ directory).
-    3. The system PATH (via shutil.which).
+    3. User local bin directory (~/.local/bin).
+    4. The system PATH (via shutil.which).
 
     Raises:
-        FileNotFoundError: If the executable is not found in either the venv or system PATH.
+        FileNotFoundError: If the executable is not found in the venv, ~/.local/bin, or system PATH.
                            No silent fallback is permitted.
     """
     if os.path.isabs(name) and os.path.isfile(name) and os.access(name, os.X_OK):
@@ -34,12 +35,22 @@ def resolve_venv_executable(name: str) -> str:
         if os.path.isfile(direct) and os.access(direct, os.X_OK):
             return os.path.abspath(direct)
 
+    # User local bin directory (~/.local/bin)
+    user_local_bin = os.path.expanduser("~/.local/bin")
+    if os.path.isdir(user_local_bin):
+        cand_user = shutil.which(name, path=user_local_bin)
+        if cand_user and os.path.isfile(cand_user):
+            return os.path.abspath(cand_user)
+        direct_user = os.path.join(user_local_bin, name)
+        if os.path.isfile(direct_user) and os.access(direct_user, os.X_OK):
+            return os.path.abspath(direct_user)
+
     cand_path = shutil.which(name)
     if cand_path and os.path.isfile(cand_path):
         return os.path.abspath(cand_path)
 
     path_env = os.environ.get("PATH", "")
     raise FileNotFoundError(
-        f"Executable '{name}' not found. Searched active venv directory ('{venv_dir}') "
-        f"and system PATH ('{path_env}')."
+        f"Executable '{name}' not found. Searched active venv directory ('{venv_dir}'), "
+        f"user local bin ('{user_local_bin}'), and system PATH ('{path_env}')."
     )
