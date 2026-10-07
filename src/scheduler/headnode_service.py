@@ -91,8 +91,15 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 load_dotenv()
 
 get_executable = resolve_venv_executable
-DVC_CMD = resolve_venv_executable("dvc")
-UV_CMD = resolve_venv_executable("uv")
+try:
+    DVC_CMD = resolve_venv_executable("dvc")
+except FileNotFoundError:
+    DVC_CMD = "dvc"
+
+try:
+    UV_CMD = resolve_venv_executable("uv")
+except FileNotFoundError:
+    UV_CMD = None
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # Per-request guard; local transfers use smaller chunks.

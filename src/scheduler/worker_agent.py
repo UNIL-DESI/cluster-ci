@@ -1850,7 +1850,10 @@ def get_free_port():
     return port
 
 get_executable = resolve_venv_executable
-DVC_CMD = resolve_venv_executable("dvc")
+try:
+    DVC_CMD = resolve_venv_executable("dvc")
+except FileNotFoundError:
+    DVC_CMD = "dvc"
 
 def safe_cleanup_worktree(repo_path, worktree_dir, worktree_name=None):
     """Safely cleans up a git worktree with 4 defensive tiers:
