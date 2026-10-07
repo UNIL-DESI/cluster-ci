@@ -525,7 +525,7 @@ def is_worker_admissible_for_node(worker, node_resources, allocated=None):
 
     # 2. Architecture
     w_arch = worker.get("arch") or ("aarch64" if "arm" in (worker.get("hostname", "") + (worker.get("gpu_name") or "")).lower() else "x86_64")
-    if node_resources.get("image_arm64") and w_arch not in ("aarch64", "arm64"):
+    if node_resources.get("image_arm64") and not node_resources.get("image_amd64") and w_arch not in ("aarch64", "arm64"):
         return False
     if node_resources.get("image_amd64") and not node_resources.get("image_arm64") and w_arch in ("aarch64", "arm64"):
         return False
@@ -1178,7 +1178,19 @@ def handle_next_node(req):
     next_res = assigned_res
     gpu_ids = assigned_gpu_ids
 
-    next_image = next_node.get("image") or next_res.get("image") or DEFAULT_DOCKER_IMAGE
+    w_arch = worker.get("arch") or ("aarch64" if "arm" in (worker.get("hostname", "") + (worker.get("gpu_name") or "")).lower() else "x86_64")
+    if w_arch in ("aarch64", "arm64") and (next_res.get("image_arm64") or next_node.get("image_arm64")):
+        next_image = next_res.get("image_arm64") or next_node.get("image_arm64")
+    elif w_arch in ("x86_64", "amd64") and (next_res.get("image_amd64") or next_node.get("image_amd64")):
+        next_image = next_res.get("image_amd64") or next_node.get("image_amd64")
+    else:
+        next_image = next_node.get("image") or next_res.get("image") or DEFAULT_DOCKER_IMAGE
+
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE job_nodes SET image = ? WHERE job_id = ? AND node_name = ?", (next_image, job_id, next_node["node_name"]))
+        conn.commit()
+
     action = "run" if (current_image and next_image == current_image) else "switch_image"
 
     if runner_id:
@@ -1261,6 +1273,22 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
 
     # Test d'admissibilité universelle à vide
     if any(is_worker_admissible_for_node(w, resources, allocated=None) for w in workers):
+        return False, ""
+
+    # H3: Si aucune machine compatible avec l'architecture demandée n'est actuellement en ligne,
+    # le nœud doit rester en attente (pending) et ne pas échouer.
+    has_arm_worker = any(
+        (w.get("arch") in ("aarch64", "arm64") or "arm" in (w.get("hostname", "") + (w.get("gpu_name") or "")).lower())
+        for w in workers
+    )
+    has_x86_worker = any(
+        (w.get("arch") not in ("aarch64", "arm64") and "arm" not in (w.get("hostname", "") + (w.get("gpu_name") or "")).lower())
+        for w in workers
+    )
+
+    if resources.get("image_arm64") and not resources.get("image_amd64") and not has_arm_worker:
+        return False, ""
+    if resources.get("image_amd64") and not resources.get("image_arm64") and not has_x86_worker:
         return False, ""
 
     # Aucune machine n'est admissible même à vide -> Calcul du diagnostic A17
