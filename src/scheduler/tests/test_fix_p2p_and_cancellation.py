@@ -33,8 +33,13 @@ class TestFixP2PAndCancellation(unittest.TestCase):
 
     def tearDown(self):
         headnode_service.CLUSTER_TOKEN = self.saved_token
+        import gc
+        gc.collect()
         if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+            try:
+                os.remove(self.db_path)
+            except OSError:
+                pass
 
     def test_register_worker_typo_correction(self):
         # Register a worker with the typo IP
