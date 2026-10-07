@@ -76,23 +76,23 @@ stages:
       hash: md5
       md5: 1ffdbb6c1d6a18e647229136a28ebafc
       size: 156
-  pack_light_2:
-    cmd: python3 simulate_research.py pack_light_2
+  branch_a_step2@2:
+    cmd: python3 simulate_research.py branch_a_step2 --item 2
     deps:
-    - path: artifacts/prep.txt
+    - path: artifacts/branch_a1_2.bin
       hash: md5
-      md5: d26a06b81354db98768151ae85152acc
-      size: 71
+      md5: e43d442be0f9d6ee914d42c7d6ab9bbf
+      size: 52428800
     - path: simulate_research.py
       hash: md5
       md5: cd80dbe96894efa4bd6d87b7d002e14c
       size: 23231
     outs:
-    - path: artifacts/pack_light_2.bin
+    - path: artifacts/branch_a2_2.bin
       hash: md5
-      md5: 7a3da3fe48338bb7a947936ea99e64f6
-      size: 10485760
-    - path: metrics/pack_light_2.json
+      md5: d364b78d65514cb4a964ca0eb2b5e398
+      size: 52428800
+    - path: metrics/branch_a2_2.json
       hash: md5
-      md5: fd70549dba76c597353c1a5cc5771057
-      size: 137
+      md5: 9f48209fff9412057c9fd1a04ac7c6ec
+      size: 156
