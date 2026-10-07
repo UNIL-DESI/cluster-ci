@@ -10,6 +10,7 @@ R5: Fail-fast verification of package versions in real stage execution condition
 
 import importlib
 import importlib.metadata
+import json
 import os
 import sys
 import tempfile
@@ -797,4 +798,113 @@ def test_verify_packages_fails_fast_on_missing_declared_dep():
                 check_subprocesses=False,
             )
             assert res == 1
+
+
+def test_verify_packages_editable_by_work_dir_without_editable_keyword():
+    """
+    Vérifie qu'un paquet dont direct_url.json pointe vers le répertoire de travail
+    sans contenir le mot-clé 'editable' est bien reconnu comme le paquet du projet
+    (via target_work_dir) et exclu des vérifications de dépendances tierces.
+    """
+    with tempfile.TemporaryDirectory() as tmp_work:
+        pyproj = os.path.join(tmp_work, "pyproject.toml")
+        with open(pyproj, "w", encoding="utf-8") as f:
+            f.write('[project]\nname = "my-declared-project"\nversion = "0.1.0"\ndependencies = []\n')
+
+        class MockDist:
+            def __init__(self, name, version, path, direct_url=None):
+                self.name = name
+                self.version = version
+                self._path = path
+                self.direct_url = direct_url
+
+            def read_text(self, filename):
+                if filename == "direct_url.json":
+                    return self.direct_url
+                return None
+
+        user_sp = os.path.join(tmp_work, ".local", "lib", "python3.12", "site-packages")
+        os.makedirs(user_sp, exist_ok=True)
+
+        direct_url_payload = json.dumps({"url": f"file://{tmp_work}", "dir_info": {}})
+        user_dists = [
+            MockDist("local-repo-tool", "0.1.0", os.path.join(user_sp, "local_repo_tool-0.1.0.dist-info"), direct_url_payload),
+        ]
+
+        def mock_distributions(path=None):
+            if path:
+                return user_dists
+            return [MockDist("python", "3.12.0", "/usr/lib/python3.12")]
+
+        def mock_lookup(n):
+            if n in ("local-repo-tool", "local_repo_tool"):
+                return user_dists[0]
+            raise importlib.metadata.PackageNotFoundError(n)
+
+        def mock_import(mod):
+            if "local" in mod or "repo" in mod:
+                raise ImportError("Simulation: module de dépôt non importable en dépendance tierce")
+            return MagicMock()
+
+        with patch("importlib.metadata.distributions", side_effect=mock_distributions), \
+             patch("importlib.metadata.distribution", side_effect=mock_lookup), \
+             patch("importlib.import_module", side_effect=mock_import):
+            res = verify_packages(
+                pythonpath=user_sp,
+                base_dir=os.path.join(tmp_work, ".local"),
+                workspace_dir=tmp_work,
+                check_subprocesses=False,
+            )
+            assert res == 0
+
+
+def test_verify_packages_invalid_direct_url_json_handled_explicitly(capsys):
+    """
+    Vérifie qu'un direct_url.json invalide est géré explicitement avec un message clair sur stderr
+    et sans masquer les exceptions inattendues. Le paquet n'est pas reconnu comme éditable.
+    """
+    with tempfile.TemporaryDirectory() as tmp_work:
+        class MockDist:
+            def __init__(self, name, version, path, direct_url=None):
+                self.name = name
+                self.version = version
+                self._path = path
+                self.direct_url = direct_url
+
+            def read_text(self, filename):
+                if filename == "direct_url.json":
+                    return self.direct_url
+                return None
+
+        user_sp = os.path.join(tmp_work, ".local", "lib", "python3.12", "site-packages")
+        os.makedirs(user_sp, exist_ok=True)
+
+        user_dists = [
+            MockDist("corrupted-pkg", "0.1.0", os.path.join(user_sp, "corrupted_pkg-0.1.0.dist-info"), "{MALFORMED_JSON_CONTENT:"),
+        ]
+
+        def mock_distributions(path=None):
+            if path:
+                return user_dists
+            return [MockDist("python", "3.12.0", "/usr/lib/python3.12")]
+
+        def mock_lookup(n):
+            if n in ("corrupted-pkg", "corrupted_pkg"):
+                return user_dists[0]
+            raise importlib.metadata.PackageNotFoundError(n)
+
+        with patch("importlib.metadata.distributions", side_effect=mock_distributions), \
+             patch("importlib.metadata.distribution", side_effect=mock_lookup), \
+             patch("importlib.import_module", side_effect=ImportError("broken")):
+            res = verify_packages(
+                pythonpath=user_sp,
+                base_dir=os.path.join(tmp_work, ".local"),
+                workspace_dir=tmp_work,
+                check_subprocesses=False,
+            )
+            assert res == 1
+
+        captured = capsys.readouterr()
+        assert "Invalid direct_url.json for package 'corrupted-pkg'" in captured.err
+
 

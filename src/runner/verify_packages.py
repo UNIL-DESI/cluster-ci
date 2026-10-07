@@ -368,11 +368,37 @@ def verify_packages(
             continue
         try:
             dist = importlib.metadata.distribution(pkg_name)
-            direct_url = dist.read_text("direct_url.json")
-            if direct_url and ("editable" in direct_url or work_dir in direct_url):
+            read_fn = getattr(dist, "read_text", None)
+            if not callable(read_fn):
+                continue
+            direct_url_text = read_fn("direct_url.json")
+            if not direct_url_text:
+                continue
+            data = json.loads(direct_url_text)
+            dir_info = (
+                data.get("dir_info", {})
+                if isinstance(data, dict) and isinstance(data.get("dir_info"), dict)
+                else {}
+            )
+            is_editable = bool(dir_info.get("editable")) or "editable" in direct_url_text
+            url_str = data.get("url", "") if isinstance(data, dict) else ""
+            matches_work_dir = False
+            if target_work_dir:
+                tw_norm = target_work_dir.replace("\\", "/")
+                matches_work_dir = (
+                    target_work_dir in direct_url_text
+                    or tw_norm in direct_url_text.replace("\\", "/")
+                    or tw_norm in url_str.replace("\\", "/")
+                )
+            if is_editable or matches_work_dir:
                 editable_pkg_norms.add(norm_name)
-        except Exception:
+        except FileNotFoundError:
+            # direct_url.json absent; normal for standard non-editable distributions
             pass
+        except json.JSONDecodeError as exc:
+            sys.stderr.write(
+                f"⚠️ [Cluster-CI] Invalid direct_url.json for package '{pkg_name}': {exc}\n"
+            )
 
     # If caller requested specific packages via CLI, restrict declared dependencies
     if packages_to_verify:
