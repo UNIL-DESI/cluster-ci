@@ -90,16 +90,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
-# Helper to find executables
-def get_executable(name):
-    """Finds an executable in venv, local bin, or system PATH."""
-    try:
-        return resolve_venv_executable(name)
-    except FileNotFoundError:
-        return name
-
-DVC_CMD = get_executable("dvc")
-UV_CMD = get_executable("uv")
+get_executable = resolve_venv_executable
+DVC_CMD = resolve_venv_executable("dvc")
+UV_CMD = resolve_venv_executable("uv")
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # Per-request guard; local transfers use smaller chunks.

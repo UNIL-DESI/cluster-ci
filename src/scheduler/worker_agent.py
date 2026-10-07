@@ -1849,14 +1849,8 @@ def get_free_port():
     s.close()
     return port
 
-def get_executable(name):
-    """Finds an executable in venv, local bin, or system PATH."""
-    try:
-        return resolve_venv_executable(name)
-    except FileNotFoundError:
-        return name
-
-DVC_CMD = get_executable("dvc")
+get_executable = resolve_venv_executable
+DVC_CMD = resolve_venv_executable("dvc")
 
 def safe_cleanup_worktree(repo_path, worktree_dir, worktree_name=None):
     """Safely cleans up a git worktree with 4 defensive tiers:
@@ -2080,7 +2074,7 @@ def start_dvc_viewer():
                 viewer_env['DVC_NO_ANALYTICS'] = '1'
             viewer_env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + viewer_env.get("PATH", "")
 
-            dvc_viewer_bin = get_executable("dvc-viewer")
+            dvc_viewer_bin = resolve_venv_executable("dvc-viewer")
             cmd = [dvc_viewer_bin, "--port", str(port), "--host", "127.0.0.1" if request.args.get("local") == "1" else "0.0.0.0"]
 
             proc = subprocess.Popen(

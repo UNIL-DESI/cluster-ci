@@ -179,21 +179,17 @@ def test_sanitize_workspace_fails_explicitly_when_dvc_not_found(tmp_path, monkey
 
 
 def test_headnode_and_worker_get_executable(monkeypatch):
-    """Test Case 7: get_executable in headnode_service and worker_agent delegates to resolve_venv_executable."""
-    from src.scheduler.headnode_service import get_executable as headnode_get_exec
-    from src.scheduler.worker_agent import get_executable as worker_get_exec
+    """Test Case 7: get_executable in headnode_service and worker_agent uses resolve_venv_executable without silent fallback."""
+    import src.scheduler.headnode_service as hs
+    import src.scheduler.worker_agent as wa
+    from src.runner.runtime_env import resolve_venv_executable
 
-    monkeypatch.setattr("src.scheduler.headnode_service.resolve_venv_executable", lambda name: f"/mock/path/{name}")
-    assert headnode_get_exec("mytool") == "/mock/path/mytool"
+    assert hs.get_executable is hs.resolve_venv_executable
+    assert wa.get_executable is wa.resolve_venv_executable
 
-    def fail_resolve(name):
-        raise FileNotFoundError("not found")
+    # When missing, raises FileNotFoundError without silent fallback return name
+    with pytest.raises(FileNotFoundError):
+        hs.get_executable("completely_nonexistent_binary_xyz_999")
 
-    monkeypatch.setattr("src.scheduler.headnode_service.resolve_venv_executable", fail_resolve)
-    assert headnode_get_exec("mytool") == "mytool"
-
-    monkeypatch.setattr("src.scheduler.worker_agent.resolve_venv_executable", lambda name: f"/mock/worker/{name}")
-    assert worker_get_exec("mytool") == "/mock/worker/mytool"
-
-    monkeypatch.setattr("src.scheduler.worker_agent.resolve_venv_executable", fail_resolve)
-    assert worker_get_exec("mytool") == "mytool"
+    with pytest.raises(FileNotFoundError):
+        wa.get_executable("completely_nonexistent_binary_xyz_999")
