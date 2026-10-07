@@ -743,7 +743,7 @@ def cancel_job_cleanly(job_id, exit_code=-15, reason="unspecified"):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = 'blocked', gpu_ids = '[]'
+                SET status = 'blocked', gpu_ids = '[]', gpu_indices = '[]'
                 WHERE job_id = ? AND status NOT IN ('done', 'skipped')
             ''', (job_id,))
             cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))

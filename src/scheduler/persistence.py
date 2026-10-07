@@ -564,7 +564,7 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
                 cursor = conn.cursor()
                 cursor.execute('''
                     UPDATE job_nodes
-                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
+                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]',
                         missing_deps_retried = missing_deps_retried + 1
                     WHERE job_id = ? AND node_name = ?
                 ''', (job_id, consumer_node_name))
@@ -592,13 +592,13 @@ def handle_missing_deps(job_id, consumer_node_name, missing_paths):
         cursor.execute('''
             UPDATE job_nodes
             SET status = 'ready', stale_reason = ?,
-                worker_id = NULL, runner_id = NULL, gpu_ids = '[]',
+                worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]',
                 missing_deps_retried = missing_deps_retried + 1
             WHERE job_id = ? AND node_name = ?
         ''', (stale_reason, job_id, prod_name))
         cursor.execute('''
             UPDATE job_nodes
-            SET status = 'pending', worker_id = NULL, runner_id = NULL, gpu_ids = '[]'
+            SET status = 'pending', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
             WHERE job_id = ? AND node_name = ?
         ''', (job_id, consumer_node_name))
         conn.commit()
@@ -643,7 +643,7 @@ def check_runner_heartbeat_timeouts(timeout_s=RUNNER_HEARTBEAT_TIMEOUT_S):
             if elapsed is None or elapsed > timeout_s:
                 cursor.execute('''
                     UPDATE job_nodes
-                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]'
+                    SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
                     WHERE job_id = ? AND node_name = ?
                 ''', (r["job_id"], r["node_name"]))
                 cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ? AND runner_id = ?', (r["job_id"], r["runner_id"]))
@@ -768,6 +768,7 @@ def handle_node_failure_or_retry(
                 worker_id = NULL,
                 runner_id = NULL,
                 gpu_ids = '[]',
+                gpu_indices = '[]',
                 preempt_count = COALESCE(preempt_count, 0) + 1,
                 preempted_at = CURRENT_TIMESTAMP,
                 preempted_by = ?,
@@ -809,6 +810,7 @@ def handle_node_failure_or_retry(
                 worker_id = NULL,
                 runner_id = NULL,
                 gpu_ids = '[]',
+                gpu_indices = '[]',
                 duration_s = ?,
                 exit_code = ?,
                 error_message = ?,
@@ -834,6 +836,7 @@ def handle_node_failure_or_retry(
                 worker_id = NULL,
                 runner_id = NULL,
                 gpu_ids = '[]',
+                gpu_indices = '[]',
                 duration_s = ?,
                 exit_code = ?,
                 error_message = ?,

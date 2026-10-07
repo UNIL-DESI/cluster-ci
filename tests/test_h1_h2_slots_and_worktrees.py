@@ -119,6 +119,75 @@ class TestH1H2SlotsAndWorktrees(unittest.TestCase):
             self.assertEqual(json.loads(rows["train_a"]), [0])
             self.assertEqual(json.loads(rows["train_b"]), [1])
 
+    def test_gpu_indices_freed_on_retry_and_cancellation(self):
+        """Vérifie que gpu_indices est bien libéré à '[]' lors d'un échec/retry et d'une annulation."""
+        from src.scheduler.persistence import handle_node_failure_or_retry
+        from src.scheduler.scheduler_loop import cancel_job_cleanly
+
+        worker = {
+            "worker_id": "gpu-worker-1x",
+            "gpu_count": 1,
+            "gpu_name": "1x RTX 3090",
+            "vram_per_gpu": "[24.0]",
+            "cpus": 8,
+            "total_ram": 32.0,
+            "status": "ready",
+            "arch": "x86_64",
+        }
+
+        with get_db_conn() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM job_nodes")
+            c.execute("DELETE FROM jobs")
+            c.execute("DELETE FROM workers")
+            c.execute(
+                "INSERT INTO workers (worker_id, gpu_count, gpu_name, vram_per_gpu, cpus, total_ram_gb, status, arch) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (worker["worker_id"], worker["gpu_count"], worker["gpu_name"], worker["vram_per_gpu"], worker["cpus"], worker["total_ram"], worker["status"], worker["arch"])
+            )
+            c.execute("INSERT INTO jobs (job_id, status, parallel_mode, repo, branch) VALUES ('job-retry', 'running', 1, 'org/repo', 'main')")
+            # Nœud 1 en running avec gpu_indices = [0]
+            c.execute(
+                "INSERT INTO job_nodes (job_id, node_name, status, worker_id, gpu_ids, gpu_indices, resources) VALUES ('job-retry', 'node_1', 'running', 'gpu-worker-1x', '[\"0\"]', '[\"0\"]', ?)",
+                (json.dumps({"gpus": 1, "vram_gb": 12.0, "cpus": 4, "ram_gb": 8.0}),)
+            )
+            # Nœud 2 prêt
+            c.execute(
+                "INSERT INTO job_nodes (job_id, node_name, status, resources) VALUES ('job-retry', 'node_2', 'ready', ?)",
+                (json.dumps({"gpus": 1, "vram_gb": 12.0, "cpus": 4, "ram_gb": 8.0}),)
+            )
+            conn.commit()
+
+            # 1. Échec de node_1 déclenchant un retry
+            res = handle_node_failure_or_retry(conn, 'job-retry', 'node_1', exit_code=1, max_retries=2)
+            self.assertEqual(res["action"], "retry")
+
+            # Vérifier que node_1 a bien gpu_indices = '[]'
+            c.execute("SELECT gpu_ids, gpu_indices FROM job_nodes WHERE job_id = 'job-retry' AND node_name = 'node_1'")
+            row = c.fetchone()
+            self.assertEqual(row[0], "[]")
+            self.assertEqual(row[1], "[]")
+
+        # 2. Le 2e nœud GPU peut maintenant démarrer et allouer le slot GPU 0
+        req_2 = {
+            "worker_id": "gpu-worker-1x",
+            "runner_id": "runner-2",
+            "job_id": "job-retry",
+            "current_image": "default-img",
+        }
+        res_2 = handle_next_node(req_2)
+        self.assertIn(res_2.get("node"), ("node_1", "node_2"))
+        self.assertEqual(res_2.get("gpu_indices"), [0])
+
+        # 3. Annulation du job : les nœuds restants doivent libérer gpu_indices
+        cancel_job_cleanly("job-retry", exit_code=-15)
+        with get_db_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT node_name, status, gpu_ids, gpu_indices FROM job_nodes WHERE job_id = 'job-retry'")
+            for row in c.fetchall():
+                self.assertEqual(row[1], "blocked")
+                self.assertEqual(row[2], "[]")
+                self.assertEqual(row[3], "[]")
+
     def test_runner_worktree_isolation_and_container_name(self):
         """Vérifie l'isolation des worktrees Git par runner et le nommage unique des conteneurs."""
         repo_dir = os.path.join(self.temp_dir, "test_repo")
