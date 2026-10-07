@@ -1400,6 +1400,167 @@ def check_job_impossible_nodes(job_id, conn, workers):
 
     return False
 
+def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
+    """Moteur de préemption ciblée pour nœuds 'high' bloqués.
+
+    Règles d'or :
+    1. Déclenchement : un nœud 'high' est prêt (ready), mais aucune machine admissible
+       ne peut l'accueillir dans l'état actuel des allocations.
+    2. Sélection de victime :
+       - Statut 'running'.
+       - Priorité 'low' (normal et high sont strictement immunisés).
+       - Utilisateur distinct : U_requester != U_victim (jamais au sein du même utilisateur).
+       - Anti-famine : preempt_count < 3 (immunité au-delà).
+       - Le plus récent d'abord : started_at DESC pour minimiser le travail perdu.
+       - La machine exécutant la victime doit être admissible pour le nœud 'high' demandeur.
+    3. Exécution :
+       - Signal gracieux POST /api/worker/preempt_runner/<runner_id> (SIGTERM 30s puis kill).
+       - Requeue en 'ready' avec preempt_count + 1, preempted_by, preempted_at.
+       - ZÉRO impact sur retry_count ni attempt, sans failure_reason d'échec.
+       - Libération immédiate des structures du worker (heartbeats, assigned_job_id).
+    """
+    cursor = conn.cursor()
+
+    # 1. Identifier les nœuds 'high' prêts (ready)
+    cursor.execute("""
+        SELECT jn.job_id, jn.node_name, jn.resources, jn.image, j.username, j.created_at
+        FROM job_nodes jn
+        JOIN jobs j ON jn.job_id = j.job_id
+        WHERE jn.status = 'ready'
+          AND jn.scheduling_priority = 'high'
+          AND j.status IN ('pending', 'assigned', 'running')
+        ORDER BY j.created_at ASC, jn.node_name ASC
+    """)
+    high_ready_nodes = [dict(r) for r in cursor.fetchall()]
+
+    if not high_ready_nodes:
+        return False
+
+    workers_by_id = {w['worker_id']: w for w in workers}
+    preempted_any = False
+
+    for req_node in high_ready_nodes:
+        req_res_raw = req_node.get('resources')
+        try:
+            req_res = json.loads(req_res_raw) if isinstance(req_res_raw, str) else (req_res_raw or {})
+        except Exception:
+            req_res = {}
+        req_res.setdefault('job_id', req_node['job_id'])
+
+        # Vérifier si au moins une machine en ligne peut DÉJÀ l'accueillir sans préemption
+        can_run_now = any(
+            is_worker_admissible_for_node(w, req_res, allocated=allocated_map.get(w['worker_id']))
+            for w in workers
+        )
+        if can_run_now:
+            # Pas besoin de préempter : une machine est déjà disponible ou peut packer
+            continue
+
+        req_user = (req_node.get('username') or '').strip()
+
+        # Chercher une victime 'low' en cours d'exécution
+        # Inter-user strict : j.username != req_user
+        # Anti-famine : preempt_count < 3
+        # Plus récent d'abord : started_at DESC
+        cursor.execute("""
+            SELECT jn.job_id, jn.node_name, jn.worker_id, jn.runner_id, jn.started_at,
+                   jn.preempt_count, j.username
+            FROM job_nodes jn
+            JOIN jobs j ON jn.job_id = j.job_id
+            WHERE jn.status = 'running'
+              AND jn.scheduling_priority = 'low'
+              AND COALESCE(jn.preempt_count, 0) < 3
+            ORDER BY jn.started_at DESC, jn.node_name ASC
+        """)
+        running_low_candidates = [dict(r) for r in cursor.fetchall()]
+
+        chosen_victim = None
+        victim_worker = None
+
+        for cand_victim in running_low_candidates:
+            victim_user = (cand_victim.get('username') or '').strip()
+            # Inter-utilisateur strict : jamais de préemption au sein du même utilisateur
+            if req_user and victim_user and req_user == victim_user:
+                continue
+            if not req_user and not victim_user:
+                continue
+
+            v_wid = cand_victim.get('worker_id')
+            if not v_wid or v_wid not in workers_by_id:
+                continue
+
+            target_worker = workers_by_id[v_wid]
+            # Vérifier si ce worker est admissible pour le nœud demandeur req_node
+            # (en supposant la machine libérée de la victime, allocated=None)
+            if is_worker_admissible_for_node(target_worker, req_res, allocated=None):
+                chosen_victim = cand_victim
+                victim_worker = target_worker
+                break
+
+        if not chosen_victim or not victim_worker:
+            continue
+
+        # Exécuter la préemption de chosen_victim
+        v_job_id = chosen_victim['job_id']
+        v_node_name = chosen_victim['node_name']
+        v_runner_id = chosen_victim['runner_id']
+        v_wid = victim_worker['worker_id']
+
+        logger.info(
+            "⚡ [PREEMPTION] Preempting low node '%s' (job=%s, user=%s, preempt_count=%d) on worker %s for high node '%s' (job=%s, user=%s)",
+            v_node_name, v_job_id, chosen_victim.get('username'),
+            chosen_victim.get('preempt_count', 0), v_wid,
+            req_node['node_name'], req_node['job_id'], req_user
+        )
+
+        # 1. Envoi de la notification de préemption au worker agent (HTTP POST)
+        service_url = victim_worker.get('service_url')
+        if service_url and v_runner_id:
+            try:
+                requests.post(
+                    f"{service_url.rstrip('/')}/api/worker/preempt_runner/{v_runner_id}",
+                    timeout=5
+                )
+            except Exception as e:
+                logger.warning(
+                    "Worker agent preemption call failed for runner %s on %s: %s (proceeding with DB requeue)",
+                    v_runner_id, service_url, e
+                )
+
+        # 2. Requeue du nœud préempté via handle_node_failure_or_retry (is_preempted=True)
+        handle_node_failure_or_retry(
+            conn,
+            job_id=v_job_id,
+            node_name=v_node_name,
+            is_preempted=True,
+            preempted_by=f"{req_node['job_id']}:{req_node['node_name']}",
+        )
+
+        # 3. Nettoyage des heartbeats et allocations de ce runner
+        if v_runner_id:
+            cursor.execute("DELETE FROM runner_heartbeats WHERE runner_id = ?", (v_runner_id,))
+        cursor.execute("DELETE FROM runner_heartbeats WHERE job_id = ? AND worker_id = ?", (v_job_id, v_wid))
+        cursor.execute("UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ? AND assigned_job_id = ?", (v_wid, v_job_id))
+
+        # Retirer v_wid de active_workers du job de la victime si présent
+        cursor.execute("SELECT active_workers FROM jobs WHERE job_id = ?", (v_job_id,))
+        act_row = cursor.fetchone()
+        if act_row and act_row[0]:
+            try:
+                act = json.loads(act_row[0])
+                if v_wid in act:
+                    act.remove(v_wid)
+                    cursor.execute("UPDATE jobs SET active_workers = ? WHERE job_id = ?", (json.dumps(act), v_job_id))
+            except Exception:
+                pass
+
+        conn.commit()
+        update_dag_ready_states(v_job_id)
+        preempted_any = True
+
+    return preempted_any
+
+
 def schedule_iteration():
     """
     Exécute une itération complète de planification avec PACKING (A11) et sélection A13 :
@@ -1539,6 +1700,12 @@ def schedule_iteration():
     with get_db_conn() as conn:
         for w in workers:
             allocated_map[w["worker_id"]] = get_worker_allocated_resources(conn, w["worker_id"])
+
+        # Moteur de préemption ciblée pour nœuds 'high' bloqués
+        preempted = check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map)
+        if preempted:
+            for w in workers:
+                allocated_map[w["worker_id"]] = get_worker_allocated_resources(conn, w["worker_id"])
 
     # 3. Ordonnancement :
     # 3.1 D'abord les jobs parallèles sans home_worker (ordre FIFO)

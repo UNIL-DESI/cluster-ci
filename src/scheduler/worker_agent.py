@@ -1543,6 +1543,87 @@ def cancel_job(target_id):
                 "message": f"Job or runner '{target_id}' not active on this worker and no matching containers found"
             }), 404
 
+
+def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30):
+    """Termine gracieusement un runner préempté (SIGTERM puis SIGKILL après 30s) sans marquer le job comme échoué."""
+    logger.info(f"🛑 [PREEMPTION] Terminating runner {runner_id} (grace period {grace_period_s}s)")
+    if process_to_kill:
+        try:
+            parent = psutil.Process(process_to_kill.pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.terminate()
+                except psutil.NoSuchProcess:
+                    pass
+            parent.terminate()
+            gone, alive = psutil.wait_procs([parent] + children, timeout=grace_period_s)
+            for p in alive:
+                try:
+                    p.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            logger.info(f"✅ [PREEMPTION] Successfully terminated runner {runner_id}")
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.error(f"❌ [PREEMPTION] Error terminating runner {runner_id}: {e}")
+
+    try:
+        res = subprocess.run(
+            ["docker", "ps", "-a", "--filter", f"name={runner_id}", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            containers = [c.strip() for c in res.stdout.strip().split("\n") if c.strip()]
+            safe_docker_rm_f(containers, timeout=8)
+    except Exception as e:
+        logger.warning(f"Error cleaning docker containers for runner {runner_id}: {e}")
+
+    purge_ollama_vram_on_host()
+    kill_dvc_viewer_processes()
+    logger.info(f"✅ [PREEMPTION] Preemption cleanup complete for runner {runner_id}")
+
+
+@app.route('/api/worker/preempt_runner/<runner_id>', methods=['POST'])
+def preempt_runner(runner_id):
+    """Route minimale de préemption gracieuse d'un runner."""
+    global current_job_id, current_process
+    logger.info(f"Received preemption request for runner {runner_id}")
+    matching_process = None
+    with job_lock:
+        if runner_id in active_executors:
+            ex = active_executors.pop(runner_id)
+            matching_process = ex.get("process")
+        else:
+            for k, ex in list(active_executors.items()):
+                if ex.get("runner_id") == runner_id:
+                    active_executors.pop(k)
+                    matching_process = ex.get("process")
+                    break
+
+        if active_executors:
+            first_active = next(iter(active_executors.values()))
+            current_job_id = first_active.get("job_id")
+            current_process = first_active.get("process")
+        else:
+            current_job_id = None
+            current_process = None
+
+    cleanup_thread = threading.Thread(
+        target=_async_runner_preempt_cleanup,
+        args=(runner_id, matching_process, 30),
+        daemon=True
+    )
+    cleanup_thread.start()
+
+    return jsonify({
+        "status": "preempted",
+        "runner_id": runner_id,
+        "message": "Preemption initiated with 30s graceful SIGTERM."
+    }), 200
+
+
 @app.route('/job_logs/<job_id>', methods=['GET'])
 def get_job_logs(job_id):
     offset = int(request.args.get('offset', 0))
