@@ -119,21 +119,45 @@ get_culprit_container() {
 
     local max_container="$CONTAINER_NAME"
     local max_bytes=0
+
+    # Query compute apps VRAM per PID if available
+    local gpu_apps=""
+    if [ "$MONITORING_MODE" = "nvidia-smi" ] && command -v nvidia-smi >/dev/null 2>&1; then
+        gpu_apps=$(nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv,noheader,nounits 2>/dev/null || true)
+    fi
+
     for c in $running_containers; do
         local cid
         cid=$(docker inspect "$c" --format '{{.Id}}' 2>/dev/null)
-        local cur_bytes=0
+        local cpid
+        cpid=$(docker inspect "$c" --format '{{.State.Pid}}' 2>/dev/null)
+        local cur_ram=0
         if [ -n "$cid" ]; then
             if [ -f "/sys/fs/cgroup/system.slice/docker-${cid}.scope/memory.current" ]; then
-                cur_bytes=$(cat "/sys/fs/cgroup/system.slice/docker-${cid}.scope/memory.current" 2>/dev/null || echo 0)
+                cur_ram=$(cat "/sys/fs/cgroup/system.slice/docker-${cid}.scope/memory.current" 2>/dev/null || echo 0)
             elif [ -f "/sys/fs/cgroup/docker/${cid}/memory.current" ]; then
-                cur_bytes=$(cat "/sys/fs/cgroup/docker/${cid}/memory.current" 2>/dev/null || echo 0)
+                cur_ram=$(cat "/sys/fs/cgroup/docker/${cid}/memory.current" 2>/dev/null || echo 0)
             elif [ -f "/sys/fs/cgroup/memory/docker/${cid}/memory.usage_in_bytes" ]; then
-                cur_bytes=$(cat "/sys/fs/cgroup/memory/docker/${cid}/memory.usage_in_bytes" 2>/dev/null || echo 0)
+                cur_ram=$(cat "/sys/fs/cgroup/memory/docker/${cid}/memory.usage_in_bytes" 2>/dev/null || echo 0)
             fi
         fi
-        if [ "$cur_bytes" -gt "$max_bytes" ] 2>/dev/null; then
-            max_bytes="$cur_bytes"
+
+        local cur_vram=0
+        if [ -n "$cpid" ] && [ -n "$gpu_apps" ]; then
+            while IFS=',' read -r app_pid app_vram; do
+                app_pid=$(echo "$app_pid" | tr -d '[:space:]')
+                app_vram=$(echo "$app_vram" | tr -d '[:space:]')
+                if [ -n "$app_pid" ] && [ -n "$app_vram" ]; then
+                    if [ "$app_pid" = "$cpid" ] || (command -v pgrep >/dev/null 2>&1 && pgrep -P "$cpid" 2>/dev/null | grep -q "^${app_pid}$"); then
+                        cur_vram=$((cur_vram + app_vram * 1024 * 1024))
+                    fi
+                fi
+            done <<< "$gpu_apps"
+        fi
+
+        local total_cur=$((cur_ram + cur_vram))
+        if [ "$total_cur" -gt "$max_bytes" ] 2>/dev/null; then
+            max_bytes="$total_cur"
             max_container="$c"
         fi
     done
@@ -144,9 +168,10 @@ kill_container() {
     local reason="$1"
     local used_gb="$2"
     local avail_gb="$3"
+    local target_container="${4:-$CONTAINER_NAME}"
 
     echo "[GPU Watchdog] ❌ $reason"
-    echo "[GPU Watchdog] ❌ Error: Job exceeded allocated memory limit (used: ${used_gb}GB, available: ${avail_gb}GB). Container was preemptively stopped to protect the worker."
+    echo "[GPU Watchdog] ❌ Error: Job exceeded allocated memory limit (used: ${used_gb}GB, available: ${avail_gb}GB). Container $target_container was preemptively stopped to protect the worker."
     echo "[GPU Watchdog] ❌ VRAM limit exceeded: Host memory guard enforced."
 
     # Write marker file for runner detection
@@ -154,7 +179,7 @@ kill_container() {
 {
   "status": "killed",
   "reason": "$reason",
-  "container": "$CONTAINER_NAME",
+  "container": "$target_container",
   "used_gb": "${used_gb}",
   "available_gb": "${avail_gb}",
   "reserve_gb": "${HOST_MEMORY_RESERVE_GB}",
@@ -162,8 +187,8 @@ kill_container() {
 }
 EOF
 
-    # Kill the container — this will cause docker exec to return 137
-    docker kill "$CONTAINER_NAME" 2>/dev/null || true
+    # Kill the culprit container — this will cause docker exec to return 137
+    docker kill "$target_container" 2>/dev/null || true
     exit 0
 }
 
@@ -195,16 +220,13 @@ while true; do
     # 1. HOST MEMORY RESERVE CHECK (MemAvailable < reserve) — IMMEDIATE KILL
     if [ "$AVAIL_MIB" -lt "$HOST_RESERVE_MIB" ]; then
         CULPRIT_CONTAINER=$(get_culprit_container)
-        if [ "$CULPRIT_CONTAINER" != "$CONTAINER_NAME" ]; then
-            echo "[GPU Watchdog] ⚠️ Host memory pressure detected (MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB), but highest consumer is $CULPRIT_CONTAINER (sparing $CONTAINER_NAME)."
-        else
-            kill_container "HARD LIMIT BREACHED: killed by host memory guard: MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB" "$USED_GB" "$AVAIL_GB"
-        fi
+        kill_container "HARD LIMIT BREACHED: killed by host memory guard: MemAvailable=${AVAIL_GB} GiB < reserve ${HOST_MEMORY_RESERVE_GB} GiB" "$USED_GB" "$AVAIL_GB" "$CULPRIT_CONTAINER"
     fi
 
     # 2. HARD LIMIT CHECK (90% of total RAM) — IMMEDIATE KILL, no grace period
     if [ "$USED_MIB" -gt "$HARD_LIMIT_MIB" ]; then
-        kill_container "HARD LIMIT BREACHED: ${USED_GB}GB > ${HARD_LIMIT_GB}GB (90% of system RAM). Immediate kill to prevent system freeze." "$USED_GB" "$AVAIL_GB"
+        CULPRIT_CONTAINER=$(get_culprit_container)
+        kill_container "HARD LIMIT BREACHED: ${USED_GB}GB > ${HARD_LIMIT_GB}GB (90% of system RAM). Immediate kill to prevent system freeze." "$USED_GB" "$AVAIL_GB" "$CULPRIT_CONTAINER"
     fi
 
     # 3. SOFT LIMIT CHECK (user-declared limit) — Kill after consecutive violations

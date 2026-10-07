@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Host Memory Guard Constants (Bug 8 Grace-Blackwell GB10 Guard)
 DEFAULT_HOST_MEMORY_RESERVE_GB: float = 12.0
@@ -93,8 +93,173 @@ def purge_host_guard_marker(
     return purged
 
 
+def get_container_memory_usage(
+    container_name: str,
+    *,
+    cgroup_fs_root: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """Inspects container and returns memory usage dict with 'ram_bytes', 'vram_bytes', and 'total_bytes'."""
+    ram_bytes = 0
+    vram_bytes = 0
+
+    try:
+        res = subprocess.run(
+            ["docker", "inspect", container_name, "--format", "{{.Id}}|{{.State.Pid}}|{{.State.Running}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            parts = res.stdout.strip().split("|")
+            cid = parts[0] if len(parts) > 0 else ""
+            cpid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            is_running = parts[2].lower() == "true" if len(parts) > 2 else False
+
+            if is_running and cid:
+                cg_root = Path(cgroup_fs_root) if cgroup_fs_root else Path("/sys/fs/cgroup")
+                possible_paths = [
+                    cg_root / "system.slice" / f"docker-{cid}.scope" / "memory.current",
+                    cg_root / "docker" / cid / "memory.current",
+                    cg_root / "memory" / "docker" / cid / "memory.usage_in_bytes",
+                    cg_root / "memory" / f"docker-{cid}.scope" / "memory.usage_in_bytes",
+                ]
+                for p in possible_paths:
+                    if p.is_file():
+                        try:
+                            val = int(p.read_text().strip())
+                            if val > 0:
+                                ram_bytes = val
+                                break
+                        except Exception:
+                            pass
+
+                if cpid > 0:
+                    try:
+                        nres = subprocess.run(
+                            ["nvidia-smi", "--query-compute-apps=pid,used_gpu_memory", "--format=csv,noheader,nounits"],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        if nres.returncode == 0:
+                            for line in nres.stdout.strip().splitlines():
+                                if "," in line:
+                                    p_str, v_str = [x.strip() for x in line.split(",", 1)]
+                                    if p_str.isdigit() and v_str.isdigit():
+                                        app_pid = int(p_str)
+                                        is_match = (app_pid == cpid)
+                                        if not is_match:
+                                            pres = subprocess.run(
+                                                ["pgrep", "-P", str(cpid)],
+                                                capture_output=True,
+                                                text=True,
+                                                check=False,
+                                            )
+                                            if pres.returncode == 0:
+                                                child_pids = [int(cp.strip()) for cp in pres.stdout.splitlines() if cp.strip().isdigit()]
+                                                if app_pid in child_pids:
+                                                    is_match = True
+                                        if is_match:
+                                            vram_bytes += int(v_str) * 1024 * 1024
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return {
+        "container": container_name,
+        "ram_bytes": ram_bytes,
+        "vram_bytes": vram_bytes,
+        "total_bytes": ram_bytes + vram_bytes,
+    }
+
+
+def select_culprit_container(
+    candidates: Optional[List[str]] = None,
+    default_container: Optional[str] = None,
+    memory_provider: Optional[Callable[[str], Dict[str, Any]]] = None,
+) -> str:
+    """Selects the container consuming the highest amount of memory (RAM + VRAM) among candidates.
+    If no candidates exist or all memory usages are 0, falls back to default_container."""
+    if candidates is None:
+        try:
+            res = subprocess.run(
+                ["docker", "ps", "--filter", "name=cluster-", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res.returncode == 0:
+                candidates = [c.strip() for c in res.stdout.strip().splitlines() if c.strip()]
+            else:
+                candidates = []
+        except Exception:
+            candidates = []
+
+    if not candidates:
+        return default_container or ""
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    provider = memory_provider or get_container_memory_usage
+    max_container = default_container or candidates[0]
+    max_bytes = -1
+
+    for c in candidates:
+        try:
+            usage = provider(c)
+            total = int(usage.get("total_bytes", usage.get("ram_bytes", 0) + usage.get("vram_bytes", 0)))
+        except Exception:
+            total = 0
+        if total > max_bytes:
+            max_bytes = total
+            max_container = c
+
+    return max_container
+
+
+def kill_culprit_container(
+    culprit_container: str,
+    reason: str,
+    *,
+    marker_file: Optional[str | Path] = None,
+    used_gb: float = 0.0,
+    available_gb: float = 0.0,
+    reserve_gb: float = 12.0,
+) -> bool:
+    """Kills the culprit container and writes the diagnostic marker file."""
+    if not culprit_container:
+        return False
+
+    mf = marker_file or os.environ.get(ENV_HOST_GUARD_MARKER_FILE) or DEFAULT_HOST_GUARD_MARKER_FILE
+    marker_data = {
+        "status": "killed",
+        "reason": reason,
+        "container": culprit_container,
+        "used_gb": str(used_gb),
+        "available_gb": str(available_gb),
+        "reserve_gb": str(reserve_gb),
+        "exit_code": 137,
+    }
+    try:
+        with open(mf, "w", encoding="utf-8") as f:
+            json.dump(marker_data, f, indent=2)
+    except Exception:
+        pass
+
+    try:
+        res = subprocess.run(["docker", "kill", culprit_container], capture_output=True, check=False)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
 __all__ = [
     "purge_host_guard_marker",
+    "get_container_memory_usage",
+    "select_culprit_container",
+    "kill_culprit_container",
     "DEFAULT_CONTAINER_OOM_SCORE_ADJ",
     "DEFAULT_CONTAINER_PIDS_LIMIT",
     "DEFAULT_HEADNODE_CGROUP_PARENT",
