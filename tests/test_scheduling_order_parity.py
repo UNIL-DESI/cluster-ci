@@ -1,12 +1,10 @@
 import os
-import json
 import sqlite3
 import pytest
 
 from src.scheduler.persistence import init_db
 from src.scheduler.scheduling_order import (
     scheduling_node_sort_key,
-    job_sort_key,
     get_user_machine_counts,
     get_priority_rank,
     format_waiting_time,
