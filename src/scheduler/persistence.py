@@ -229,6 +229,7 @@ def init_db():
             preempt_count INTEGER DEFAULT 0,
             preempted_at TIMESTAMP,
             preempted_by TEXT,
+            gpu_indices TEXT DEFAULT '[]',
             PRIMARY KEY (job_id, node_name),
             FOREIGN KEY (job_id) REFERENCES jobs (job_id)
         )
@@ -256,6 +257,7 @@ def init_db():
     # --- v3 Migrations: Job Nodes additions ---
     for col_def in [
         "gpu_ids TEXT DEFAULT '[]'",
+        "gpu_indices TEXT DEFAULT '[]'",
         "attempt INTEGER DEFAULT 0",
         "retry_count INTEGER DEFAULT 0",
         "failure_reason TEXT",
@@ -462,7 +464,7 @@ def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None,
                 SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
                     failure_reason = COALESCE(?, failure_reason),
                     cas_transfers = COALESCE(?, cas_transfers),
-                    finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]'
+                    finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]', gpu_indices = '[]'
                 WHERE job_id = ? AND node_name = ?
             ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, job_id, node_name))
         else:

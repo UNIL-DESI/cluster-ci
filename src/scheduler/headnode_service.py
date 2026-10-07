@@ -1358,6 +1358,9 @@ def worker_poll(worker_id):
        { "status": "no_job" }
     ========================================================================
     """
+    active_jobs_param = request.args.get("active_jobs", "")
+    active_jobs_from_worker = set(j.strip() for j in active_jobs_param.split(",") if j.strip())
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -1368,32 +1371,48 @@ def worker_poll(worker_id):
                 OR j.active_workers LIKE ?
             )
             AND j.status IN ('assigned', 'running')
-            ORDER BY j.created_at ASC LIMIT 1
+            ORDER BY j.created_at ASC
         ''', (worker_id, worker_id, f'%"{worker_id}"%'))
-        job = cursor.fetchone()
+        jobs = cursor.fetchall()
 
-        if job:
-            job_dict = dict(job)
-            if job_dict.get("parallel_mode") == 1:
+        selected_job = None
+        for job_row in jobs:
+            job_dict = dict(job_row)
+            j_id = job_dict["job_id"]
+            is_parallel = (job_dict.get("parallel_mode") == 1)
+            if j_id in active_jobs_from_worker:
+                if not is_parallel:
+                    continue
+                # Vérifier s'il reste des nœuds prêts à exécuter pour ce job
+                cursor.execute("SELECT COUNT(*) FROM job_nodes WHERE job_id = ? AND status = 'ready'", (j_id,))
+                ready_row = cursor.fetchone()
+                ready_count = ready_row[0] if ready_row else 0
+                if ready_count == 0:
+                    continue
+            selected_job = job_dict
+            break
+
+        if selected_job:
+            if selected_job.get("parallel_mode") == 1:
                 return jsonify({
                     "status": "assigned",
-                    "job_id": job_dict["job_id"],
+                    "job_id": selected_job["job_id"],
                     "parallel_mode": 1,
                     # The worker selects local archive startup and protected
                     # workspace paths from this flag, including in parallel mode.
-                    "is_local": job_dict["is_local"],
+                    "is_local": selected_job["is_local"],
                     "role": "executor",
-                    "repo": job_dict["repo"],
-                    "branch": job_dict["branch"],
-                    "commit_hash": job_dict["commit_hash"],
-                    "gh_token": job_dict.get("gh_token"),
-                    "env_vars": job_dict.get("env_vars"),
-                    "home_worker": job_dict.get("home_worker"),
-                    "is_home_worker": (worker_id == job_dict.get("home_worker")),
+                    "repo": selected_job["repo"],
+                    "branch": selected_job["branch"],
+                    "commit_hash": selected_job["commit_hash"],
+                    "gh_token": selected_job.get("gh_token"),
+                    "env_vars": selected_job.get("env_vars"),
+                    "home_worker": selected_job.get("home_worker"),
+                    "is_home_worker": (worker_id == selected_job.get("home_worker")),
                     "default_image": DEFAULT_DOCKER_IMAGE
                 })
             else:
-                return jsonify(job_dict)
+                return jsonify(selected_job)
         else:
             return jsonify({"status": "no_job"})
 

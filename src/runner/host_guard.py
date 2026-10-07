@@ -425,13 +425,22 @@ def docker_resource_args(
             import logging
             logging.getLogger("cluster_ci.host_guard").info("aucun GPU demandé (meta.cluster.gpus=0)")
         else:
-            gpu_ids = node_resources.get("gpu_ids")
+            gpu_ids = node_resources.get("gpu_indices") if node_resources.get("gpu_indices") is not None else node_resources.get("gpu_ids")
             if gpu_ids:
-                if isinstance(gpu_ids, list):
+                if isinstance(gpu_ids, str):
+                    try:
+                        parsed_g = json.loads(gpu_ids)
+                        if isinstance(parsed_g, list):
+                            gpu_ids = parsed_g
+                    except Exception:
+                        pass
+                if isinstance(gpu_ids, (list, tuple, set)):
                     ids_str = ",".join(str(g) for g in gpu_ids)
                 else:
-                    ids_str = str(gpu_ids).strip()
-                args.append(f'--gpus="device={ids_str}"')
+                    ids_str = str(gpu_ids).strip("[] ")
+                args.append(f'--gpus=device={ids_str}')
+                args.append(f'-e NVIDIA_VISIBLE_DEVICES={ids_str}')
+                args.append(f'-e CUDA_VISIBLE_DEVICES={ids_str}')
             else:
                 raise ValueError(f"req_gpus={req_gpus} requested but no gpu_ids assigned")
 

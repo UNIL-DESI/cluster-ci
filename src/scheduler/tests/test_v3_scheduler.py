@@ -304,7 +304,7 @@ def test_dag_two_branches_and_join_execution(client, is_local):
 # =========================================================================
 
 @pytest.mark.parametrize("is_local", [False, True])
-def test_fairness_anti_ping_pong_rule_a1(client, is_local):
+def test_fairness_anti_ping_pong_rule_a1(client, is_local, monkeypatch):
     """
     Scénario :
     - 3 machines : W1, W2, W3
@@ -317,6 +317,7 @@ def test_fairness_anti_ping_pong_rule_a1(client, is_local):
       machines(B) + 1 < machines(A) (1 + 1 < 2) -> FAUX ! Pas de cession !
       Anti-ping-pong respecté : A=2 et B=1 stable.
     """
+    monkeypatch.setenv("CLUSTER_CI_MAX_WORKERS_PER_JOB", "8")
     with persistence.get_db_conn() as conn:
         cursor = conn.cursor()
         for wid in ("W1", "W2", "W3"):
@@ -882,7 +883,7 @@ def test_concurrent_next_node_race_condition(client):
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO workers (worker_id, hostname, service_url, total_ram_gb, total_vram_gb, unified_memory, cpus, status, last_seen)
-            VALUES ('W_CONC', 'w_conc', 'http://127.0.0.1:9000', 64.0, 64.0, 1, 16, 'online', CURRENT_TIMESTAMP)
+            VALUES ('W_CONC', 'w_conc', 'http://127.0.0.1:9000', 64.0, 64.0, 1, 2, 'online', CURRENT_TIMESTAMP)
         ''')
         conn.commit()
 

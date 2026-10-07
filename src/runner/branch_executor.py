@@ -24,6 +24,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -199,9 +200,9 @@ class DockerRunner:
         vram_limit: float = 0.0,
         env: Optional[Dict[str, str]] = None,
         user_id: int = 1000,
-        group_id: int = 1000,
         resources: Optional[Dict[str, Any]] = None,
         labels: Optional[Dict[str, str]] = None,
+        dvc_cache_dir: Optional[str] = None,
     ) -> int:
         from src.runner.host_guard import docker_resource_args
 
@@ -243,6 +244,8 @@ class DockerRunner:
             "-e", "PYTHONUSERBASE=/home/user/.local",
             "--entrypoint", "tail",
         ])
+        if dvc_cache_dir and os.path.exists(dvc_cache_dir):
+            cmd.extend(["-v", f"{dvc_cache_dir}:/workspace/.dvc/cache"])
         if env:
             for k, v in env.items():
                 cmd.extend(["-e", f"{k}={v}"])
@@ -340,7 +343,8 @@ class BranchExecutor:
         self.safe_job_id = re.sub(r"[^a-zA-Z0-9_-]", "-", job_id)
         self.runner_id = runner_id
         self.worker_id = worker_id
-        self.repo_dir = os.path.abspath(repo_dir)
+        self.main_repo_dir = os.path.abspath(repo_dir)
+        self.worktree_dir: Optional[str] = None
         self.target_repo = target_repo
         self.target_branch = target_branch
         self.cluster_token = cluster_token
@@ -358,30 +362,62 @@ class BranchExecutor:
             helper = dvc_git_helper
             if helper is None:
                 from src.runner import dvc_git_helper as helper
-            self.start_commit = helper._get_start_commit(self.repo_dir)
+            self.start_commit = helper._get_start_commit(self.main_repo_dir)
+
+        # Isolation de l'espace de travail par worktree dédié au runner (Lot H)
+        safe_runner = re.sub(r"[^a-zA-Z0-9_.-]+", "-", self.runner_id).strip("-")
+        git_dir = os.path.join(self.main_repo_dir, ".git")
+        is_git = os.path.isdir(git_dir) or os.path.isfile(git_dir)
+        if is_git:
+            wt_path = os.path.join(tempfile.gettempdir(), f"cluster-ci-wt-{self.safe_job_id}-{safe_runner}")
+            target_rev = self.start_commit if (self.start_commit and self.start_commit != "HEAD") else "HEAD"
+            try:
+                subprocess.run(["git", "worktree", "remove", "--force", wt_path], cwd=self.main_repo_dir, capture_output=True)
+                subprocess.run(["git", "worktree", "prune"], cwd=self.main_repo_dir, capture_output=True)
+                if os.path.exists(wt_path):
+                    shutil.rmtree(wt_path, ignore_errors=True)
+                res = subprocess.run(
+                    ["git", "worktree", "add", "--force", "--detach", wt_path, target_rev],
+                    cwd=self.main_repo_dir,
+                    capture_output=True,
+                    text=True
+                )
+                if res.returncode == 0 and os.path.isdir(wt_path):
+                    self.worktree_dir = wt_path
+                    self.repo_dir = wt_path
+                    logger.info("Runner %s allocated isolated worktree at %s", self.runner_id, wt_path)
+                else:
+                    logger.warning("Failed to create isolated worktree (%s), falling back to %s", res.stderr.strip() if res.stderr else "unknown", self.main_repo_dir)
+                    self.repo_dir = self.main_repo_dir
+            except Exception as e:
+                logger.warning("Exception creating worktree: %s, falling back to %s", e, self.main_repo_dir)
+                self.repo_dir = self.main_repo_dir
+        else:
+            self.repo_dir = self.main_repo_dir
 
         if self.start_commit and self.start_commit != "HEAD":
-            git_dir = os.path.join(self.repo_dir, ".git")
-            target_git_file = None
-            if os.path.isdir(git_dir):
-                target_git_file = os.path.join(git_dir, "cluster-ci-start-commit")
-            elif os.path.isfile(git_dir):
-                try:
-                    with open(git_dir, "r", encoding="utf-8") as f:
-                        content = f.read().strip()
-                    if content.startswith("gitdir:"):
-                        actual_git_dir = content.split(":", 1)[1].strip()
-                        if not os.path.isabs(actual_git_dir):
-                            actual_git_dir = os.path.normpath(os.path.join(self.repo_dir, actual_git_dir))
-                        target_git_file = os.path.join(actual_git_dir, "cluster-ci-start-commit")
-                except Exception:
-                    pass
-            if target_git_file:
-                try:
-                    with open(target_git_file, "w", encoding="utf-8") as f:
-                        f.write(self.start_commit + "\n")
-                except Exception:
-                    pass
+            for check_dir in (self.repo_dir, self.main_repo_dir):
+                target_git_file = None
+                g_dir = os.path.join(check_dir, ".git")
+                if os.path.isdir(g_dir):
+                    target_git_file = os.path.join(g_dir, "cluster-ci-start-commit")
+                elif os.path.isfile(g_dir):
+                    try:
+                        with open(g_dir, "r", encoding="utf-8") as f:
+                            content = f.read().strip()
+                        if content.startswith("gitdir:"):
+                            actual_git_dir = content.split(":", 1)[1].strip()
+                            if not os.path.isabs(actual_git_dir):
+                                actual_git_dir = os.path.normpath(os.path.join(check_dir, actual_git_dir))
+                            target_git_file = os.path.join(actual_git_dir, "cluster-ci-start-commit")
+                    except Exception:
+                        pass
+                if target_git_file:
+                    try:
+                        with open(target_git_file, "w", encoding="utf-8") as f:
+                            f.write(self.start_commit + "\n")
+                    except Exception:
+                        pass
 
 
 
@@ -806,8 +842,9 @@ class BranchExecutor:
         local = os.environ.get('IS_LOCAL') == '1'
         if local:
             repo_slug = '_local-' + repo_slug
+        safe_runner_id = re.sub(r"[^a-zA-Z0-9_.-]+", "-", self.runner_id).strip("-")
         home_volume = f"cluster-ci-home-{repo_slug}-{image_slug}"
-        container_name = f"{self.container_prefix}{self.safe_job_id}-{image_slug}"
+        container_name = f"{self.container_prefix}{self.safe_job_id}-{safe_runner_id}-{image_slug}"
 
         logger.info(
             "Starting container %s on image %s (volume: %s)",
@@ -839,6 +876,13 @@ class BranchExecutor:
             "cluster-ci.job-id": self.safe_job_id,
         }
 
+        main_dvc_cache = os.path.join(self.main_repo_dir, ".dvc", "cache") if hasattr(self, "main_repo_dir") else os.path.join(self.repo_dir, ".dvc", "cache")
+        if not os.path.exists(main_dvc_cache) and os.path.exists(os.path.join(getattr(self, "main_repo_dir", self.repo_dir), ".dvc")):
+            try:
+                os.makedirs(main_dvc_cache, exist_ok=True)
+            except Exception:
+                pass
+
         ret = self.docker.run_container(
             image=image,
             container_name=container_name,
@@ -852,6 +896,7 @@ class BranchExecutor:
             group_id=self.group_id,
             resources=resources,
             labels=labels,
+            dvc_cache_dir=main_dvc_cache,
         )
         if ret != 0:
             raise RuntimeError(f"docker run failed for {container_name} (code {ret})")
@@ -1343,6 +1388,21 @@ class BranchExecutor:
             self.is_running = False
             self._stop_heartbeat()
             self.stop_current_container()
+            self.cleanup_worktree()
+
+    def cleanup_worktree(self) -> None:
+        """Nettoie le worktree Git isolé créé pour ce runner."""
+        if getattr(self, "worktree_dir", None):
+            wt = self.worktree_dir
+            self.worktree_dir = None
+            try:
+                subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=self.main_repo_dir, capture_output=True)
+                subprocess.run(["git", "worktree", "prune"], cwd=self.main_repo_dir, capture_output=True)
+                if os.path.exists(wt):
+                    shutil.rmtree(wt, ignore_errors=True)
+                logger.info("Cleaned up isolated worktree %s", wt)
+            except Exception as e:
+                logger.debug("Error cleaning up worktree %s: %s", wt, e)
 
 
 # =====================================================================

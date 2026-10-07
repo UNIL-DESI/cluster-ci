@@ -541,15 +541,6 @@ def is_worker_admissible_for_node(worker, node_resources, allocated=None):
             "active_job_ids": set()
         }
 
-    # 2.5 Anti-affinité machine intra-job : un worker exécutant déjà un nœud actif du job J
-    # n'est pas éligible pour un autre nœud de J (sérialisation de worker_agent)
-    req_job_id = node_resources.get("job_id")
-    if req_job_id and allocated:
-        active_jobs = allocated.get("active_job_ids") or set()
-        if req_job_id in active_jobs:
-            logger.debug(f"Worker {w_id} rejected for node: worker already has an active node for job {req_job_id}")
-            return False
-
     # 3. CPUs
     req_cpus = int(node_resources.get("cpus") if node_resources.get("cpus") is not None else DEFAULT_CPUS)
     w_cpus = worker.get("cpus")
@@ -1146,10 +1137,10 @@ def handle_next_node(req):
                 continue
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, started_at = CURRENT_TIMESTAMP,
+                SET status = 'running', worker_id = ?, runner_id = ?, gpu_ids = ?, gpu_indices = ?, started_at = CURRENT_TIMESTAMP,
                     attempt = attempt + 1
                 WHERE job_id = ? AND node_name = ? AND status = 'ready'
-            ''', (worker_id, runner_id, json.dumps(cand_gpu_ids) if cand_gpu_ids is not None else '[]', job_id, candidate_node["node_name"]))
+            ''', (worker_id, runner_id, json.dumps(cand_gpu_ids) if cand_gpu_ids is not None else '[]', json.dumps(cand_gpu_ids) if cand_gpu_ids is not None else '[]', job_id, candidate_node["node_name"]))
             if cursor.rowcount == 1:
                 cursor.execute('SELECT attempt FROM job_nodes WHERE job_id = ? AND node_name = ?', (job_id, candidate_node["node_name"]))
                 att_row = cursor.fetchone()
@@ -1252,6 +1243,7 @@ def handle_next_node(req):
         "image": next_image,
         "resources": next_res,
         "gpu_ids": gpu_ids,
+        "gpu_indices": gpu_ids,
         "dep_paths": dep_paths_list,
         "dep_sources": dep_sources_map,
         "sources": dep_sources_map,
@@ -2016,7 +2008,8 @@ def schedule_iteration():
         for p_job in parallel_jobs:
             jid = p_job["job_id"]
             current_active = job_active_map.get(jid, [])
-            if len(current_active) >= MAX_WORKERS_PER_JOB:
+            max_workers_ceiling = int(os.environ.get("CLUSTER_CI_MAX_WORKERS_PER_JOB", os.environ.get("MAX_WORKERS_PER_JOB", MAX_WORKERS_PER_JOB)))
+            if len(current_active) >= max_workers_ceiling:
                 continue
 
             with get_db_conn() as conn:

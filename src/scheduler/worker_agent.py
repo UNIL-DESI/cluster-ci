@@ -818,7 +818,14 @@ def heartbeat_loop():
 
 def poll_for_job():
     try:
-        resp = requests.get(f"{HEADNODE_URL}/worker_poll/{WORKER_ID}", headers=get_headers(), timeout=10, allow_redirects=False)
+        params = {}
+        with job_lock:
+            active_ids = list({ex["job_id"] for ex in active_executors.values() if ex.get("job_id")})
+            if current_job_id and current_job_id not in active_ids:
+                active_ids.append(current_job_id)
+        if active_ids:
+            params["active_jobs"] = ",".join(active_ids)
+        resp = requests.get(f"{HEADNODE_URL}/worker_poll/{WORKER_ID}", params=params, headers=get_headers(), timeout=10, allow_redirects=False)
         resp.raise_for_status()
         data = resp.json()
         if data.get("job_id"):
@@ -2492,18 +2499,37 @@ def main_loop():
 
     try:
         while not shutdown_requested:
+            # Nettoyer les exécuteurs terminés et vérifier la capacité
+            with job_lock:
+                for r_id in list(active_executors.keys()):
+                    proc = active_executors[r_id].get("process")
+                    if proc and proc.poll() is not None:
+                        active_executors.pop(r_id, None)
+                active_count = len(active_executors)
+                try:
+                    _, _, gpu_cnt, _, _, _ = get_gpu_info()
+                except Exception:
+                    gpu_cnt = 0
+                max_concurrent = max(1, gpu_cnt) if (gpu_cnt and gpu_cnt > 0) else int(os.environ.get("MAX_CONCURRENT_RUNNERS", "2"))
+                can_accept = active_count < max_concurrent
+
+            if not can_accept:
+                time.sleep(2)
+                continue
+
             job = poll_for_job()
             if job:
                 job_id = job.get("job_id")
+                is_parallel = bool(job.get("parallel_mode") in (1, "1", True))
                 with job_lock:
-                    already_running = (
-                        current_job_id == job_id
-                        or any(ex.get("job_id") == job_id for ex in active_executors.values())
-                    )
-                    if not already_running:
+                    already_running = any(ex.get("job_id") == job_id for ex in active_executors.values())
+                    if already_running and not is_parallel:
+                        skip_job = True
+                    else:
+                        skip_job = False
                         current_job_id = job_id
-                if already_running:
-                    time.sleep(5)
+                if skip_job:
+                    time.sleep(2)
                     continue
                 try:
                     t = threading.Thread(target=execute_job, args=(job,), daemon=True)
@@ -2518,7 +2544,7 @@ def main_loop():
                         purge_orphan_runners_and_containers()
                     except Exception as recovery_err:
                         logger.error(f"Failed to perform emergency recovery purge: {recovery_err}")
-            time.sleep(5)
+            time.sleep(2)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt caught in main loop.")
     finally:
