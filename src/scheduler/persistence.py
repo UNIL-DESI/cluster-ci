@@ -689,7 +689,7 @@ def get_aggregated_job_status(job_id):
         return "completed"
 
     # 2. Exécution active : au moins un nœud est en cours ou prêt à être assigné
-    if any(s in ("running", "ready") for s in statuses):
+    if any(s in ("running", "ready", "preempting") for s in statuses):
         return "running"
 
     # 3. Échec : au moins un échec / blocage et plus aucun nœud ne peut s'exécuter

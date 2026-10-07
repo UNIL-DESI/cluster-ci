@@ -1490,6 +1490,33 @@ def update_job_status():
                 caller_runner = data.get('runner_id')
                 max_retries = int(os.environ.get("CLUSTER_CI_MAX_NODE_RETRIES", "2"))
 
+                # Interception explicite des nœuds en état 'preempting' :
+                cursor.execute('''
+                    SELECT node_name, status, retry_count, preempted_by
+                    FROM job_nodes
+                    WHERE job_id = ? AND status = 'preempting'
+                ''', (job_id,))
+                preempting_nodes = cursor.fetchall()
+                for p_row in preempting_nodes:
+                    p_name = p_row[0]
+                    p_preempted_by = p_row[3]
+                    if (status in ['completed', 'done']) and (exit_code == 0 or exit_code is None):
+                        # Le succès prévaut !
+                        cursor.execute('''
+                            UPDATE job_nodes
+                            SET status = 'done', exit_code = 0, finished_at = CURRENT_TIMESTAMP
+                            WHERE job_id = ? AND node_name = ?
+                        ''', (job_id, p_name))
+                    else:
+                        # Interception préemption : requeue en 'ready', preempt_count + 1, pas de retry, pas d'OOM
+                        handle_node_failure_or_retry(
+                            conn,
+                            job_id=job_id,
+                            node_name=p_name,
+                            is_preempted=True,
+                            preempted_by=p_preempted_by,
+                        )
+
                 # Si le worker rapporte un échec global alors que le job a des nœuds DAG:
                 if status == 'failed':
                     # Identifier les nœuds actifs ou candidats à faire échouer / retenter
@@ -1499,11 +1526,11 @@ def update_job_status():
                         WHERE job_id = ? AND (worker_id = ? OR runner_id = ? OR status = 'running')
                     ''', (job_id, caller_worker, caller_runner))
                     active_nodes = cursor.fetchall()
-                    if not active_nodes:
+                    if not active_nodes and not preempting_nodes:
                         cursor.execute('''
                             SELECT node_name, status, retry_count
                             FROM job_nodes
-                            WHERE job_id = ? AND status = 'ready'
+                            WHERE job_id = ? AND status = 'ready' AND COALESCE(preempt_count, 0) == 0
                             ORDER BY priority DESC, node_name ASC LIMIT 1
                         ''', (job_id,))
                         active_nodes = cursor.fetchall()

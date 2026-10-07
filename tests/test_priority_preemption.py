@@ -70,16 +70,29 @@ def test_nominal_preemption_high_preempts_low_different_user(prem_db):
     # Exécution de l'itération d'ordonnancement
     schedule_iteration()
 
-    # Vérification : stage-low de Bob doit avoir été préempté
+    # Vérification : stage-low de Bob doit avoir été basculé en état 'preempting'
+    bob_node = get_job_node("job-bob", "stage-low")
+    assert bob_node["status"] == "preempting"
+    assert bob_node["preempted_by"] == "job-alice:stage-high"
+
+    # Simulation de la confirmation d'arrêt du worker via /update_job_status
+    from src.scheduler.headnode_service import app as head_app
+    client = head_app.test_client()
+    resp = client.post("/update_job_status", json={
+        "job_id": "job-bob",
+        "status": "failed",
+        "exit_code": 137,
+        "worker_id": "worker-1",
+        "runner_id": "runner-bob-1"
+    })
+    assert resp.status_code == 200
+
     bob_node = get_job_node("job-bob", "stage-low")
     assert bob_node["status"] == "ready"
     assert bob_node["preempt_count"] == 1
     assert bob_node["retry_count"] == 0  # Inchangé !
     assert bob_node["attempt"] == 1      # Inchangé !
     assert bob_node["failure_reason"] is None
-    assert bob_node["preempted_by"] == "job-alice:stage-high"
-    assert bob_node["worker_id"] is None
-    assert bob_node["runner_id"] is None
 
     # Et job-alice doit avoir reçu worker-1 comme home_worker libéré
     cursor = conn.cursor()
@@ -271,8 +284,8 @@ def test_most_recent_victim_selected_first(prem_db):
     node_newer = get_job_node("job-bob", "stage-newer")
     node_older = get_job_node("job-bob", "stage-older")
 
-    assert node_newer["status"] == "ready"
-    assert node_newer["preempt_count"] == 1
+    assert node_newer["status"] == "preempting"
+    assert node_newer["preempted_by"] == "job-alice:stage-high"
 
     # Le plus ancien continue de tourner
     assert node_older["status"] == "running"
@@ -356,4 +369,83 @@ def test_docker_runner_labels_and_worker_preempt_cleanup_by_label(monkeypatch):
     assert "--filter" in first_ps
     assert "label=cluster-ci.runner-id=runner-xyz-999" in first_ps
     assert "cluster-job-job12345-test-img" in removed_containers
+
+
+def test_preempting_node_interception_update_job_status(prem_db):
+    from src.scheduler.headnode_service import app as head_app
+    conn, _ = prem_db
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
+        VALUES ('job-victim', 'bob', 'running', 1, 'worker-1', '["worker-1"]')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (
+            job_id, node_name, status, scheduling_priority, worker_id, runner_id,
+            started_at, resources, attempt, retry_count, preempt_count, preempted_by
+        ) VALUES (
+            'job-victim', 'stage-preempted', 'preempting', 'low', 'worker-1', 'runner-victim-1',
+            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, 0, 'job-pri:high-node'
+        )
+    """)
+    conn.commit()
+
+    # Le worker arrêté envoie /update_job_status avec exit_code 137 (SIGKILL/OOM)
+    client = head_app.test_client()
+    resp = client.post("/update_job_status", json={
+        "job_id": "job-victim",
+        "status": "failed",
+        "exit_code": 137,
+        "error_message": "Process terminated by SIGKILL",
+        "worker_id": "worker-1",
+        "runner_id": "runner-victim-1"
+    })
+    assert resp.status_code == 200
+
+    # Vérification : le nœud DOIT être intercepté comme préempté, pas comme failed / OOM
+    node = get_job_node("job-victim", "stage-preempted")
+    assert node["status"] == "ready"
+    assert node["preempt_count"] == 1
+    assert node["retry_count"] == 0
+    assert node["attempt"] == 1
+    assert node["failure_reason"] is None
+    assert node["preempted_by"] == "job-pri:high-node"
+
+
+def test_preempting_node_success_prevails(prem_db):
+    from src.scheduler.headnode_service import app as head_app
+    conn, _ = prem_db
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
+        VALUES ('job-lucky', 'bob', 'running', 1, 'worker-1', '["worker-1"]')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (
+            job_id, node_name, status, scheduling_priority, worker_id, runner_id,
+            started_at, resources, attempt, retry_count, preempt_count, preempted_by
+        ) VALUES (
+            'job-lucky', 'stage-lucky', 'preempting', 'low', 'worker-1', 'runner-lucky-1',
+            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, 0, 'job-pri:high-node'
+        )
+    """)
+    conn.commit()
+
+    # Le runner a fini avec succès (exit_code 0) juste avant l'arrêt
+    client = head_app.test_client()
+    resp = client.post("/update_job_status", json={
+        "job_id": "job-lucky",
+        "status": "completed",
+        "exit_code": 0,
+        "worker_id": "worker-1",
+        "runner_id": "runner-lucky-1"
+    })
+    assert resp.status_code == 200
+
+    node = get_job_node("job-lucky", "stage-lucky")
+    assert node["status"] == "done"
+    assert node["exit_code"] == 0
+
 

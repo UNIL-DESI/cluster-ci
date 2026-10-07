@@ -892,7 +892,19 @@ def handle_next_node(req):
         failure_reason = req.get("failure_reason")
         cas_transfers = req.get("cas_transfers")
 
-        if status == "done":
+        # Vérifier si ce nœud est en cours de préemption
+        is_node_preempting = False
+        node_preempted_by = None
+        with get_db_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status, preempted_by FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, node_name))
+            nr = cursor.fetchone()
+            if nr and nr[0] == "preempting":
+                is_node_preempting = True
+                node_preempted_by = nr[1]
+
+        if status == "done" or (is_node_preempting and (exit_code == 0 or status == "completed")):
+            # Le succès prévaut toujours !
             mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0, cas_transfers=cas_transfers)
             outputs_to_record = req.get("outputs") or req.get("out_paths")
             if outputs_to_record:
@@ -901,6 +913,17 @@ def handle_next_node(req):
                         record_node_outputs(conn, job_id, node_name, worker_id, outputs_to_record)
                 except Exception as e:
                     logger.debug(f"Failed to record node outputs in artifact registry: {e}")
+        elif is_node_preempting or status == "preempted":
+            # Interception préemption : requeue en 'ready', preempt_count + 1, pas de retry, pas d'OOM
+            with get_db_conn() as conn:
+                handle_node_failure_or_retry(
+                    conn,
+                    job_id=job_id,
+                    node_name=node_name,
+                    is_preempted=True,
+                    preempted_by=node_preempted_by,
+                )
+            update_dag_ready_states(job_id)
         elif status == "failed":
             if not error_message and exit_code == 137:
                 error_message = f"OOMKilled: Stage '{node_name}' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)"
@@ -1513,30 +1536,18 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
             req_node['node_name'], req_node['job_id'], req_user
         )
 
-        # 1. Envoi de la notification de préemption au worker agent (HTTP POST)
-        service_url = victim_worker.get('service_url')
-        if service_url and v_runner_id:
-            try:
-                requests.post(
-                    f"{service_url.rstrip('/')}/api/worker/preempt_runner/{v_runner_id}",
-                    timeout=5
-                )
-            except Exception as e:
-                logger.warning(
-                    "Worker agent preemption call failed for runner %s on %s: %s (proceeding with DB requeue)",
-                    v_runner_id, service_url, e
-                )
+        preempted_by_str = f"{req_node['job_id']}:{req_node['node_name']}"
 
-        # 2. Requeue du nœud préempté via handle_node_failure_or_retry (is_preempted=True)
-        handle_node_failure_or_retry(
-            conn,
-            job_id=v_job_id,
-            node_name=v_node_name,
-            is_preempted=True,
-            preempted_by=f"{req_node['job_id']}:{req_node['node_name']}",
-        )
+        # 1. Marquer le nœud en état 'preempting' dans SQLite AVANT d'envoyer l'ordre d'arrêt au worker
+        cursor.execute("""
+            UPDATE job_nodes
+            SET status = 'preempting',
+                preempted_by = ?,
+                preempted_at = CURRENT_TIMESTAMP
+            WHERE job_id = ? AND node_name = ?
+        """, (preempted_by_str, v_job_id, v_node_name))
 
-        # 3. Nettoyage des heartbeats et allocations de ce runner
+        # 2. Nettoyage immédiat des heartbeats et allocations de ce runner pour libérer la machine
         if v_runner_id:
             cursor.execute("DELETE FROM runner_heartbeats WHERE runner_id = ?", (v_runner_id,))
         cursor.execute("DELETE FROM runner_heartbeats WHERE job_id = ? AND worker_id = ?", (v_job_id, v_wid))
@@ -1553,9 +1564,35 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
                     cursor.execute("UPDATE jobs SET active_workers = ? WHERE job_id = ?", (json.dumps(act), v_job_id))
             except Exception:
                 pass
+        conn.commit()
+
+        # 3. Envoi de la notification de préemption au worker agent (HTTP POST) avec token
+        service_url = victim_worker.get('service_url')
+        if service_url and v_runner_id:
+            token = os.environ.get("CLUSTER_TOKEN", "")
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            try:
+                requests.post(
+                    f"{service_url.rstrip('/')}/api/worker/preempt_runner/{v_runner_id}",
+                    headers=headers,
+                    timeout=5
+                )
+            except Exception as e:
+                logger.warning(
+                    "Worker agent preemption call failed for runner %s on %s: %s (requeueing immediately)",
+                    v_runner_id, service_url, e
+                )
+                # En cas d'inaccessibilité immédiate du worker, repli direct en 'ready'
+                handle_node_failure_or_retry(
+                    conn,
+                    job_id=v_job_id,
+                    node_name=v_node_name,
+                    is_preempted=True,
+                    preempted_by=preempted_by_str,
+                )
+                update_dag_ready_states(v_job_id)
 
         conn.commit()
-        update_dag_ready_states(v_job_id)
         preempted_any = True
 
     return preempted_any
