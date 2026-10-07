@@ -49,14 +49,6 @@ def test_is_non_retryable_failure():
 
 def test_handle_node_failure_or_retry_preemption(test_db):
     conn, _ = test_db
-    cursor = conn.cursor()
-    try:
-        cursor.execute("ALTER TABLE job_nodes ADD COLUMN preempt_count INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE job_nodes ADD COLUMN preempted_at TIMESTAMP")
-        cursor.execute("ALTER TABLE job_nodes ADD COLUMN preempted_by TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
     setup_node(conn, "job-p", "node-p", status="running", retry_count=1)
 
     res = handle_node_failure_or_retry(

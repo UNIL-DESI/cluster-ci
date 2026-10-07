@@ -512,6 +512,7 @@ def compute_stage_plan(
                 "stale": final_stale[name],
                 "stale_reason": final_stale_reason[name],
                 "priority": memo_prio[name],
+                "scheduling_priority": resources.get("priority", "normal"),
                 "resources": resources,
                 "dep_paths": dep_paths,
                 "out_paths": out_paths,

@@ -86,6 +86,7 @@ def init_db():
             custom_web_app INTEGER DEFAULT 0,
             job_type TEXT DEFAULT 'compute',
             is_maintenance INTEGER DEFAULT 0,
+            scheduling_priority TEXT DEFAULT 'normal',
             FOREIGN KEY (worker_id) REFERENCES workers (worker_id)
         )
     ''')
@@ -224,6 +225,10 @@ def init_db():
             retry_count INTEGER DEFAULT 0,
             failure_reason TEXT,
             cas_transfers TEXT DEFAULT '[]',
+            scheduling_priority TEXT DEFAULT 'normal',
+            preempt_count INTEGER DEFAULT 0,
+            preempted_at TIMESTAMP,
+            preempted_by TEXT,
             PRIMARY KEY (job_id, node_name),
             FOREIGN KEY (job_id) REFERENCES jobs (job_id)
         )
@@ -240,6 +245,7 @@ def init_db():
         'gpu_ids TEXT DEFAULT "[]"',
         'failure_reason TEXT',
         'retry_count INTEGER DEFAULT 0',
+        'scheduling_priority TEXT DEFAULT "normal"',
     ]:
         col_name = col_def.split()[0]
         try:
@@ -254,6 +260,10 @@ def init_db():
         "retry_count INTEGER DEFAULT 0",
         "failure_reason TEXT",
         "cas_transfers TEXT DEFAULT '[]'",
+        "scheduling_priority TEXT DEFAULT 'normal'",
+        "preempt_count INTEGER DEFAULT 0",
+        "preempted_at TIMESTAMP",
+        "preempted_by TEXT",
     ]:
         try:
             cursor.execute(f"ALTER TABLE job_nodes ADD COLUMN {col_def}")
@@ -361,13 +371,19 @@ def init_job_nodes_from_plan(job_id, plan_data):
             else:
                 status = "pending"
 
+            scheduling_prio = node.get("scheduling_priority") or res.get("priority") or defaults.get("priority") or "normal"
+            if str(scheduling_prio).lower() not in ("high", "normal", "low"):
+                scheduling_prio = "normal"
+            else:
+                scheduling_prio = str(scheduling_prio).lower()
+
             cursor.execute('''
                 INSERT OR REPLACE INTO job_nodes (
-                    job_id, node_name, status, image, priority, stale, stale_reason,
+                    job_id, node_name, status, image, priority, scheduling_priority, stale, stale_reason,
                     resources, deps, dep_paths, out_paths
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                job_id, name, status, image, priority, stale, stale_reason,
+                job_id, name, status, image, priority, scheduling_prio, stale, stale_reason,
                 json.dumps(merged_res), json.dumps(deps), json.dumps(dep_paths), json.dumps(out_paths)
             ))
         conn.commit()

@@ -20,6 +20,7 @@ DEFAULT_RESOURCES: Dict[str, Any] = {
     "vram_gb": 0,
     "storage_gb": 0,
     "workers": None,
+    "priority": "normal",
 }
 
 ALLOWED_CLUSTER_KEYS = {
@@ -32,6 +33,7 @@ ALLOWED_CLUSTER_KEYS = {
     "vram_gb",
     "storage_gb",
     "workers",
+    "priority",
 }
 
 # Derived alias constants for scheduler convenience
@@ -41,6 +43,7 @@ DEFAULT_GPUS: int = DEFAULT_RESOURCES["gpus"]
 DEFAULT_RAM_GB: float = float(DEFAULT_RESOURCES["ram_gb"])
 DEFAULT_VRAM_GB: float = float(DEFAULT_RESOURCES["vram_gb"])
 DEFAULT_STORAGE_GB: float = float(DEFAULT_RESOURCES["storage_gb"])
+DEFAULT_SCHEDULING_PRIORITY: str = str(DEFAULT_RESOURCES["priority"])
 ALLOWED_RESOURCE_KEYS = ALLOWED_CLUSTER_KEYS
 
 # Constantes opérationnelles propres à l'ordonnanceur Cluster-CI v3
@@ -155,6 +158,19 @@ def parse_project_cluster_ci(repo_path: str) -> Dict[str, Any]:
         if stages:
             overrides["stages"] = stages
 
+    # PRIORITY / DEFAULT_PRIORITY
+    m_priority = re.search(r'^\s*(?:DEFAULT_PRIORITY|PRIORITY)\s*=\s*(.+)', content, re.MULTILINE)
+    if m_priority:
+        raw_prio = m_priority.group(1).split("#")[0].strip().strip('"\'').lower()
+        if raw_prio in ("high", "normal", "low"):
+            overrides["priority"] = raw_prio
+        else:
+            raise ValueError(
+                f"Fichier .cluster-ci : valeur invalide pour PRIORITY : {raw_prio!r}. "
+                f"Cause : la priorité doit être 'high', 'normal' ou 'low'. "
+                f"Remède : spécifiez PRIORITY=high, normal ou low dans .cluster-ci."
+            )
+
     return overrides
 
 
@@ -237,6 +253,15 @@ def validate_and_resolve_resources(
                         f"Cause : workers doit être une liste de noms d'hôtes (chaînes). "
                         f"Remède : définissez une liste de chaînes (ex: ['HEC45801']) pour 'workers' sous meta.cluster dans dvc.yaml."
                     )
+
+        if "priority" in meta_cluster:
+            val = meta_cluster["priority"]
+            if not isinstance(val, str) or val not in ("high", "normal", "low"):
+                raise ValueError(
+                    f"Fichier dvc.yaml, stage '{stage_name}' : valeur invalide pour 'meta.cluster.priority' : {val!r}. "
+                    f"Cause : la priorité doit être 'high', 'normal' ou 'low'. "
+                    f"Remède : définissez 'priority: high', 'priority: normal' ou 'priority: low' sous meta.cluster dans dvc.yaml (défaut : 'normal')."
+                )
 
     resolved: Dict[str, Any] = {}
     mc = meta_cluster or {}
