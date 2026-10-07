@@ -2462,7 +2462,8 @@ def get_worker_queues(conn=None, target_worker_id=None):
             SELECT jn.job_id, jn.node_name, jn.status, jn.resources, jn.image, jn.priority, jn.deps,
                    jn.scheduling_priority, jn.preempt_count,
                    j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
-                   j.scheduling_priority AS job_scheduling_priority
+                   j.scheduling_priority AS job_scheduling_priority,
+                   j.status AS job_status, j.home_worker, j.active_workers, j.worker_id AS job_worker_id
             FROM job_nodes jn
             JOIN jobs j ON jn.job_id = j.job_id
             WHERE jn.status IN ('ready', 'pending')
@@ -2478,7 +2479,8 @@ def get_worker_queues(conn=None, target_worker_id=None):
                    j.scheduling_priority, 0 AS preempt_count,
                    j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
                    j.scheduling_priority AS job_scheduling_priority,
-                   j.ram_required_gb, j.vram_required_gb, j.worker_id, j.allowed_workers
+                   j.ram_required_gb, j.vram_required_gb, j.worker_id, j.allowed_workers,
+                   j.status AS job_status, j.home_worker, j.active_workers, j.worker_id AS job_worker_id
             FROM jobs j
             WHERE j.status = 'pending' AND (j.parallel_mode = 0 OR j.parallel_mode IS NULL)
               AND j.job_id NOT IN (SELECT DISTINCT job_id FROM job_nodes)
@@ -2548,6 +2550,31 @@ def get_worker_queues(conn=None, target_worker_id=None):
 
                 if not admissible:
                     continue
+
+                # Parité stricte avec le scheduler : respect de home_worker et active_workers pour jobs actifs
+                j_status = n.get("job_status")
+                if j_status in ("assigned", "running"):
+                    if n.get("parallel_mode") == 1:
+                        # Job DAG / parallèle : restreint strictement à home_worker + active_workers
+                        allowed_for_job = set()
+                        hw = n.get("home_worker")
+                        if hw:
+                            allowed_for_job.add(hw)
+                        raw_act = n.get("active_workers")
+                        if raw_act:
+                            try:
+                                act_list = json.loads(raw_act) if isinstance(raw_act, str) else raw_act
+                                for aw in act_list:
+                                    allowed_for_job.add(aw)
+                            except Exception:
+                                pass
+                        if allowed_for_job and w_id not in allowed_for_job:
+                            continue
+                    else:
+                        # Job classique non-parallèle : restreint au worker assigné
+                        assigned_w = n.get("job_worker_id") or n.get("worker_id") or n.get("home_worker")
+                        if assigned_w and w_id != assigned_w:
+                            continue
 
                 wait_s = 0.0
                 created_str = n.get("created_at")

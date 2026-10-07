@@ -140,3 +140,68 @@ def test_exact_parity_between_workers_queue_and_scheduler(sched_db):
     assert queue_b[1]["scheduling_priority"] == "normal"
     assert queue_b[2]["node_name"] == "stage-bob"
     assert queue_b[2]["scheduling_priority"] == "normal"
+
+
+def test_strict_queue_parity_with_active_workers_and_home_worker(sched_db):
+    from src.scheduler.scheduler_loop import schedule_iteration, handle_next_node
+    conn, _ = sched_db
+    cursor = conn.cursor()
+
+    # Deux workers en ligne
+    cursor.execute("""
+        INSERT INTO workers (worker_id, hostname, status, cpus, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, last_seen, assigned_job_id)
+        VALUES ('worker-A', 'host-a', 'online', 8, 32.0, 4.0, 100.0, 100.0, CURRENT_TIMESTAMP, 'job-1-active'),
+               ('worker-B', 'host-b', 'online', 8, 32.0, 32.0, 100.0, 100.0, CURRENT_TIMESTAMP, NULL)
+    """)
+
+    # Job 1 : Déjà assigné à worker-A (home_worker='worker-A', active_workers='["worker-A"]')
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, created_at, started_at, home_worker, active_workers)
+        VALUES ('job-1-active', 'bob', 'running', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'worker-A', '["worker-A"]')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, worker_id, runner_id, scheduling_priority, resources)
+        VALUES ('job-1-active', 'stage-1-running', 'running', 'worker-A', 'runner-1-A', 'normal', '{"cpus": 6, "ram_gb": 28.0}')
+    """)
+    # Job 1 a un deuxième nœud prêt à tourner
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, scheduling_priority, resources, priority)
+        VALUES ('job-1-active', 'stage-1-ready', 'ready', 'normal', '{"cpus": 2, "ram_gb": 4.0}', 1.0)
+    """)
+    conn.commit()
+    from src.scheduler.persistence import record_runner_heartbeat
+    record_runner_heartbeat('job-1-active', 'runner-1-A', 'worker-A', 'stage-1-running')
+
+    # Job 2 : Pending, demandant 10GB de RAM (ne peut pas entrer sur worker-A car 28GB+10GB > 32GB)
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, created_at)
+        VALUES ('job-2-pending', 'alice', 'pending', 1, CURRENT_TIMESTAMP)
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, scheduling_priority, resources, priority)
+        VALUES ('job-2-pending', 'stage-2-ready', 'ready', 'normal', '{"cpus": 2, "ram_gb": 10.0}', 1.0)
+    """)
+    conn.commit()
+
+    # 1. Vérification parité dans l'API de file (/api/workers/queues)
+    queues = get_worker_queues(conn=conn)
+    queue_a = queues["worker-A"]
+    queue_b = queues["worker-B"]
+
+    # worker-A a accès aux deux jobs (le sien + le pending)
+    a_nodes = [item["node_name"] for item in queue_a]
+    assert "stage-1-ready" in a_nodes
+    assert "stage-2-ready" in a_nodes
+
+    # worker-B NE DOIT PAS voir stage-1-ready (réservé aux machines actives du job-1)
+    b_nodes = [item["node_name"] for item in queue_b]
+    assert "stage-1-ready" not in b_nodes
+    assert "stage-2-ready" in b_nodes
+
+    # 2. Vérification parité avec le scheduler : l'itération d'ordonnancement attribue worker-B à job-2-pending
+    schedule_iteration()
+
+    cursor.execute("SELECT home_worker FROM jobs WHERE job_id = 'job-2-pending'")
+    j2_home = cursor.fetchone()[0]
+    assert j2_home == "worker-B"
+
