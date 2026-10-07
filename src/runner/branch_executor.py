@@ -200,6 +200,7 @@ class DockerRunner:
         vram_limit: float = 0.0,
         env: Optional[Dict[str, str]] = None,
         user_id: int = 1000,
+        group_id: int = 1000,
         resources: Optional[Dict[str, Any]] = None,
         labels: Optional[Dict[str, str]] = None,
         dvc_cache_dir: Optional[str] = None,

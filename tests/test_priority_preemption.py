@@ -358,6 +358,8 @@ def test_docker_runner_labels_and_worker_preempt_cleanup_by_label(monkeypatch):
     assert "--label" in cmd
     assert "cluster-ci.runner-id=runner-xyz-999" in cmd
     assert "cluster-ci.job-id=job-12345" in cmd
+    assert "--user" in cmd
+    assert cmd[cmd.index("--user") + 1] == "1000:1000"
 
     # 2. Vérification que _async_runner_preempt_cleanup interroge bien docker ps avec le label canonique
     ps_filter_calls = []
@@ -558,6 +560,45 @@ def test_non_preempting_node_user_cancellation_preserves_behavior(prem_db):
     cursor.execute("SELECT status FROM jobs WHERE job_id = ?", (job_id,))
     job_row = cursor.fetchone()
     assert job_row["status"] in ("failed", "cancelled")
+
+
+def test_docker_runner_custom_user_group_and_dvc_cache(monkeypatch, tmp_path):
+    """Vérifie la commande docker construite par DockerRunner sans mocker sa signature."""
+    import subprocess
+    from src.runner.branch_executor import DockerRunner
+
+    captured_cmds = []
+
+    def fake_subprocess_run(cmd, *args, **kwargs):
+        captured_cmds.append(cmd)
+        class DummyRes:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return DummyRes()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    dvc_cache = tmp_path / "dvc_cache"
+    dvc_cache.mkdir()
+
+    runner = DockerRunner(docker_cmd="docker")
+    ret = runner.run_container(
+        image="test-img:latest",
+        container_name="cluster-job-test",
+        home_volume="vol-home",
+        repo_dir=str(tmp_path / "repo"),
+        base_dir=str(tmp_path / "base"),
+        user_id=1001,
+        group_id=1002,
+        dvc_cache_dir=str(dvc_cache),
+    )
+    assert ret == 0
+    assert len(captured_cmds) == 1
+    cmd = captured_cmds[0]
+    user_idx = cmd.index("--user")
+    assert cmd[user_idx + 1] == "1001:1002"
+    assert any(f"{dvc_cache}:/workspace/.dvc/cache" in arg for arg in cmd)
 
 
 
