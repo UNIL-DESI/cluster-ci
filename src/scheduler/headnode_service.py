@@ -91,15 +91,19 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 load_dotenv()
 
 get_executable = resolve_venv_executable
-try:
-    DVC_CMD = resolve_venv_executable("dvc")
-except FileNotFoundError:
-    DVC_CMD = "dvc"
 
-try:
-    UV_CMD = resolve_venv_executable("uv")
-except FileNotFoundError:
-    UV_CMD = None
+
+def dvc_cmd() -> str:
+    """Lazily resolves the dvc executable path or raises explicit FileNotFoundError."""
+    return resolve_venv_executable("dvc")
+
+
+def __getattr__(name: str):
+    if name == "DVC_CMD":
+        return dvc_cmd()
+    if name == "UV_CMD":
+        return resolve_venv_executable("uv")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # Per-request guard; local transfers use smaller chunks.
@@ -1901,7 +1905,7 @@ def artifacts(repo_owner, repo_name, rev, file_path):
 
         source = local_repo_path if local_repo_path else f"https://github.com/{repo_slug}"
 
-        cmd = [DVC_CMD, "get", source, file_path, "--rev", rev, "--out", tmp_dir]
+        cmd = [dvc_cmd(), "get", source, file_path, "--rev", rev, "--out", tmp_dir]
         result = subprocess.run(cmd, capture_output=True, text=True, env=os.environ.copy())
 
         if result.returncode == 0:
@@ -2338,8 +2342,8 @@ def api_run_files(job_id):
 
     def build_dvc_cmd(source, sub, rev):
         if sub:
-            return [DVC_CMD, "list", source, sub, "--rev", rev, "--dvc-only", "--json"]
-        return [DVC_CMD, "list", source, "--rev", rev, "--dvc-only", "--json"]
+            return [dvc_cmd(), "list", source, sub, "--rev", rev, "--dvc-only", "--json"]
+        return [dvc_cmd(), "list", source, "--rev", rev, "--dvc-only", "--json"]
 
     try:
         env = os.environ.copy()

@@ -1850,10 +1850,17 @@ def get_free_port():
     return port
 
 get_executable = resolve_venv_executable
-try:
-    DVC_CMD = resolve_venv_executable("dvc")
-except FileNotFoundError:
-    DVC_CMD = "dvc"
+
+
+def dvc_cmd() -> str:
+    """Lazily resolves the dvc executable path or raises explicit FileNotFoundError."""
+    return resolve_venv_executable("dvc")
+
+
+def __getattr__(name: str):
+    if name == "DVC_CMD":
+        return dvc_cmd()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def safe_cleanup_worktree(repo_path, worktree_dir, worktree_name=None):
     """Safely cleans up a git worktree with 4 defensive tiers:
@@ -2011,7 +2018,7 @@ def prepare_dvc_worktree(repo_path, worktree_dir, target_rev):
     logger.info(f"Running dvc checkout in worktree for {repo_path}...")
     try:
         res_checkout = subprocess.run(
-            [DVC_CMD, "checkout"], cwd=worktree_dir,
+            [dvc_cmd(), "checkout"], cwd=worktree_dir,
             capture_output=True, text=True, timeout=60
         )
         if res_checkout.returncode != 0:
@@ -2157,7 +2164,7 @@ def worker_dvc_list():
                           'size': entry.stat().st_size, 'isout': True})
         return jsonify(files)
 
-    cmd = [DVC_CMD, "list", ".", "--dvc-only", "--json"]
+    cmd = [dvc_cmd(), "list", ".", "--dvc-only", "--json"]
     if rev: cmd += ["--rev", rev]
 
     try:
@@ -2202,7 +2209,7 @@ def worker_dvc_get():
         disposition = "inline" if request.args.get("inline") == "true" else "attachment"
 
         # Strategy 1: DVC extraction at specific revision (historical integrity)
-        cmd = [DVC_CMD, "get", ".", file_path, "--out", tmp_dir]
+        cmd = [dvc_cmd(), "get", ".", file_path, "--out", tmp_dir]
         if rev: cmd += ["--rev", rev]
 
         res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True)

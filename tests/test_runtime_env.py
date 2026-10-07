@@ -192,3 +192,43 @@ def test_headnode_and_worker_get_executable(monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         wa.get_executable("completely_nonexistent_binary_xyz_999")
+
+
+def test_lazy_dvc_cmd_import_and_execution_without_dvc(monkeypatch):
+    """Test Case 8: Importing headnode_service and worker_agent without dvc does not fail,
+    but calling dvc_cmd() when dvc is missing raises explicit FileNotFoundError."""
+    import src.scheduler.headnode_service as hs
+    import src.scheduler.worker_agent as wa
+
+    # 1. Importing must never crash even if dvc is not found
+    assert callable(hs.dvc_cmd)
+    assert callable(wa.dvc_cmd)
+
+    def mock_dvc_missing(name):
+        raise FileNotFoundError(
+            f"Executable '{name}' not found. Searched active venv directory ('/mock/venv'), "
+            f"user local bin ('/mock/.local/bin'), and system PATH ('/mock/path')."
+        )
+
+    monkeypatch.setattr(hs, "resolve_venv_executable", mock_dvc_missing)
+    monkeypatch.setattr(wa, "resolve_venv_executable", mock_dvc_missing)
+
+    # Calling dvc_cmd() raises explicit FileNotFoundError containing searched paths
+    with pytest.raises(FileNotFoundError) as exc_hs:
+        hs.dvc_cmd()
+    assert "Executable 'dvc' not found" in str(exc_hs.value)
+    assert "Searched active venv directory" in str(exc_hs.value)
+
+    with pytest.raises(FileNotFoundError) as exc_wa:
+        wa.dvc_cmd()
+    assert "Executable 'dvc' not found" in str(exc_wa.value)
+    assert "Searched active venv directory" in str(exc_wa.value)
+
+    # Accessing hs.DVC_CMD or wa.DVC_CMD also invokes dvc_cmd() lazily and raises FileNotFoundError
+    with pytest.raises(FileNotFoundError) as exc_attr_hs:
+        _ = hs.DVC_CMD
+    assert "Executable 'dvc' not found" in str(exc_attr_hs.value)
+
+    with pytest.raises(FileNotFoundError) as exc_attr_wa:
+        _ = wa.DVC_CMD
+    assert "Executable 'dvc' not found" in str(exc_attr_wa.value)
