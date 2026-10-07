@@ -143,7 +143,7 @@ def test_exact_parity_between_workers_queue_and_scheduler(sched_db):
 
 
 def test_strict_queue_parity_with_active_workers_and_home_worker(sched_db):
-    from src.scheduler.scheduler_loop import schedule_iteration, handle_next_node
+    from src.scheduler.scheduler_loop import schedule_iteration
     conn, _ = sched_db
     cursor = conn.cursor()
 
