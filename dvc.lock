@@ -1,0 +1,18 @@
+schema: '2.0'
+stages:
+  prep:
+    cmd: python3 simulate_research.py prep
+    deps:
+    - path: simulate_research.py
+      hash: md5
+      md5: cd80dbe96894efa4bd6d87b7d002e14c
+      size: 23231
+    outs:
+    - path: artifacts/prep.txt
+      hash: md5
+      md5: d26a06b81354db98768151ae85152acc
+      size: 71
+    - path: metrics/prep.json
+      hash: md5
+      md5: 3d6ccb265fd7bef36242bc2aac0a849a
+      size: 79
