@@ -290,11 +290,31 @@ def test_most_recent_victim_selected_first(prem_db):
     # Le plus ancien continue de tourner
     assert node_older["status"] == "running"
 
-def test_worker_agent_preempt_runner_endpoint():
+def test_worker_agent_preempt_runner_endpoint(monkeypatch):
+    import src.scheduler.worker_agent as worker_agent_mod
+    monkeypatch.setattr(worker_agent_mod, "CLUSTER_TOKEN", "test-secret-token")
+
     client = worker_app.test_client()
-    resp = client.post("/api/worker/preempt_runner/test-runner-123")
-    assert resp.status_code == 200
-    data = resp.get_json()
+
+    # 1. Requête sans Authorization -> 401
+    resp_unauth = client.post("/api/worker/preempt_runner/test-runner-123")
+    assert resp_unauth.status_code == 401
+    assert resp_unauth.get_json()["error"] == "Unauthorized"
+
+    # 2. Requête avec mauvais token -> 401
+    resp_bad = client.post(
+        "/api/worker/preempt_runner/test-runner-123",
+        headers={"Authorization": "Bearer wrong-token"}
+    )
+    assert resp_bad.status_code == 401
+
+    # 3. Requête avec token valide -> 200
+    resp_ok = client.post(
+        "/api/worker/preempt_runner/test-runner-123",
+        headers={"Authorization": "Bearer test-secret-token"}
+    )
+    assert resp_ok.status_code == 200
+    data = resp_ok.get_json()
     assert data["status"] == "preempted"
     assert data["runner_id"] == "test-runner-123"
 

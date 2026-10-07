@@ -1608,6 +1608,9 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30)
 @app.route('/api/worker/preempt_runner/<runner_id>', methods=['POST'])
 def preempt_runner(runner_id):
     """Route minimale de préemption gracieuse d'un runner."""
+    if not valid_cluster_token():
+        return jsonify({"error": "Unauthorized"}), 401
+
     global current_job_id, current_process
     logger.info(f"Received preemption request for runner {runner_id}")
     matching_process = None
