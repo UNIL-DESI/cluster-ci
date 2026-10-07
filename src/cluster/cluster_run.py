@@ -1352,7 +1352,7 @@ def fetch_cluster_results(branch, commit_sha=None, silent_if_no_changes=False):
 
 
 
-def shadow_run(skip_code: bool = False):
+def shadow_run(skip_code: bool = False, priority: str = None):
     """Package current workspace changes, shadow commit, shadow push, and stream logs."""
     global RUN_ID, BRANCH, COMMIT_SHA, USER_INTERRUPTED, RUN_IS_LOCAL
     RUN_IS_LOCAL = False
@@ -1386,6 +1386,8 @@ def shadow_run(skip_code: bool = False):
         commit_msg = f"Shadow commit for {user}"
         if skip_code:
             commit_msg += " [skip-code-invalidation]"
+        if priority:
+            commit_msg += f" [priority={priority}]"
         res_commit = subprocess.run(
             ["git", "commit-tree", tree, "-p", "HEAD", "-m", commit_msg],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
@@ -1816,6 +1818,17 @@ def parse_cluster_ci_config(project_dir="."):
     if ps_match:
         parallel_stages = True
 
+    # Parse PRIORITY / DEFAULT_PRIORITY
+    priority_req = "normal"
+    prio_match = re.search(r'^\s*(?:DEFAULT_PRIORITY|PRIORITY)\s*=\s*(.+)', content, re.MULTILINE)
+    if prio_match:
+        raw_p = prio_match.group(1).split("#")[0].strip().strip('"\'').lower()
+        if raw_p in ("high", "normal", "low"):
+            priority_req = raw_p
+        else:
+            print(f"❌ Error: Invalid PRIORITY in .cluster-ci: {raw_p}. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+            sys.exit(1)
+
     return {
         "ram_required_gb": ram_req,
         "vram_required_gb": vram_req,
@@ -1830,6 +1843,8 @@ def parse_cluster_ci_config(project_dir="."):
         "custom_web_app": custom_web_app,
         "allowed_workers": allowed_workers,
         "parallel_stages": parallel_stages,
+        "priority": priority_req,
+        "scheduling_priority": priority_req,
     }
 
 
@@ -2198,7 +2213,7 @@ def _stream_local_job_logs_and_wait_impl(job_id, headnode_url, cluster_token=Non
         time.sleep(sleep_int)
 
 
-def local_run(skip_code: bool = False):
+def local_run(skip_code: bool = False, priority: str = None):
     """Package local workspace source, submit to headnode via HTTP, and stream logs directly."""
     global BRANCH, COMMIT_SHA, USER_INTERRUPTED, _CLEANUP_DONE, RUN_IS_LOCAL
     RUN_IS_LOCAL = True
@@ -2238,7 +2253,16 @@ def local_run(skip_code: bool = False):
     BRANCH = f"local-draft/{username}"
     COMMIT_SHA = "local-snapshot"
 
-    print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (repo: {repo}, branch: {BRANCH})")
+    job_priority = priority or config.get("priority", "normal")
+    if job_priority:
+        job_priority = str(job_priority).strip().lower()
+        if job_priority not in ("high", "normal", "low"):
+            print(f"❌ Error: Invalid priority '{job_priority}'. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        job_priority = "normal"
+
+    print(f"🏠 [LOCAL MODE] Submitting job for user: {username} (repo: {repo}, branch: {BRANCH}, priority: {job_priority})")
 
     archive_path = package_local_source(".")
     source_transfer_id = None
@@ -2292,6 +2316,8 @@ def local_run(skip_code: bool = False):
         "exposed_port": config["exposed_port"],
         "custom_web_app": config["custom_web_app"],
         "allowed_workers": config["allowed_workers"],
+        "priority": job_priority,
+        "scheduling_priority": job_priority,
         "is_local": True,
         "source_transfer_id": source_transfer_id,
     }
@@ -2302,6 +2328,14 @@ def local_run(skip_code: bool = False):
     if config.get("storage_gb") is not None:
         payload["storage_gb"] = config["storage_gb"]
     if plan is not None:
+        if "defaults" not in plan or not isinstance(plan["defaults"], dict):
+            plan["defaults"] = {}
+        if not plan["defaults"].get("priority"):
+            plan["defaults"]["priority"] = job_priority
+        if job_priority != "normal":
+            for n in plan.get("nodes", []):
+                if n.get("scheduling_priority") in (None, "normal") and n.get("resources", {}).get("priority") in (None, "normal"):
+                    n["scheduling_priority"] = job_priority
         payload["plan"] = plan
     if skip_code:
         payload["skip_code_invalidation"] = True
@@ -2387,6 +2421,8 @@ def main():
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
     parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
                         help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
+    parser.add_argument("--priority", choices=["high", "normal", "low"], default=None,
+                        help="Scheduling priority (high, normal, low)")
 
     args = parser.parse_args()
 
@@ -2559,14 +2595,15 @@ def main():
     else:
         # Submit run
         skip_code = getattr(args, "skip_code_invalidation", False)
+        priority = getattr(args, "priority", None)
         if args.local:
             try:
-                local_run(skip_code=skip_code)
+                local_run(skip_code=skip_code, priority=priority)
             finally:
                 cleanup()
         else:
             try:
-                shadow_run(skip_code=skip_code)
+                shadow_run(skip_code=skip_code, priority=priority)
             finally:
                 cleanup()
 

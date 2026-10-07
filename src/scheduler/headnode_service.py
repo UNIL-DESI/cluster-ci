@@ -975,6 +975,14 @@ def submit_job():
             env_vars = {}
         env_vars["CLUSTER_CANCELLED_RUNS"] = ",".join(jobs_to_cancel)
 
+    raw_prio = data.get("priority") or data.get("scheduling_priority") or "normal"
+    if isinstance(raw_prio, str):
+        scheduling_priority = raw_prio.strip().lower()
+    else:
+        scheduling_priority = "normal"
+    if scheduling_priority not in ("high", "normal", "low"):
+        return jsonify({"error": f"Invalid priority: {raw_prio}. Must be 'high', 'normal', or 'low'"}), 400
+
     # 2. Insert new job
     plan_json_str = json.dumps(plan) if plan else None
     with get_db_conn() as conn:
@@ -984,25 +992,36 @@ def submit_job():
                 job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb,
                 max_runtime_hours, exposed_port, custom_web_app, gh_run_id, required_hashes,
                 gh_token, env_vars, username, allowed_workers, status, is_local,
-                local_archive_path, job_type, is_maintenance, parallel_mode, plan_json, active_workers
+                local_archive_path, job_type, is_maintenance, parallel_mode, plan_json, active_workers,
+                scheduling_priority
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             job_id, repo, branch, commit_hash, ram_required_gb, vram_required_gb,
             max_runtime_hours, exposed_port, 1 if custom_web_app else 0, gh_run_id,
             json.dumps(required_hashes), gh_token, json.dumps(env_vars) if env_vars else None,
             username, json.dumps(allowed_workers) if allowed_workers else None,
             1 if is_local else 0, local_archive_path, job_type, is_maintenance,
-            parallel_mode, plan_json_str, "[]"
+            parallel_mode, plan_json_str, "[]",
+            scheduling_priority
         ))
         conn.commit()
 
     if plan:
+        if "defaults" not in plan or not isinstance(plan["defaults"], dict):
+            plan["defaults"] = {}
+        if not plan["defaults"].get("priority"):
+            plan["defaults"]["priority"] = scheduling_priority
+        if scheduling_priority != "normal":
+            for n in plan.get("nodes", []):
+                if n.get("scheduling_priority") in (None, "normal") and n.get("resources", {}).get("priority") in (None, "normal"):
+                    n["scheduling_priority"] = scheduling_priority
         init_job_nodes_from_plan(job_id, plan)
 
     return jsonify({
         "job_id": job_id,
         "status": "pending",
+        "scheduling_priority": scheduling_priority,
         "required_hashes_count": len(required_hashes),
         "is_local": 1 if is_local else 0,
         "job_type": job_type,

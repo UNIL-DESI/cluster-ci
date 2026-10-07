@@ -424,7 +424,7 @@ def get_config_value(pattern, content, default=None, is_float=False):
         return float(val) if is_float else val
     return default
 
-def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None, stages=None):
+def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_hash=None, is_local=False, local_repo_path=None, repo_dir=None, stages=None, priority=None):
     """Submits a research job to the headnode scheduler."""
     if is_local:
         os.environ['DVC_NO_ANALYTICS'] = '1'
@@ -560,6 +560,25 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     storage_match = re.search(r'(?:REQUIRED_STORAGE|REQUIRED_DISK)\s*=\s*(\d+(?:\.\d+)?)(?:GB|G)?', content)
     storage_req = float(storage_match.group(1)) if storage_match else None
 
+    # Parse PRIORITY / DEFAULT_PRIORITY
+    job_priority = priority
+    if job_priority is not None:
+        job_priority = str(job_priority).strip().lower()
+        if job_priority not in ("high", "normal", "low"):
+            print(f"❌ Error: Invalid priority '{priority}'. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        prio_match = re.search(r'^\s*(?:DEFAULT_PRIORITY|PRIORITY)\s*=\s*(.+)', content, re.MULTILINE)
+        if prio_match:
+            raw_p = prio_match.group(1).split("#")[0].strip().strip('"\'').lower()
+            if raw_p in ("high", "normal", "low"):
+                job_priority = raw_p
+            else:
+                print(f"❌ Error: Invalid PRIORITY in .cluster-ci: {raw_p}. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            job_priority = "normal"
+
     # Parse PARALLEL_STAGES & execution planificateur W1 (v3)
     parallel_stages_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
     parallel_stages_enabled = bool(parallel_stages_match)
@@ -632,7 +651,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         plan = run_planner_for_submission(target_repo_dir, stages=stages_req)
         print(f"✅ Planner generated plan successfully ({len(plan.get('nodes', []))} node(s)).")
 
-    submit_info = f"🚀 Submitting job for {repo}@{branch} (RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
+    submit_info = f"🚀 Submitting job for {repo}@{branch} (Priority: {job_priority}, RAM: {ram_req}GB, VRAM: {vram_req}GB, Timeout: {max_runtime}h, Custom App: {custom_web_app})"
     if is_local:
         submit_info += f" [Local Mode: {local_repo_path}]"
     if allowed_workers:
@@ -658,6 +677,8 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             "exposed_port": exposed_port,
             "custom_web_app": custom_web_app,
             "allowed_workers": allowed_workers,
+            "priority": job_priority,
+            "scheduling_priority": job_priority,
             "gh_run_id": os.environ.get("GITHUB_RUN_ID"),
             "gh_token": gh_token,
             "env_vars": env_vars,
@@ -675,6 +696,14 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             payload["storage_gb"] = storage_req
             payload["required_storage"] = storage_req
         if plan is not None:
+            if "defaults" not in plan or not isinstance(plan["defaults"], dict):
+                plan["defaults"] = {}
+            if not plan["defaults"].get("priority"):
+                plan["defaults"]["priority"] = job_priority
+            if job_priority != "normal":
+                for n in plan.get("nodes", []):
+                    if n.get("scheduling_priority") in (None, "normal") and n.get("resources", {}).get("priority") in (None, "normal"):
+                        n["scheduling_priority"] = job_priority
             payload["plan"] = plan
 
         resp = requests.post(f"{headnode_url}/submit_job", json=payload, headers=headers, timeout=10, allow_redirects=False)
@@ -1281,6 +1310,8 @@ if __name__ == '__main__':
     parser.add_argument("--stages", nargs="*", default=None, help="Target stage(s) to restrict the execution plan to (STAGES)")
     parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
                         help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
+    parser.add_argument("--priority", choices=["high", "normal", "low"], default=None,
+                        help="Scheduling priority for the job (high, normal, low)")
 
     args = parser.parse_args()
 
@@ -1323,7 +1354,7 @@ if __name__ == '__main__':
     job_id = submit_job(
         args.headnode, args.repo, args.branch, args.gh_token, env_vars,
         is_local=args.local, local_repo_path=local_repo_path, repo_dir=args.repo_dir,
-        stages=args.stages
+        stages=args.stages, priority=args.priority
     )
     exit_code = wait_for_job(args.headnode, job_id, branch=args.branch)
     sys.exit(exit_code)
