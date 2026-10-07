@@ -25,7 +25,7 @@ try:
     from db_retention import run_retention_periodic
     from scheduling_order import (
         scheduling_node_sort_key, job_sort_key, get_user_machine_counts,
-        get_priority_rank
+        get_priority_rank, extra_worker_sort_key
     )
 except ImportError:
     from src.scheduler.persistence import (
@@ -44,7 +44,7 @@ except ImportError:
     from src.scheduler.db_retention import run_retention_periodic
     from src.scheduler.scheduling_order import (
         scheduling_node_sort_key, job_sort_key, get_user_machine_counts,
-        get_priority_rank
+        get_priority_rank, extra_worker_sort_key
     )
 
 try:
@@ -2057,13 +2057,12 @@ def schedule_iteration():
             # Règle d'ordonnancement unifiée : priorité > équité machine > équité user > ancienneté > affinité
             def _extra_worker_sort_key(item):
                 p_job, cur_act = item
-                prio_rank, user_equity_rank, created_at = job_sort_key(p_job, user_machine_counts)
-                return (
-                    prio_rank,
-                    len(cur_act),
-                    user_equity_rank,
-                    get_oldest_ready_node_time(p_job),
-                    -get_data_affinity_score(p_job, w),
+                return extra_worker_sort_key(
+                    job=p_job,
+                    current_active_workers=cur_act,
+                    user_machine_counts=user_machine_counts,
+                    oldest_ready_node_time=get_oldest_ready_node_time(p_job),
+                    data_affinity_score=get_data_affinity_score(p_job, w),
                 )
 
             best_job, cur_act = min(eligible_jobs, key=_extra_worker_sort_key)

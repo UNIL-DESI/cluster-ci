@@ -219,3 +219,27 @@ def is_worker_eligible_for_node(
 # Alias pour rétrocompatibilité
 scheduler_node_sort_key = scheduling_node_sort_key
 is_worker_admissible_for_node = is_worker_eligible_for_node
+
+
+def extra_worker_sort_key(
+    job: Dict[str, Any],
+    current_active_workers: list,
+    user_machine_counts: Optional[Dict[str, int]] = None,
+    oldest_ready_node_time: str = "",
+    data_affinity_score: float = 0.0,
+) -> Tuple[int, int, int, str, float]:
+    """Clé de tri canonique pour l'attribution d'une machine supplémentaire à un job parallèle :
+    1. Priorité job (high > normal > low)
+    2. Équité machine (nombre de machines déjà attribuées au job ASC)
+    3. Équité utilisateur (nombre de machines détenues par l'utilisateur ASC)
+    4. FIFO / ancienneté du nœud prêt
+    5. Affinité des données DESC (-data_affinity_score)
+    """
+    prio_rank, user_equity_rank, _ = job_sort_key(job, user_machine_counts)
+    return (
+        prio_rank,
+        len(current_active_workers),
+        user_equity_rank,
+        oldest_ready_node_time,
+        -data_affinity_score,
+    )
