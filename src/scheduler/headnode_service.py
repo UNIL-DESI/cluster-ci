@@ -24,7 +24,10 @@ try:
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
         get_worker_total_gpus, get_worker_allocated_resources
     )
-    from queue_helper import format_waiting_time, scheduler_node_sort_key
+    from scheduling_order import (
+        format_waiting_time, scheduling_node_sort_key, get_user_machine_counts,
+        is_worker_eligible_for_node, scheduler_node_sort_key
+    )
 except ImportError:
     from src.scheduler.persistence import (
         init_db, get_db_conn, init_job_nodes_from_plan, update_dag_ready_states,
@@ -41,7 +44,10 @@ except ImportError:
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
         get_worker_total_gpus, get_worker_allocated_resources
     )
-    from src.scheduler.queue_helper import format_waiting_time, scheduler_node_sort_key
+    from src.scheduler.scheduling_order import (
+        format_waiting_time, scheduling_node_sort_key, get_user_machine_counts,
+        is_worker_eligible_for_node, scheduler_node_sort_key
+    )
 try:
     from redaction import redact_secrets
 except ImportError:
@@ -2403,10 +2409,14 @@ def get_worker_queues(conn=None, target_worker_id=None):
             cursor.execute("SELECT * FROM workers WHERE status = 'online'")
         workers = [dict(w) for w in cursor.fetchall()]
 
+        user_machine_counts = get_user_machine_counts(c)
+
         # Candidates 1: job_nodes from non-finished jobs with status ready or pending
         cursor.execute('''
             SELECT jn.job_id, jn.node_name, jn.status, jn.resources, jn.image, jn.priority, jn.deps,
-                   j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username
+                   jn.scheduling_priority, jn.preempt_count,
+                   j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
+                   j.scheduling_priority AS job_scheduling_priority
             FROM job_nodes jn
             JOIN jobs j ON jn.job_id = j.job_id
             WHERE jn.status IN ('ready', 'pending')
@@ -2419,7 +2429,9 @@ def get_worker_queues(conn=None, target_worker_id=None):
         cursor.execute('''
             SELECT j.job_id, 'job' AS node_name, 'ready' AS status,
                    0.0 AS priority, '[]' AS deps,
+                   j.scheduling_priority, 0 AS preempt_count,
                    j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
+                   j.scheduling_priority AS job_scheduling_priority,
                    j.ram_required_gb, j.vram_required_gb, j.worker_id, j.allowed_workers
             FROM jobs j
             WHERE j.status = 'pending' AND (j.parallel_mode = 0 OR j.parallel_mode IS NULL)
@@ -2434,6 +2446,7 @@ def get_worker_queues(conn=None, target_worker_id=None):
                 "ram_gb": cr_dict.get("ram_required_gb") or 10.0,
                 "vram_gb": cr_dict.get("vram_required_gb") or 0.0,
                 "gpus": 1 if (cr_dict.get("vram_required_gb") or 0) > 0 else 0,
+                "priority": cr_dict.get("scheduling_priority") or "normal",
             }
             allowed = []
             if cr_dict.get("allowed_workers"):
@@ -2449,14 +2462,18 @@ def get_worker_queues(conn=None, target_worker_id=None):
             cr_dict["image"] = None
             node_rows.append(cr_dict)
 
-        # Scheduler selection ordering: reproduit fidèlement scheduler_loop.py (FIFO jobs 1568, node_sort_key 1109-1122)
+        # Scheduler selection ordering: ordonnancement unifié (priorité, équité user, FIFO, conteneur chaud, DAG)
         def _node_sort(r):
             raw_res = r.get("resources")
             try:
                 res_dict = json.loads(raw_res) if isinstance(raw_res, str) else (raw_res or {})
             except Exception:
                 res_dict = {}
-            return scheduler_node_sort_key(node=r, resources=res_dict)
+            return scheduling_node_sort_key(
+                node=r,
+                resources=res_dict,
+                user_machine_counts=user_machine_counts
+            )
 
         node_rows.sort(key=_node_sort)
 
@@ -2503,6 +2520,9 @@ def get_worker_queues(conn=None, target_worker_id=None):
                     "job_id": n["job_id"],
                     "job_id_short": (n["job_id"] or "")[:8],
                     "status": n["status"],
+                    "scheduling_priority": n.get("scheduling_priority") or "normal",
+                    "preempt_count": int(n.get("preempt_count") or 0),
+                    "username": n.get("username") or "",
                     "waiting_seconds": round(wait_s, 1),
                     "waiting_time": format_waiting_time(wait_s),
                     "is_local": int(n.get("is_local") or 0)

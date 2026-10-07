@@ -23,6 +23,10 @@ try:
     )
     from artifact_registry import affinity_bytes, sources_for, record_node_outputs
     from db_retention import run_retention_periodic
+    from scheduling_order import (
+        scheduling_node_sort_key, job_sort_key, get_user_machine_counts,
+        get_priority_rank
+    )
 except ImportError:
     from src.scheduler.persistence import (
         get_db_conn, init_db, update_dag_ready_states, mark_node_status,
@@ -38,6 +42,10 @@ except ImportError:
     )
     from src.scheduler.artifact_registry import affinity_bytes, sources_for, record_node_outputs
     from src.scheduler.db_retention import run_retention_periodic
+    from src.scheduler.scheduling_order import (
+        scheduling_node_sort_key, job_sort_key, get_user_machine_counts,
+        get_priority_rank
+    )
 
 try:
     from src.runner.fetch_cas_dependencies import normalize_worker_url
@@ -1082,22 +1090,14 @@ def handle_next_node(req):
             _release_worker_from_job(job_id, worker_id)
             return {"action": "yield"}
 
-    def node_sort_key(item):
-        n, res = item
-        raw_deps = n.get("deps")
-        deps = json.loads(raw_deps) if raw_deps else []
-        is_direct_child = (node_name in deps) if node_name else False
-        n_image = n.get("image") or res.get("image")
-        same_image = (n_image == current_image) if current_image else False
-        priority = float(n.get("priority", 0.0))
-        return (
-            1 if (is_direct_child and same_image) else 0,
-            1 if same_image else 0,
-            1 if is_direct_child else 0,
-            priority
+    admissible_ready_nodes.sort(
+        key=lambda item: scheduling_node_sort_key(
+            node=item[0],
+            resources=item[1],
+            current_node_name=node_name,
+            current_image=current_image,
         )
-
-    admissible_ready_nodes.sort(key=node_sort_key, reverse=True)
+    )
     assigned_node = None
     assigned_res = None
     assigned_gpu_ids = None
@@ -1475,7 +1475,14 @@ def schedule_iteration():
             WHERE status = "pending"
             ORDER BY (CASE WHEN job_type = 'maintenance' OR is_maintenance = 1 THEN 0 ELSE 1 END) ASC, created_at ASC
         ''')
+        user_machine_counts = get_user_machine_counts(conn)
         pending_jobs = [dict(row) for row in cursor.fetchall()]
+        pending_jobs.sort(
+            key=lambda j: (
+                0 if (j.get('job_type') == 'maintenance' or j.get('is_maintenance') == 1) else 1,
+                job_sort_key(j, user_machine_counts)
+            )
+        )
 
         # Workers en ligne (Packing A11 : les workers ne sont pas exclus s'ils exécutent déjà des jobs)
         cursor.execute('''
@@ -1544,6 +1551,7 @@ def schedule_iteration():
             ORDER BY created_at ASC
         ''')
         parallel_jobs = [dict(r) for r in cursor.fetchall()]
+        parallel_jobs.sort(key=lambda j: job_sort_key(j, user_machine_counts))
 
     for p_job in list(parallel_jobs):
         jid = p_job["job_id"]
