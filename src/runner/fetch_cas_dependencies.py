@@ -27,17 +27,23 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 import stat
 import subprocess
 import sys
 import time
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 import urllib.parse
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import requests
+
+try:
+    from src.runner.runtime_env import resolve_venv_executable
+except ImportError:
+    try:
+        from runner.runtime_env import resolve_venv_executable
+    except ImportError:
+        from runtime_env import resolve_venv_executable
 
 logger = logging.getLogger(__name__)
 
@@ -313,21 +319,23 @@ def parse_dir_manifest(manifest_path: Path) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to parse .dir manifest %s: %s", manifest_path, e)
 def get_dvc_command() -> list[str]:
-    """Finds dvc executable in PATH, ~/.local/bin, or uvx fallback."""
-    dvc_path = shutil.which("dvc")
-    if dvc_path:
-        return [dvc_path]
+    """Finds dvc executable in venv, system PATH, ~/.local/bin, or uvx fallback."""
+    try:
+        return [resolve_venv_executable("dvc")]
+    except FileNotFoundError:
+        pass
     local_dvc = os.path.expanduser("~/.local/bin/dvc")
     if os.path.isfile(local_dvc) and os.access(local_dvc, os.X_OK):
         return [local_dvc]
-    uvx_path = shutil.which("uvx")
-    if not uvx_path:
-        cand_uvx = os.path.expanduser("~/.local/bin/uvx")
-        if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
-            uvx_path = cand_uvx
-    if uvx_path:
+    try:
+        uvx_path = resolve_venv_executable("uvx")
         return [uvx_path, "--from", "dvc==3.67.1", "dvc"]
-    return ["dvc"]
+    except FileNotFoundError:
+        pass
+    cand_uvx = os.path.expanduser("~/.local/bin/uvx")
+    if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
+        return [cand_uvx, "--from", "dvc==3.67.1", "dvc"]
+    return [resolve_venv_executable("dvc")]
 
 
 def fetch_dependencies(

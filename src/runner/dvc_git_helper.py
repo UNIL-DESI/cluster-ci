@@ -23,6 +23,14 @@ except ImportError:
     # This helper is also invoked directly by its file path inside containers.
     from cluster_http import cluster_urlopen
 
+try:
+    from src.runner.runtime_env import resolve_venv_executable
+except ImportError:
+    try:
+        from runner.runtime_env import resolve_venv_executable
+    except ImportError:
+        from runtime_env import resolve_venv_executable
+
 if sys.platform.startswith("win"):
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -831,24 +839,26 @@ def _get_start_commit(cwd=None):
 
 
 def get_dvc_command():
-    """Finds dvc executable in PATH, ~/.local/bin, ~/.local/share/uv/tools/dvc/bin, or uvx fallback."""
-    dvc_path = shutil.which("dvc")
-    if dvc_path:
-        return [dvc_path]
+    """Finds dvc executable in venv, system PATH, ~/.local/bin, uv tool, or uvx fallback."""
+    try:
+        return [resolve_venv_executable("dvc")]
+    except FileNotFoundError:
+        pass
     local_dvc = os.path.expanduser("~/.local/bin/dvc")
     if os.path.isfile(local_dvc) and os.access(local_dvc, os.X_OK):
         return [local_dvc]
     uv_tool_dvc = os.path.expanduser("~/.local/share/uv/tools/dvc/bin/dvc")
     if os.path.isfile(uv_tool_dvc) and os.access(uv_tool_dvc, os.X_OK):
         return [uv_tool_dvc]
-    uvx_path = shutil.which("uvx")
-    if not uvx_path:
-        cand_uvx = os.path.expanduser("~/.local/bin/uvx")
-        if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
-            uvx_path = cand_uvx
-    if uvx_path:
+    try:
+        uvx_path = resolve_venv_executable("uvx")
         return [uvx_path, "--from", "dvc==3.67.1", "dvc"]
-    return ["dvc"]
+    except FileNotFoundError:
+        pass
+    cand_uvx = os.path.expanduser("~/.local/bin/uvx")
+    if os.path.isfile(cand_uvx) and os.access(cand_uvx, os.X_OK):
+        return [cand_uvx, "--from", "dvc==3.67.1", "dvc"]
+    return [resolve_venv_executable("dvc")]
 
 
 def get_allowed_sync_paths(repo_path=None, start_commit=None):

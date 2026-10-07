@@ -21,6 +21,14 @@ from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
+try:
+    from src.runner.runtime_env import resolve_venv_executable
+except ImportError:
+    try:
+        from runner.runtime_env import resolve_venv_executable
+    except ImportError:
+        from runtime_env import resolve_venv_executable
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -309,8 +317,12 @@ def sanitize_workspace(
     if dvc_checkout:
         dvc_yaml_path = os.path.join(abs_ws, "dvc.yaml")
         if os.path.isfile(dvc_yaml_path):
+            try:
+                dvc_bin = resolve_venv_executable("dvc")
+            except FileNotFoundError as e:
+                raise WorkspaceSanitizerError(f"Cannot perform DVC checkout: {e}") from e
             checkout_res = subprocess.run(
-                ["dvc", "checkout", "--force", "--allow-missing"],
+                [dvc_bin, "checkout", "--force", "--allow-missing"],
                 cwd=abs_ws,
                 capture_output=True,
                 text=True,

@@ -188,6 +188,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
+Environment="PATH=$BASE_DIR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/runner_manager.py
 Restart=always
 RestartSec=5
@@ -211,6 +212,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
+Environment="PATH=$BASE_DIR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/headnode_service.py
 Restart=always
 RestartSec=5
@@ -230,6 +232,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
+Environment="PATH=$BASE_DIR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/scheduler_loop.py
 Restart=always
 RestartSec=5
@@ -270,6 +273,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
+Environment="PATH=$BASE_DIR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
 ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always
@@ -337,6 +341,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
+Environment="PATH=$BASE_DIR/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
 ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always

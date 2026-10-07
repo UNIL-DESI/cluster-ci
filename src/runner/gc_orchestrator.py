@@ -17,6 +17,14 @@ import requests
 import psutil
 from pathlib import Path
 
+try:
+    from src.runner.runtime_env import resolve_venv_executable
+except ImportError:
+    try:
+        from runner.runtime_env import resolve_venv_executable
+    except ImportError:
+        from runtime_env import resolve_venv_executable
+
 class RegistryCorruptedError(Exception):
     """Raised when registry.json is unparseable or corrupted."""
     pass
@@ -178,14 +186,14 @@ def log_deletion(target, freed_bytes, reason, dry_run=False):
     print(f"{prefix} Deleted: '{target}' | Freed: {size_str} ({freed_bytes} bytes) | Reason: {reason}")
 
 def get_executable(name):
-    """Finds an executable in system PATH, local bin, or current venv."""
-    cmd = shutil.which(name)
-    if cmd: return cmd
-    local_path = os.path.expanduser(f"~/.local/bin/{name}")
-    if os.path.exists(local_path): return local_path
-    venv_path = os.path.join(os.path.dirname(sys.executable), name)
-    if os.path.exists(venv_path): return venv_path
-    return name
+    """Finds an executable prioritizing current venv, system PATH, and local bin."""
+    try:
+        return resolve_venv_executable(name)
+    except FileNotFoundError:
+        local_path = os.path.expanduser(f"~/.local/bin/{name}")
+        if os.path.isfile(local_path) and os.access(local_path, os.X_OK):
+            return local_path
+        raise
 
 DVC_CMD = get_executable("dvc")
 
@@ -1160,7 +1168,8 @@ def run_transfer_gc(dry_run=False, current_project=None):
 def run_zombie_gc():
     """JIT Zombie Detection: Purge containers inactive for > 10 minutes."""
     repo_dir = get_repositories_dir()
-    if not repo_dir.exists(): return
+    if not repo_dir.exists():
+        return
 
     zombie_registry_path = get_zombie_registry_path()
     zombie_registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1179,7 +1188,8 @@ def run_zombie_gc():
         if zombie_registry_path.exists():
             try:
                 os.remove(zombie_registry_path)
-            except: pass
+            except OSError:
+                pass
         kill_host_dvc_viewer_processes()
         return
 
@@ -1212,7 +1222,8 @@ def run_zombie_gc():
                         stats = json.loads(stats_res.stdout)
                         current_cpu = float(stats.get("cpu", "0%").replace("%", "").strip())
                         current_net = stats.get("net", "")
-                except: pass
+                except (subprocess.SubprocessError, ValueError, json.JSONDecodeError, OSError):
+                    pass
 
                 current_gpu = 0
                 try:
@@ -1220,7 +1231,8 @@ def run_zombie_gc():
                     if gpu_res.returncode == 0:
                         utils = [int(x) for x in gpu_res.stdout.strip().split("\n") if x.strip().isdigit()]
                         current_gpu = sum(utils)
-                except: pass
+                except (subprocess.SubprocessError, ValueError, OSError):
+                    pass
 
                 prev_state = registry.get(container_name, {})
                 last_activity = prev_state.get("last_activity", now)
