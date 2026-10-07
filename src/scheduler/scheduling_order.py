@@ -22,7 +22,10 @@ Règles d'ordonnancement unifiées :
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 PRIORITY_ORDER = {
     "high": 0,
@@ -73,8 +76,8 @@ def get_user_machine_counts(conn) -> Dict[str, int]:
             w = row[1]
             if w:
                 user_workers.setdefault(u, set()).add(w)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Error fetching active worker counts from job_nodes: %s", e)
 
     # 2. Jobs classiques ou assignés dans jobs
     try:
@@ -95,10 +98,10 @@ def get_user_machine_counts(conn) -> Dict[str, int]:
                     act_list = json.loads(raw_act) if isinstance(raw_act, str) else raw_act
                     for w in act_list:
                         user_workers.setdefault(u, set()).add(w)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as ex:
+                    logger.warning("Error parsing active_workers for user machine counts: %s", ex)
+    except Exception as e:
+        logger.warning("Error fetching active worker counts from jobs: %s", e)
 
     return {u: len(w_set) for u, w_set in user_workers.items()}
 

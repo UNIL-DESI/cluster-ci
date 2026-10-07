@@ -2012,15 +2012,19 @@ def schedule_iteration():
                 eligible_jobs.append((p_job, current_active))
 
         if eligible_jobs:
-            # Règle d'équité A1 : Le job ayant le MOINS de machines actives reçoit la machine en priorité
-            best_job, cur_act = min(
-                eligible_jobs,
-                key=lambda item: (
-                    len(item[1]),
-                    get_oldest_ready_node_time(item[0]),
-                    -get_data_affinity_score(item[0], w)
+            # Règle d'ordonnancement unifiée : priorité > équité machine > équité user > ancienneté > affinité
+            def _extra_worker_sort_key(item):
+                p_job, cur_act = item
+                prio_rank, user_equity_rank, created_at = job_sort_key(p_job, user_machine_counts)
+                return (
+                    prio_rank,
+                    len(cur_act),
+                    user_equity_rank,
+                    get_oldest_ready_node_time(p_job),
+                    -get_data_affinity_score(p_job, w),
                 )
-            )
+
+            best_job, cur_act = min(eligible_jobs, key=_extra_worker_sort_key)
             jid = best_job["job_id"]
             wid = w["worker_id"]
             if wid not in cur_act:

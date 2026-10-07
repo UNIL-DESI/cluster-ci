@@ -205,3 +205,63 @@ def test_strict_queue_parity_with_active_workers_and_home_worker(sched_db):
     j2_home = cursor.fetchone()[0]
     assert j2_home == "worker-B"
 
+
+def test_extra_worker_allocation_prioritizes_high_over_normal(sched_db):
+    from src.scheduler.scheduler_loop import schedule_iteration
+    from src.scheduler.persistence import record_runner_heartbeat
+    import json
+    conn, _ = sched_db
+    cursor = conn.cursor()
+
+    # 3 workers en ligne
+    cursor.execute("""
+        INSERT INTO workers (worker_id, hostname, status, cpus, total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb, last_seen, assigned_job_id)
+        VALUES ('worker-A', 'host-a', 'online', 8, 32.0, 16.0, 100.0, 100.0, CURRENT_TIMESTAMP, 'job-normal'),
+               ('worker-B', 'host-b', 'online', 8, 32.0, 16.0, 100.0, 100.0, CURRENT_TIMESTAMP, 'job-high'),
+               ('worker-C', 'host-c', 'online', 8, 32.0, 32.0, 100.0, 100.0, CURRENT_TIMESTAMP, NULL)
+    """)
+
+    # Job normal : plus ancien (10:00), 1 machine (worker-A), 2 nœuds parallèles disponibles
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, scheduling_priority, created_at, started_at, home_worker, active_workers)
+        VALUES ('job-normal', 'bob', 'running', 1, 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'worker-A', '["worker-A"]')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, worker_id, runner_id, scheduling_priority, resources)
+        VALUES ('job-normal', 'node-norm-run', 'running', 'worker-A', 'run-norm', 'normal', '{"cpus": 2, "ram_gb": 4.0}')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, scheduling_priority, resources, priority)
+        VALUES ('job-normal', 'node-norm-ready', 'ready', 'normal', '{"cpus": 2, "ram_gb": 4.0}', 1.0)
+    """)
+    conn.commit()
+    record_runner_heartbeat('job-normal', 'run-norm', 'worker-A', 'node-norm-run')
+
+    # Job high : plus récent, 1 machine (worker-B), 2 nœuds parallèles disponibles
+    cursor.execute("""
+        INSERT INTO jobs (job_id, username, status, parallel_mode, scheduling_priority, created_at, started_at, home_worker, active_workers)
+        VALUES ('job-high', 'alice', 'running', 1, 'high', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'worker-B', '["worker-B"]')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, worker_id, runner_id, scheduling_priority, resources)
+        VALUES ('job-high', 'node-high-run', 'running', 'worker-B', 'run-high', 'high', '{"cpus": 2, "ram_gb": 4.0}')
+    """)
+    cursor.execute("""
+        INSERT INTO job_nodes (job_id, node_name, status, scheduling_priority, resources, priority)
+        VALUES ('job-high', 'node-high-ready', 'ready', 'high', '{"cpus": 2, "ram_gb": 4.0}', 1.0)
+    """)
+    conn.commit()
+    record_runner_heartbeat('job-high', 'run-high', 'worker-B', 'node-high-run')
+
+    # Exécution de l'ordonnancement : worker-C doit être attribué en machine supplémentaire à job-high !
+    schedule_iteration()
+
+    cursor.execute("SELECT active_workers FROM jobs WHERE job_id = 'job-high'")
+    high_acts = json.loads(cursor.fetchone()[0])
+    assert "worker-C" in high_acts
+
+    cursor.execute("SELECT active_workers FROM jobs WHERE job_id = 'job-normal'")
+    normal_acts = json.loads(cursor.fetchone()[0])
+    assert "worker-C" not in normal_acts
+
+
