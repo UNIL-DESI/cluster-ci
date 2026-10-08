@@ -201,8 +201,8 @@ stages:
       size: 10485760
     - path: simulate_research.py
       hash: md5
-      md5: cd80dbe96894efa4bd6d87b7d002e14c
-      size: 23231
+      md5: f9613d8744c7512e52524d26ee0e6b08
+      size: 23368
     outs:
     - path: artifacts/join_summary.txt
       hash: md5
