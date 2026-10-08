@@ -121,10 +121,16 @@ elif [ -z "$GH_TOKEN" ]; then
 fi
 JOB_ID=${JOB_ID:-"manual-$(date +%s)"}
 
-# Robust Container Naming & Labeling
+# Robust Container Naming & Labeling (isolated per runner in parallel mode)
 SAFE_JOB_ID=$(echo "$JOB_ID" | tr '/' '-')
-MAIN_CONTAINER_NAME="cluster-job-${SAFE_JOB_ID}"
-VIEWER_CONTAINER_NAME="cluster-viewer-${SAFE_JOB_ID}"
+if [ -n "$CLUSTER_CI_RUNNER_ID" ]; then
+    SAFE_RUNNER_ID=$(echo "$CLUSTER_CI_RUNNER_ID" | tr '/' '-')
+    MAIN_CONTAINER_NAME="cluster-job-${SAFE_RUNNER_ID}"
+    VIEWER_CONTAINER_NAME="cluster-viewer-${SAFE_RUNNER_ID}"
+else
+    MAIN_CONTAINER_NAME="cluster-job-${SAFE_JOB_ID}"
+    VIEWER_CONTAINER_NAME="cluster-viewer-${SAFE_JOB_ID}"
+fi
 COMMON_LABELS="--label cluster-ci-job=${JOB_ID} --label cluster-ci-repo=${TARGET_REPO}"
 
 # Delegation mode: If not explicitly in executor mode,
