@@ -24,6 +24,9 @@ import sys
 import time
 from typing import Any, Optional
 
+# Nonce de neutralisation du cache DVC pour recette réelle physique
+PHYSICAL_RECETTE_NONCE = "recette-6521749-force-physique-20261008"
+
 # Ensure clean UTF-8 stdout/stderr on all platforms (including Windows cp1252)
 if sys.stdout and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
