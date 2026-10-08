@@ -161,12 +161,12 @@ stages:
     deps:
     - path: artifacts/prep.txt
       hash: md5
-      md5: a2291a7b5ee9b2b538d28e0ce4996955
+      md5: 89be36490678a4825a26592c86bc29bb
       size: 71
     - path: simulate_research.py
       hash: md5
-      md5: cd80dbe96894efa4bd6d87b7d002e14c
-      size: 23231
+      md5: f9613d8744c7512e52524d26ee0e6b08
+      size: 23368
     outs:
     - path: artifacts/pack_light_2.bin
       hash: md5
@@ -174,7 +174,7 @@ stages:
       size: 10485760
     - path: metrics/pack_light_2.json
       hash: md5
-      md5: 8d0a781287df1489193a8b37678baa4a
+      md5: 91d72d3ef65a906fcc7d626dc8a8e408
       size: 137
   join:
     cmd: python3 simulate_research.py join
