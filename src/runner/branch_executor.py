@@ -245,7 +245,10 @@ class DockerRunner:
             "-e", "PYTHONUSERBASE=/home/user/.local",
             "--entrypoint", "tail",
         ])
-        if dvc_cache_dir and os.path.exists(dvc_cache_dir):
+        if dvc_cache_dir:
+            cache_path = Path(dvc_cache_dir)
+            cache_path.mkdir(parents=True, exist_ok=True)
+            (cache_path / "files" / "md5").mkdir(parents=True, exist_ok=True)
             cmd.extend(["-v", f"{dvc_cache_dir}:/workspace/.dvc/cache"])
         if env:
             for k, v in env.items():
@@ -672,8 +675,14 @@ class BranchExecutor:
             expected_md5 = out_info.get("md5")
             parent_dir_hash = out_info.get("parent_dir_hash")
 
+            main_repo = getattr(self, "main_repo_dir", self.repo_dir)
+            central_cache_dir = os.path.join(main_repo, ".dvc", "cache", "files", "md5")
+
             if not expected_md5 and parent_dir_hash:
-                manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / parent_dir_hash[:2] / parent_dir_hash[2:]
+                p_rel = Path(parent_dir_hash[:2]) / parent_dir_hash[2:]
+                manifest_file = Path(central_cache_dir) / p_rel
+                if not manifest_file.is_file():
+                    manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / p_rel
                 if manifest_file.is_file():
                     entries = parse_dir_manifest(manifest_file)
                     parent_dir = out_info.get("parent_dir", "")
@@ -691,7 +700,10 @@ class BranchExecutor:
                 clean_exp = expected_md5.lower().strip()
                 if clean_exp.endswith(".dir"):
                     if os.path.isdir(local_path):
-                        manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / clean_exp[:2] / clean_exp[2:]
+                        c_rel = Path(clean_exp[:2]) / clean_exp[2:]
+                        manifest_file = Path(central_cache_dir) / c_rel
+                        if not manifest_file.is_file():
+                            manifest_file = Path(self.repo_dir) / ".dvc" / "cache" / "files" / "md5" / c_rel
                         if manifest_file.is_file():
                             entries = parse_dir_manifest(manifest_file)
                             if entries and all(
@@ -783,11 +795,16 @@ class BranchExecutor:
                     })
                     existing_hashes.add(p_hash)
 
+            main_repo = getattr(self, "main_repo_dir", self.repo_dir)
+            central_cache_dir = os.path.join(main_repo, ".dvc", "cache", "files", "md5")
+            Path(central_cache_dir).mkdir(parents=True, exist_ok=True)
+
             result = fetch_dependencies(
                 dependencies=fetch_items,
                 sources_map=sources_map,
                 repo_dir=self.repo_dir,
                 repo_name=self.target_repo,
+                cache_dir=central_cache_dir,
                 run_checkout=True,
             )
 
@@ -879,11 +896,8 @@ class BranchExecutor:
         }
 
         main_dvc_cache = os.path.join(self.main_repo_dir, ".dvc", "cache") if hasattr(self, "main_repo_dir") else os.path.join(self.repo_dir, ".dvc", "cache")
-        if not os.path.exists(main_dvc_cache) and os.path.exists(os.path.join(getattr(self, "main_repo_dir", self.repo_dir), ".dvc")):
-            try:
-                os.makedirs(main_dvc_cache, exist_ok=True)
-            except Exception:
-                pass
+        Path(main_dvc_cache).mkdir(parents=True, exist_ok=True)
+        (Path(main_dvc_cache) / "files" / "md5").mkdir(parents=True, exist_ok=True)
 
         ret = self.docker.run_container(
             image=image,

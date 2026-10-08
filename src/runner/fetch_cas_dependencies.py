@@ -368,6 +368,8 @@ def fetch_dependencies(
         c_path = repo_path / ".dvc" / "cache" / "files" / "md5"
     else:
         c_path = Path(cache_dir).resolve()
+        if c_path.name == "cache" and c_path.parent.name == ".dvc":
+            c_path = c_path / "files" / "md5"
 
     c_path.mkdir(parents=True, exist_ok=True)
 
