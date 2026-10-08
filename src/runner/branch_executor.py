@@ -754,7 +754,7 @@ class BranchExecutor:
                     except Exception:
                         all_workers.append(str(w))
 
-            if not all_workers and self.headnode_url:
+            if self.headnode_url:
                 hw_list = self._get_workers_from_headnode()
                 for w in hw_list:
                     s_url = w.get("service_url") or w.get("worker_id")
