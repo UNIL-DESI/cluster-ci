@@ -1519,7 +1519,6 @@ def update_job_status():
                     )
 
             try:
-                from src.scheduler.scheduler_loop import update_dag_ready_states
                 update_dag_ready_states(job_id)
             except Exception as e:
                 app.logger.warning(
@@ -1627,7 +1626,6 @@ def update_job_status():
                         )
 
                     try:
-                        from src.scheduler.scheduler_loop import update_dag_ready_states
                         update_dag_ready_states(job_id)
                     except Exception as e:
                         app.logger.warning(
