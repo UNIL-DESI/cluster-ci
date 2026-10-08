@@ -121,7 +121,7 @@ stages:
     deps:
     - path: artifacts/prep.txt
       hash: md5
-      md5: d26a06b81354db98768151ae85152acc
+      md5: e7021b067ceb8f8c35a09b96008ce805
       size: 71
     - path: simulate_research.py
       hash: md5
@@ -134,7 +134,7 @@ stages:
       size: 52428800
     - path: metrics/branch_a1_2.json
       hash: md5
-      md5: 1ffdbb6c1d6a18e647229136a28ebafc
+      md5: b437a40d645907f4de9eb5608bf44e77
       size: 156
   branch_a_step2@2:
     cmd: python3 simulate_research.py branch_a_step2 --item 2
