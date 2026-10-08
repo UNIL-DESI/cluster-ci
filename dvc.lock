@@ -45,8 +45,8 @@ stages:
       size: 52428800
     - path: simulate_research.py
       hash: md5
-      md5: cd80dbe96894efa4bd6d87b7d002e14c
-      size: 23231
+      md5: f9613d8744c7512e52524d26ee0e6b08
+      size: 23368
     outs:
     - path: artifacts/branch_a2_1.bin
       hash: md5
@@ -54,7 +54,7 @@ stages:
       size: 52428800
     - path: metrics/branch_a2_1.json
       hash: md5
-      md5: 820ff060b01cc08c482953f7a8226e44
+      md5: c468759b7ece83082df7e132ad68b629
       size: 156
   pack_light_1:
     cmd: python3 simulate_research.py pack_light_1
