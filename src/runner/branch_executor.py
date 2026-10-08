@@ -390,6 +390,33 @@ class BranchExecutor:
                     self.worktree_dir = wt_path
                     self.repo_dir = wt_path
                     logger.info("Runner %s allocated isolated worktree at %s", self.runner_id, wt_path)
+
+                    wt_dvc_dir = os.path.join(wt_path, ".dvc")
+                    os.makedirs(wt_dvc_dir, exist_ok=True)
+                    source_cache = os.path.join(self.main_repo_dir, ".dvc", "cache")
+                    target_cache = os.path.join(wt_dvc_dir, "cache")
+                    if os.path.islink(target_cache) or os.path.lexists(target_cache):
+                        try:
+                            if os.path.islink(target_cache) or not os.path.isdir(target_cache):
+                                os.unlink(target_cache)
+                            else:
+                                shutil.rmtree(target_cache, ignore_errors=True)
+                        except Exception as e:
+                            logger.warning("Could not remove stale DVC cache target link/dir: %s", e)
+                    if os.path.exists(source_cache) and not os.path.exists(target_cache):
+                        try:
+                            os.symlink(source_cache, target_cache)
+                            logger.info("Symlinked DVC cache: %s -> %s", source_cache, target_cache)
+                        except Exception as e:
+                            logger.warning("Failed to symlink DVC cache: %s", e)
+                    for config_file in ["config", "config.local"]:
+                        src_c = os.path.join(self.main_repo_dir, ".dvc", config_file)
+                        dst_c = os.path.join(wt_dvc_dir, config_file)
+                        if os.path.exists(src_c) and not os.path.exists(dst_c):
+                            try:
+                                shutil.copy2(src_c, dst_c)
+                            except Exception as e:
+                                logger.warning("Could not copy DVC config %s: %s", config_file, e)
                 else:
                     err_msg = res.stderr.strip() if res.stderr else "unknown error"
                     raise RuntimeError(f"Failed to create isolated worktree for runner {self.runner_id}: {err_msg}")
