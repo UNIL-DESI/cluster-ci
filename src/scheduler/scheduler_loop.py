@@ -297,13 +297,17 @@ def get_worker_placement_priority(worker):
 def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
     if exclude_node and exclude_node[0] and exclude_node[1]:
         cursor.execute('''
-            SELECT job_id, node_name, resources, gpu_ids FROM job_nodes
-            WHERE worker_id = ? AND status = 'running' AND NOT (job_id = ? AND node_name = ?)
+            SELECT n.job_id, n.node_name, n.resources, n.gpu_ids, j.repo
+            FROM job_nodes n
+            LEFT JOIN jobs j ON n.job_id = j.job_id
+            WHERE n.worker_id = ? AND n.status = 'running' AND NOT (n.job_id = ? AND n.node_name = ?)
         ''', (worker_id, exclude_node[0], exclude_node[1]))
     else:
         cursor.execute('''
-            SELECT job_id, node_name, resources, gpu_ids FROM job_nodes
-            WHERE worker_id = ? AND status = 'running'
+            SELECT n.job_id, n.node_name, n.resources, n.gpu_ids, j.repo
+            FROM job_nodes n
+            LEFT JOIN jobs j ON n.job_id = j.job_id
+            WHERE n.worker_id = ? AND n.status = 'running'
         ''', (worker_id,))
     running_nodes = cursor.fetchall()
 
@@ -317,6 +321,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
     active_executors = len(running_nodes)
 
     active_job_ids = set()
+    active_repos = set()
     for row in running_nodes:
         res_raw = row["resources"]
         res = {}
@@ -343,6 +348,9 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         job_id_val = row["job_id"] if "job_id" in row.keys() else ""
         if job_id_val:
             active_job_ids.add(job_id_val)
+        repo_val = row["repo"] if "repo" in row.keys() else None
+        if repo_val:
+            active_repos.add(repo_val)
         holder_lbl = f"{node_name_val} ({job_id_val[:8]})" if job_id_val else str(node_name_val)
 
         for gid in gids:
@@ -365,7 +373,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
                     pass
 
     cursor.execute('''
-        SELECT job_id, ram_required_gb, vram_required_gb, gpu_ids FROM jobs
+        SELECT job_id, repo, ram_required_gb, vram_required_gb, gpu_ids FROM jobs
         WHERE worker_id = ? AND status IN ('assigned', 'running') AND (parallel_mode = 0 OR parallel_mode IS NULL)
     ''', (worker_id,))
     classic_jobs = cursor.fetchall()
@@ -379,6 +387,9 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         c_job_id = cj["job_id"]
         if c_job_id:
             active_job_ids.add(c_job_id)
+        c_repo = cj["repo"] if "repo" in cj.keys() else None
+        if c_repo:
+            active_repos.add(c_repo)
         c_lbl = f"Job {c_job_id[:8]}" if c_job_id else "Job classique"
 
         c_gids = []
@@ -402,6 +413,14 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
             except (TypeError, ValueError):
                 pass
 
+    cursor.execute('''
+        SELECT repo FROM jobs
+        WHERE home_worker = ? AND status IN ('assigned', 'running') AND parallel_mode = 1
+    ''', (worker_id,))
+    for hw_row in cursor.fetchall():
+        if hw_row[0]:
+            active_repos.add(hw_row[0])
+
     return {
         "used_cpus": used_cpus,
         "used_ram_gb": used_ram_gb,
@@ -411,7 +430,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         "allocated_gpu_ids": allocated_gpu_ids,
         "gpu_holders": gpu_holders,
         "active_executors": active_executors,
-        "active_job_ids": active_job_ids
+        "active_job_ids": active_job_ids,
+        "active_repos": active_repos
     }
 
 def get_worker_allocated_resources(conn=None, worker_id=None, exclude_node=None):
@@ -1803,6 +1823,9 @@ def schedule_iteration():
             with get_db_conn() as conn:
                 for w in workers:
                     w_alloc = allocated_map[w["worker_id"]]
+                    p_repo = p_job.get("repo")
+                    if p_repo and p_repo in w_alloc.get("active_repos", set()):
+                        continue
                     for rr in ready_rows:
                         r_res = json.loads(rr["resources"]) if rr["resources"] else {}
                         r_res.setdefault("job_id", jid)
@@ -1845,6 +1868,8 @@ def schedule_iteration():
                 allocated_map[hw]["used_vram_gb"] += float(best_res.get("vram_gb") if best_res.get("vram_gb") is not None else DEFAULT_VRAM_GB)
                 allocated_map[hw]["active_executors"] += 1
                 allocated_map[hw].setdefault("active_job_ids", set()).add(jid)
+                if p_job.get("repo"):
+                    allocated_map[hw].setdefault("active_repos", set()).add(p_job["repo"])
 
     # 3.2 Garantie 1ère machine pour les jobs classiques en attente (Amendement A2 + Packing A11)
     # Les jobs classiques entrent dans la même comptabilité comme un nœud unique et sont empilables
@@ -1892,6 +1917,8 @@ def schedule_iteration():
         for w in workers:
             w_alloc = allocated_map[w["worker_id"]]
             if is_worker_admissible_for_node(w, c_res, allocated=w_alloc):
+                if repo and repo in w_alloc.get("active_repos", set()):
+                    continue
                 candidates.append(w)
 
         if not candidates:
@@ -1971,6 +1998,7 @@ def schedule_iteration():
                 allocated_map[assigned_worker["worker_id"]]["used_ram_gb"] += float(ram_required or DEFAULT_RAM_GB)
                 allocated_map[assigned_worker["worker_id"]]["used_vram_gb"] += float(vram_required or 0.0)
                 allocated_map[assigned_worker["worker_id"]]["active_executors"] += 1
+                allocated_map[assigned_worker["worker_id"]].setdefault("active_repos", set()).add(repo)
                 if c_gpu_ids:
                     for gid in c_gpu_ids:
                         allocated_map[assigned_worker["worker_id"]]["allocated_gpu_ids"].add(gid)
