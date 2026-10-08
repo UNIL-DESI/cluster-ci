@@ -74,7 +74,7 @@ stages:
       size: 10485760
     - path: metrics/pack_light_1.json
       hash: md5
-      md5: e5a6cc7b2d4d79db5f7688181225bbea
+      md5: 370ca9a607f35dde452597cfcf820043
       size: 137
   branch_b_step1:
     cmd: python3 simulate_research.py branch_b_step1
