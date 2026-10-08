@@ -1135,7 +1135,7 @@ def execute_job(job):
                     if resp.status_code == 200:
                         job_db = resp.json()
                         db_status = job_db.get("status")
-                        if db_status not in ["running", "assigned"]:
+                        if db_status not in ["running", "assigned", "completed"]:
                             logger.warning(f"⚠️ [SELF-HEALING] Active job {job_id} is marked as '{db_status}' in Headnode DB. Initiating instant local physical destruction!")
                             
                             # Physical destruction
