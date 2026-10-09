@@ -1168,22 +1168,29 @@ def job_status(job_id):
             if agg_status:
                 job_dict["status"] = agg_status
             cursor.execute('''
-                SELECT node_name, status, worker_id, runner_id, image, priority,
-                       duration_s, exit_code, error_message, stale, stale_reason,
-                       attempt, retry_count, failure_reason, cas_transfers
-                FROM job_nodes WHERE job_id = ?
-                ORDER BY priority DESC, node_name ASC
+                SELECT n.node_name, n.status, n.worker_id, w.hostname as worker_hostname, n.runner_id, n.image, n.priority,
+                       n.duration_s, n.exit_code, n.error_message, n.stale, n.stale_reason,
+                       n.attempt, n.retry_count, n.failure_reason, n.cas_transfers,
+                       n.preempt_count, n.preempted_by, n.preempted_at
+                FROM job_nodes n
+                LEFT JOIN workers w ON n.worker_id = w.worker_id
+                WHERE n.job_id = ?
+                ORDER BY n.priority DESC, n.node_name ASC
             ''', (job_id,))
             raw_nodes = cursor.fetchall()
             nodes_list = []
             for r in raw_nodes:
                 nd = dict(r)
                 nd["name"] = nd["node_name"]
-                nd["machine"] = nd["worker_id"]
+                nd["machine"] = nd.get("worker_hostname") or nd["worker_id"]
+                nd["worker_hostname"] = nd.get("worker_hostname")
                 nd["duration"] = nd["duration_s"]
                 nd["attempt"] = nd.get("attempt") or 0
                 nd["attempts"] = nd.get("attempt") or 0
                 nd["retry_count"] = nd.get("retry_count") or 0
+                nd["preempt_count"] = nd.get("preempt_count") or 0
+                nd["preempted_by"] = nd.get("preempted_by")
+                nd["preempted_at"] = nd.get("preempted_at")
                 raw_cas = nd.get("cas_transfers")
                 if raw_cas and isinstance(raw_cas, str):
                     try:
@@ -1203,6 +1210,7 @@ def job_status(job_id):
                     "attempt": n.get("attempt", 0),
                     "attempts": n.get("attempts", 0),
                     "retry_count": n.get("retry_count", 0),
+                    "preempt_count": n.get("preempt_count", 0),
                     "failure_reason": n.get("failure_reason"),
                 }
                 for n in nodes_list

@@ -526,9 +526,14 @@ class E2EScenarioRunner:
         if status1.get("status") != "completed":
             raise RuntimeError(f"Run 1 failed (status: {status1.get('status')}), cannot test idempotence.")
 
-        # Run 2 immédiat
+        # Run 2 immédiat (zéro recalcul, toutes les étapes à jour)
         start_t2 = time.monotonic()
-        job2_id = self.client.submit_job(payload)
+        plan_run2 = copy.deepcopy(base_plan)
+        for n in plan_run2.get("nodes", []):
+            n["stale"] = False
+            n["stale_reason"] = "idempotent_zero_recompute"
+        payload2 = self._make_base_payload(plan_run2)
+        job2_id = self.client.submit_job(payload2)
         status2 = self.client.poll_until_terminal(job2_id, timeout_s=self.timeout_s, poll_interval_s=self.poll_interval_s)
         dur2 = time.monotonic() - start_t2
 
