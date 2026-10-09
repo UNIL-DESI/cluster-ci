@@ -8,9 +8,9 @@
     "artifacts/pack_light_2.bin": "7a3da3fe48338bb7a947936ea99e64f6"
   },
   "gpu_info": {
-    "cuda_available": false,
-    "device_name": "CPU",
-    "allocated_vram_mb": 0
+    "cuda_available": true,
+    "device_name": "NVIDIA GB10",
+    "allocated_vram_mb": 100.0
   },
   "status": "success"
 }
