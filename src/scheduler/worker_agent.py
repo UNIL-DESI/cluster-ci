@@ -322,6 +322,7 @@ if not ROLE:
 
 # Global state for multi-runner tracking (A11)
 active_executors = {}  # runner_id -> dict(job_id=..., process=..., is_parallel=..., start_time=..., repo=..., branch=...)
+preempted_runner_ids = set()  # runner_ids flagged for graceful preemption
 current_job_id = None
 current_process = None
 job_lock = threading.Lock()
@@ -1208,7 +1209,16 @@ def execute_job(job):
             except Exception as e:
                 logger.error(f"Failed to read commit hash file: {e}")
 
-        if exit_code == 137:
+        is_preempted = False
+        with job_lock:
+            if runner_id in preempted_runner_ids:
+                is_preempted = True
+                preempted_runner_ids.discard(runner_id)
+
+        if is_preempted:
+            logger.info(f"Runner {runner_id} for job {job_id} was preempted; notifying headnode of preemption.")
+            update_job_status(job_id, 'failed', exit_code=-15, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, failure_reason="JobPreempted")
+        elif exit_code == 137:
             marker_file = "host_guard_killed.marker"
             if os.path.exists(marker_file):
                 try:
@@ -1636,6 +1646,7 @@ def preempt_runner(runner_id):
     logger.info(f"Received preemption request for runner {runner_id}")
     matching_process = None
     with job_lock:
+        preempted_runner_ids.add(runner_id)
         if runner_id in active_executors:
             ex = active_executors.pop(runner_id)
             matching_process = ex.get("process")

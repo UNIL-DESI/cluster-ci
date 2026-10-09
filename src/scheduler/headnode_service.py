@@ -1662,7 +1662,7 @@ def update_job_status():
                         ''', (job_id,))
                     active_nodes = cursor.fetchall()
                     if not active_nodes and not preempting_nodes:
-                        if (exit_code is not None and int(exit_code) < 0) or failure_reason == "Cancelled":
+                        if caller_runner or (exit_code is not None and int(exit_code) < 0) or failure_reason in ("Cancelled", "JobCancelled", "JobPreempted"):
                             active_nodes = []
                         else:
                             cursor.execute('''
