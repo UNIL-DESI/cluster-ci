@@ -69,14 +69,17 @@ class HeadnodeClient:
         self.headers = {"Content-Type": "application/json"}
         if self.token:
             self.headers["Authorization"] = f"Bearer {self.token}"
+        self.session = requests.Session() if requests else None
+        if self.session:
+            self.session.trust_env = False
 
     def check_health(self) -> Dict[str, Any]:
         """Query /scheduler_status to verify headnode availability and list active workers."""
-        if requests is None:
+        if not self.session:
             raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
         url = f"{self.base_url}/scheduler_status"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp = self.session.get(url, headers=self.headers, timeout=10)
         except Exception as e:
             raise ConnectionError(f"Failed to reach headnode at {url}: {e}") from e
 
@@ -90,11 +93,11 @@ class HeadnodeClient:
 
     def submit_job(self, payload: Dict[str, Any]) -> str:
         """Submit a job to POST /submit_job and return job_id. Fail-fast on any error."""
-        if requests is None:
+        if not self.session:
             raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
         url = f"{self.base_url}/submit_job"
         try:
-            resp = requests.post(url, json=payload, headers=self.headers, timeout=15)
+            resp = self.session.post(url, json=payload, headers=self.headers, timeout=15)
         except Exception as e:
             raise ConnectionError(f"Failed to submit job to {url}: {e}") from e
 
@@ -115,11 +118,11 @@ class HeadnodeClient:
 
     def get_job_status(self, job_id: str) -> Dict[str, Any]:
         """Fetch job state from GET /job_status/<job_id>. Fail-fast if required fields are missing."""
-        if requests is None:
+        if not self.session:
             raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
         url = f"{self.base_url}/job_status/{job_id}"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp = self.session.get(url, headers=self.headers, timeout=10)
         except Exception as e:
             raise ConnectionError(f"Failed to query job_status for {job_id}: {e}") from e
 
@@ -133,11 +136,11 @@ class HeadnodeClient:
 
     def get_job_logs(self, job_id: str) -> str:
         """Fetch consolidated logs from GET /job_logs/<job_id>."""
-        if requests is None:
+        if not self.session:
             raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
         url = f"{self.base_url}/job_logs/{job_id}?offset=0"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp = self.session.get(url, headers=self.headers, timeout=10)
             if resp.status_code == 200:
                 if "application/json" in resp.headers.get("content-type", ""):
                     data = resp.json()
@@ -149,11 +152,11 @@ class HeadnodeClient:
 
     def get_workers(self) -> List[Dict[str, Any]]:
         """Fetch registered workers from GET /workers."""
-        if requests is None:
+        if not self.session:
             raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
         url = f"{self.base_url}/workers"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp = self.session.get(url, headers=self.headers, timeout=10)
         except Exception as e:
             raise ConnectionError(f"Failed to fetch workers from {url}: {e}") from e
 
