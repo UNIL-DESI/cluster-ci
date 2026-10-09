@@ -63,22 +63,22 @@ stages:
   branch_a_step2@2:
     cmd: python3 simulate_research.py branch_a_step2 --item 2
     deps:
-    - hash: md5
+    - path: artifacts/branch_a1_2.bin
+      hash: md5
       md5: e43d442be0f9d6ee914d42c7d6ab9bbf
-      path: artifacts/branch_a1_2.bin
       size: 52428800
-    - hash: md5
-      md5: '00000000000000000000000000000000'
-      path: simulate_research.py
+    - path: simulate_research.py
+      hash: md5
+      md5: cd80dbe96894efa4bd6d87b7d002e14c
       size: 23231
     outs:
-    - hash: md5
+    - path: artifacts/branch_a2_2.bin
+      hash: md5
       md5: d364b78d65514cb4a964ca0eb2b5e398
-      path: artifacts/branch_a2_2.bin
       size: 52428800
-    - hash: md5
+    - path: metrics/branch_a2_2.json
+      hash: md5
       md5: 9f48209fff9412057c9fd1a04ac7c6ec
-      path: metrics/branch_a2_2.json
       size: 156
   branch_b_step1:
     cmd: python3 simulate_research.py branch_b_step1
