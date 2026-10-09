@@ -1,4 +1,14 @@
 import socket
+import os
+import sys
+
+_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+_planner_dir = os.path.join(_repo_root, "src", "planner")
+if _planner_dir not in sys.path:
+    sys.path.insert(0, _planner_dir)
+
 # Force IPv4 to prevent infinite hangs on broken IPv6 networks (common on headless servers)
 old_getaddrinfo = socket.getaddrinfo
 def new_getaddrinfo(*args, **kwargs):
@@ -1034,13 +1044,9 @@ def submit_job():
         if stages_filter:
             try:
                 from src.planner.stage_plan import filter_plan_to_stages
-                plan = filter_plan_to_stages(plan, stages_filter, mark_skipped=True)
             except ImportError:
-                try:
-                    from stage_plan import filter_plan_to_stages
-                    plan = filter_plan_to_stages(plan, stages_filter, mark_skipped=True)
-                except Exception as e:
-                    app.logger.warning(f"Could not filter plan with STAGES: {e}")
+                from stage_plan import filter_plan_to_stages
+            plan = filter_plan_to_stages(plan, stages_filter, mark_skipped=True)
 
         init_job_nodes_from_plan(job_id, plan)
 
