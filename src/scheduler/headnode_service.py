@@ -956,10 +956,16 @@ def submit_job():
                     else:
                         app.logger.warning("📋 [AUTO-CANCEL] Draft branch submitted without username — cannot perform cross-repo cancellation")
                 else:
-                    cursor.execute('''
-                        SELECT job_id, branch, username, status FROM jobs
-                        WHERE repo = ? AND branch = ? AND status = 'pending'
-                    ''', (repo, branch))
+                    if username:
+                        cursor.execute('''
+                            SELECT job_id, branch, username, status FROM jobs
+                            WHERE repo = ? AND branch = ? AND status = 'pending' AND username = ?
+                        ''', (repo, branch, username))
+                    else:
+                        cursor.execute('''
+                            SELECT job_id, branch, username, status FROM jobs
+                            WHERE repo = ? AND branch = ? AND status = 'pending'
+                        ''', (repo, branch))
                     active_jobs = cursor.fetchall()
                     app.logger.info(f"📋 [AUTO-CANCEL] Branch mode: found {len(active_jobs)} pending job(s) for {repo}@{branch}")
                     for aj in active_jobs:

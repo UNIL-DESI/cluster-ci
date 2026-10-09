@@ -322,6 +322,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
 
     active_job_ids = set()
     active_repos = set()
+    classic_active_repos = set()
     for row in running_nodes:
         res_raw = row["resources"]
         res = {}
@@ -390,6 +391,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         c_repo = cj["repo"] if "repo" in cj.keys() else None
         if c_repo:
             active_repos.add(c_repo)
+            classic_active_repos.add(c_repo)
         c_lbl = f"Job {c_job_id[:8]}" if c_job_id else "Job classique"
 
         c_gids = []
@@ -431,7 +433,8 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
         "gpu_holders": gpu_holders,
         "active_executors": active_executors,
         "active_job_ids": active_job_ids,
-        "active_repos": active_repos
+        "active_repos": active_repos,
+        "classic_active_repos": classic_active_repos
     }
 
 def get_worker_allocated_resources(conn=None, worker_id=None, exclude_node=None):
@@ -1825,7 +1828,7 @@ def schedule_iteration():
                 for w in workers:
                     w_alloc = allocated_map[w["worker_id"]]
                     p_repo = p_job.get("repo")
-                    if p_repo and p_repo in w_alloc.get("active_repos", set()):
+                    if p_repo and p_repo in w_alloc.get("classic_active_repos", set()) and p_job.get("scheduling_priority") != "high":
                         continue
                     for rr in ready_rows:
                         r_res = json.loads(rr["resources"]) if rr["resources"] else {}

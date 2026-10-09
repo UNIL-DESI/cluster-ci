@@ -701,6 +701,9 @@ class E2EScenarioRunner:
                 node["resources"]["workers"] = ["HEC45801"]
                 node["resources"]["cpus"] = 16
                 node["resources"]["ram_gb"] = 70
+                if node.get("name") == "join":
+                    node["resources"]["gpus"] = 0
+                    node["resources"]["vram_gb"] = 0
 
         payload_bob = self._make_base_payload(plan_bob, env_vars={"TOY_DURATION_SEC": "30"})
         payload_bob["username"] = "bob"
@@ -709,7 +712,7 @@ class E2EScenarioRunner:
 
         bob_job_id = self.client.submit_job(payload_bob)
         # Attendre que Bob commence à exécuter un nœud sur HEC45801 pour être éligible à la préemption
-        for _ in range(40):
+        for _ in range(60):
             try:
                 b_st = self.client.get_job_status(bob_job_id)
                 if any(n.get("status") == "running" for n in b_st.get("nodes", [])):
@@ -727,6 +730,9 @@ class E2EScenarioRunner:
                 node["resources"]["workers"] = ["HEC45801"]
                 node["resources"]["cpus"] = 16
                 node["resources"]["ram_gb"] = 70
+                if node.get("name") == "join":
+                    node["resources"]["gpus"] = 0
+                    node["resources"]["vram_gb"] = 0
 
         payload_alice = self._make_base_payload(plan_alice, env_vars={"TOY_DURATION_SEC": "5"})
         payload_alice["username"] = "alice"
