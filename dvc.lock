@@ -199,16 +199,16 @@ stages:
   prep:
     cmd: python3 simulate_research.py prep
     deps:
-    - hash: md5
-      md5: '00000000000000000000000000000000'
-      path: simulate_research.py
+    - path: simulate_research.py
+      hash: md5
+      md5: cd80dbe96894efa4bd6d87b7d002e14c
       size: 23231
     outs:
-    - hash: md5
-      md5: a2291a7b5ee9b2b538d28e0ce4996955
-      path: artifacts/prep.txt
+    - path: artifacts/prep.txt
+      hash: md5
+      md5: e7021b067ceb8f8c35a09b96008ce805
       size: 71
-    - hash: md5
-      md5: cc97757762161e1b5a3e29137ef41980
-      path: metrics/prep.json
+    - path: metrics/prep.json
+      hash: md5
+      md5: 45ccc4c8c90a1186b671dd58e258a49f
       size: 79
