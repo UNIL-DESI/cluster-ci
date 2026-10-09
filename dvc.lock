@@ -206,9 +206,9 @@ stages:
     outs:
     - path: artifacts/join_summary.txt
       hash: md5
-      md5: ee6f529e1e2ada6f69fbeafac23e0932
-      size: 507
+      md5: f9deab70dcac3b97d1a7458328de7b95
+      size: 496
     - path: metrics/join.json
       hash: md5
-      md5: d28038797d85db33e8b0caf432dd0c98
-      size: 530
+      md5: 1f93426927c9ef256323ebd10c25262f
+      size: 519
