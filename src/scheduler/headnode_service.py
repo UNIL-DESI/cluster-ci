@@ -1417,8 +1417,13 @@ def worker_poll(worker_id):
                 OR j.active_workers LIKE ?
             )
             AND j.status IN ('assigned', 'running')
-            ORDER BY j.created_at ASC
-        ''', (worker_id, worker_id, f'%"{worker_id}"%'))
+            ORDER BY (CASE 
+                WHEN j.job_id = (SELECT assigned_job_id FROM workers WHERE worker_id = ?) THEN 0
+                WHEN j.scheduling_priority = 'high' THEN 1
+                WHEN j.scheduling_priority = 'normal' OR j.scheduling_priority IS NULL THEN 2
+                ELSE 3
+            END) ASC, j.created_at ASC
+        ''', (worker_id, worker_id, f'%"{worker_id}"%', worker_id))
         jobs = cursor.fetchall()
 
         selected_job = None
