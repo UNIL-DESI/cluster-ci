@@ -1604,9 +1604,16 @@ def update_job_status():
             conn.commit()
             return jsonify({"status": "ok", "message": "Preemption handled and node requeued cleanly"})
 
+        # Bug 10: Vérifier si le job a des nœuds DAG ou est en mode parallèle
+        cursor.execute('SELECT COUNT(*) FROM job_nodes WHERE job_id = ?', (job_id,))
+        has_dag_nodes = cursor.fetchone()[0] > 0
+        is_parallel_or_dag = bool(job_dict.get('parallel_mode') == 1 or has_dag_nodes)
+
         # If it's an external cancellation (indicated by negative exit code from signal propagation like GHA TERM)
         # and the job is currently assigned or running, we must route it via cancel_job_cleanly to notify the worker.
-        if status == 'failed' and current_status in ['assigned', 'running'] and exit_code is not None and int(exit_code) < 0:
+        # EXCEPTION : Pour les jobs parallèles v3 ou dotés de nœuds DAG, un signal négatif sur un runner
+        # (ex: SIGKILL/SIGTERM suite à préemption) concerne uniquement ce runner et ne doit pas annuler tout le job.
+        if not is_parallel_or_dag and status == 'failed' and current_status in ['assigned', 'running'] and exit_code is not None and int(exit_code) < 0:
             conn.commit()  # Release current transaction before calling cancel_job_cleanly to avoid SQLite locks
             app.logger.info(f"🔄 Routing external cancellation signal ({exit_code}) for job {job_id} through cancel_job_cleanly")
             cancel_job_cleanly(job_id, exit_code=exit_code, reason=f"external_signal(exit_code={exit_code})")
