@@ -242,6 +242,12 @@
             background-color: var(--success-hover) !important;
             border-color: var(--success-hover) !important;
         }
+        details summary.btn {
+            list-style: none;
+        }
+        details summary.btn::-webkit-details-marker {
+            display: none;
+        }
         .text-primary {
             color: var(--primary) !important;
         }
@@ -2840,7 +2846,10 @@
                             }
 
                             // currentUser is defined globally
-                            queueJobs.forEach(job => {
+                            const topGlobalJobs = queueJobs.slice(0, 3);
+                            const hiddenGlobalJobs = queueJobs.slice(3);
+
+                            const renderGlobalJobCol = (job) => {
                                 const col = document.createElement('div');
                                 col.className = 'col-12 full-width mb-2';
 
@@ -2878,7 +2887,7 @@
                                                     <span class="text-muted small">@${escapeHtml(job.branch || '?')}</span>
                                                     ${isMaintenance ? '<span class="badge-premium badge-maintenance-premium ms-1"><i class="bi bi-tools me-1"></i>🛠️ Maintenance Barrier</span>' : ''}
                                                     ${job.is_local ? '<span class="badge ms-1" style="background:var(--info-light);color:var(--info);font-size:0.75rem;">🏠 LOCAL</span>' : ''}
-                                                    <span class="text-muted small">by <strong>${escapeHtml(job.username || '?')}</strong></span>
+                                                    <span class="text-muted small"><i class="bi bi-person me-1"></i>by <strong>${escapeHtml(job.username || '?')}</strong></span>
                                                     ${!isMaintenance ? `<span class="badge bg-secondary rounded-pill">${job.ram_required_gb || 0} GB</span>` : ''}
                                                 </div>
                                                 <div>${reasonsHtml}</div>
@@ -2893,12 +2902,38 @@
                                         </div>
                                     </div>
                                 `;
+                                return col;
+                            };
+
+                            topGlobalJobs.forEach(job => {
+                                const col = renderGlobalJobCol(job);
                                 if (projectsDivider) {
                                     container.insertBefore(col, projectsDivider);
                                 } else {
                                     container.appendChild(col);
                                 }
                             });
+
+                            if (hiddenGlobalJobs.length > 0) {
+                                const detailsCol = document.createElement('div');
+                                detailsCol.className = 'col-12 full-width mb-3';
+                                const detailsEl = document.createElement('details');
+                                detailsEl.className = 'mt-1';
+                                detailsEl.innerHTML = `
+                                    <summary class="btn btn-sm btn-outline-secondary w-100 text-center py-1 mb-2" style="font-size: 0.78rem; cursor: pointer;">
+                                        <i class="bi bi-chevron-down me-1"></i>Voir les ${hiddenGlobalJobs.length} autre${hiddenGlobalJobs.length > 1 ? 's' : ''} job${hiddenGlobalJobs.length > 1 ? 's' : ''} en attente
+                                    </summary>
+                                `;
+                                hiddenGlobalJobs.forEach(job => {
+                                    detailsEl.appendChild(renderGlobalJobCol(job));
+                                });
+                                detailsCol.appendChild(detailsEl);
+                                if (projectsDivider) {
+                                    container.insertBefore(detailsCol, projectsDivider);
+                                } else {
+                                    container.appendChild(detailsCol);
+                                }
+                            }
                         }
                     }
                 } catch (queueErr) {
@@ -4354,12 +4389,11 @@
                             </div>
                     `;
                     if (machineQueue.length > 0) {
-                        queueListHtml += `<div class="d-flex flex-column gap-2">`;
-                        machineQueue.forEach(qNode => {
+                        const renderQueueNodeCard = (qNode) => {
                             const qStatusBadge = qNode.status === 'ready' ? 
                                 `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size:0.68rem; padding: 1px 6px;">ready</span>` :
                                 `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" style="font-size:0.68rem; padding: 1px 6px;">pending</span>`;
-                            queueListHtml += `
+                            return `
                                 <div class="p-2 rounded border bg-light" style="font-size: 0.78rem;">
                                     <div class="d-flex justify-content-between align-items-start mb-1 flex-wrap gap-1">
                                         <div>
@@ -4373,6 +4407,9 @@
                                                 <i class="bi bi-folder me-1 text-secondary"></i>${escapeHtml(qNode.repo)} <span class="text-muted fw-normal">@${escapeHtml(qNode.branch)}</span>
                                             </div>
                                             <div class="text-muted" style="font-size: 0.72rem;">
+                                                <i class="bi bi-person me-1"></i>${escapeHtml(qNode.username || '—')}
+                                            </div>
+                                            <div class="text-muted" style="font-size: 0.72rem;">
                                                 <i class="bi bi-hash me-1"></i>Job ${escapeHtml(qNode.job_id_short)}…
                                             </div>
                                         </div>
@@ -4384,7 +4421,28 @@
                                     </div>
                                 </div>
                             `;
+                        };
+
+                        const topJobs = machineQueue.slice(0, 3);
+                        const hiddenJobs = machineQueue.slice(3);
+
+                        queueListHtml += `<div class="d-flex flex-column gap-2">`;
+                        topJobs.forEach(qNode => {
+                            queueListHtml += renderQueueNodeCard(qNode);
                         });
+
+                        if (hiddenJobs.length > 0) {
+                            queueListHtml += `
+                                <details class="mt-1">
+                                    <summary class="btn btn-sm btn-outline-secondary w-100 text-center py-1" style="font-size: 0.75rem; cursor: pointer;">
+                                        <i class="bi bi-chevron-down me-1"></i>Voir les ${hiddenJobs.length} autre${hiddenJobs.length > 1 ? 's' : ''} job${hiddenJobs.length > 1 ? 's' : ''} en attente
+                                    </summary>
+                                    <div class="d-flex flex-column gap-2 mt-2">
+                                        ${hiddenJobs.map(qNode => renderQueueNodeCard(qNode)).join('')}
+                                    </div>
+                                </details>
+                            `;
+                        }
                         queueListHtml += `</div>`;
                     } else {
                         queueListHtml += `
