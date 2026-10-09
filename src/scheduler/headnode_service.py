@@ -1655,13 +1655,16 @@ def update_job_status():
                         ''', (job_id,))
                     active_nodes = cursor.fetchall()
                     if not active_nodes and not preempting_nodes:
-                        cursor.execute('''
-                            SELECT node_name, status, retry_count
-                            FROM job_nodes
-                            WHERE job_id = ? AND status = 'ready' AND COALESCE(preempt_count, 0) == 0
-                            ORDER BY priority DESC, node_name ASC LIMIT 1
-                        ''', (job_id,))
-                        active_nodes = cursor.fetchall()
+                        if (exit_code is not None and int(exit_code) < 0) or failure_reason == "Cancelled":
+                            active_nodes = []
+                        else:
+                            cursor.execute('''
+                                SELECT node_name, status, retry_count
+                                FROM job_nodes
+                                WHERE job_id = ? AND status = 'ready' AND COALESCE(preempt_count, 0) == 0
+                                ORDER BY priority DESC, node_name ASC LIMIT 1
+                            ''', (job_id,))
+                            active_nodes = cursor.fetchall()
 
                     for n_row in active_nodes:
                         n_name = n_row[0]
