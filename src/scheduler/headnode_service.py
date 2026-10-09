@@ -1635,11 +1635,18 @@ def update_job_status():
                 # Si le worker rapporte un échec global alors que le job a des nœuds DAG:
                 if status == 'failed':
                     # Identifier les nœuds actifs ou candidats à faire échouer / retenter
-                    cursor.execute('''
-                        SELECT node_name, status, retry_count
-                        FROM job_nodes
-                        WHERE job_id = ? AND (worker_id = ? OR runner_id = ? OR status = 'running')
-                    ''', (job_id, caller_worker, caller_runner))
+                    if caller_worker or caller_runner:
+                        cursor.execute('''
+                            SELECT node_name, status, retry_count
+                            FROM job_nodes
+                            WHERE job_id = ? AND (worker_id = ? OR runner_id = ?) AND status = 'running'
+                        ''', (job_id, caller_worker, caller_runner))
+                    else:
+                        cursor.execute('''
+                            SELECT node_name, status, retry_count
+                            FROM job_nodes
+                            WHERE job_id = ? AND status = 'running'
+                        ''', (job_id,))
                     active_nodes = cursor.fetchall()
                     if not active_nodes and not preempting_nodes:
                         cursor.execute('''

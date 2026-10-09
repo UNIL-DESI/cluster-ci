@@ -451,30 +451,36 @@ def update_dag_ready_states(job_id=None):
         if updated:
             conn.commit()
 
-def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None, error_message=None, failure_reason=None, cas_transfers=None):
+def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None, error_message=None, failure_reason=None, cas_transfers=None, worker_id=None, runner_id=None):
     """
     Enregistre le statut d'un nœud et propage l'avancement dans le DAG.
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
         cas_json = json.dumps(cas_transfers) if cas_transfers is not None else None
+        clear_err = (status == "done" and (exit_code == 0 or exit_code is None))
         if status in ("done", "failed"):
             cursor.execute('''
                 UPDATE job_nodes
-                SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
-                    failure_reason = COALESCE(?, failure_reason),
+                SET status = ?, duration_s = ?, exit_code = ?,
+                    error_message = CASE WHEN ? THEN NULL ELSE error_message END,
+                    failure_reason = CASE WHEN ? THEN NULL ELSE COALESCE(?, failure_reason) END,
                     cas_transfers = COALESCE(?, cas_transfers),
+                    worker_id = COALESCE(?, worker_id),
+                    runner_id = COALESCE(?, runner_id),
                     finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]', gpu_indices = '[]'
                 WHERE job_id = ? AND node_name = ?
-            ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, job_id, node_name))
+            ''', (status, duration_s, exit_code, clear_err, clear_err, failure_reason, cas_json, worker_id, runner_id, job_id, node_name))
         else:
             cursor.execute('''
                 UPDATE job_nodes
                 SET status = ?, duration_s = ?, exit_code = ?, error_message = ?,
                     failure_reason = COALESCE(?, failure_reason),
-                    cas_transfers = COALESCE(?, cas_transfers)
+                    cas_transfers = COALESCE(?, cas_transfers),
+                    worker_id = COALESCE(?, worker_id),
+                    runner_id = COALESCE(?, runner_id)
                 WHERE job_id = ? AND node_name = ?
-            ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, job_id, node_name))
+            ''', (status, duration_s, exit_code, error_message, failure_reason, cas_json, worker_id, runner_id, job_id, node_name))
         conn.commit()
 
     update_dag_ready_states(job_id)

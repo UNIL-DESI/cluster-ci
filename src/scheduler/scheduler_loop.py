@@ -916,7 +916,7 @@ def handle_next_node(req):
 
         if status == "done" or (is_node_preempting and (exit_code == 0 or status == "completed")):
             # Le succès prévaut toujours !
-            mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0, cas_transfers=cas_transfers)
+            mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0, cas_transfers=cas_transfers, worker_id=worker_id, runner_id=runner_id)
             outputs_to_record = req.get("outputs") or req.get("out_paths")
             if outputs_to_record:
                 try:

@@ -215,13 +215,19 @@ def build_base_plan(repo_path: str = ".") -> Dict[str, Any]:
     """Build the base v3 stage plan from local dvc.yaml using stage_plan.py."""
     try:
         from src.planner.stage_plan import compute_stage_plan
-        return compute_stage_plan(repo_path)
+        plan = compute_stage_plan(repo_path)
     except ImportError:
         # Fallback via direct import if path setup differs
         repo_abs = os.path.abspath(repo_path)
         sys.path.insert(0, repo_abs)
         from src.planner.stage_plan import compute_stage_plan
-        return compute_stage_plan(repo_abs)
+        plan = compute_stage_plan(repo_abs)
+
+    for node in plan.get("nodes", []):
+        node["stale"] = True
+        if not node.get("stale_reason"):
+            node["stale_reason"] = "e2e_test_execution"
+    return plan
 
 
 class E2EScenarioRunner:
@@ -702,7 +708,15 @@ class E2EScenarioRunner:
         payload_bob["scheduling_priority"] = "low"
 
         bob_job_id = self.client.submit_job(payload_bob)
-        time.sleep(3.0)
+        # Attendre que Bob commence à exécuter un nœud sur HEC45801 pour être éligible à la préemption
+        for _ in range(40):
+            try:
+                b_st = self.client.get_job_status(bob_job_id)
+                if any(n.get("status") == "running" for n in b_st.get("nodes", [])):
+                    break
+            except Exception:
+                pass
+            time.sleep(1.0)
 
         # 2. Alice's high priority job - also requires 16 CPUs, 70GB RAM on HEC45801
         plan_alice = copy.deepcopy(base_plan)
