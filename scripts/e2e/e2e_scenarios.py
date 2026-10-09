@@ -147,6 +147,26 @@ class HeadnodeClient:
             pass
         return ""
 
+    def get_workers(self) -> List[Dict[str, Any]]:
+        """Fetch registered workers from GET /workers."""
+        if requests is None:
+            raise RuntimeError("The 'requests' library is required to communicate with the headnode.")
+        url = f"{self.base_url}/workers"
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=10)
+        except Exception as e:
+            raise ConnectionError(f"Failed to fetch workers from {url}: {e}") from e
+
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch /workers (HTTP {resp.status_code}): {resp.text}")
+
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "workers" in data and isinstance(data["workers"], list):
+            return data["workers"]
+        return []
+
     def poll_until_terminal(
         self,
         job_id: str,
@@ -209,6 +229,31 @@ class E2EScenarioRunner:
         self.poll_interval_s = poll_interval_s
         self.dry_run = dry_run
         self.client = HeadnodeClient(headnode_url)
+        self._worker_map: Optional[Dict[str, str]] = None
+
+    def get_worker_mapping(self) -> Dict[str, str]:
+        if self._worker_map is None:
+            mapping: Dict[str, str] = {}
+            if not self.dry_run:
+                try:
+                    workers = self.client.get_workers()
+                    for w in workers:
+                        wid = str(w.get("worker_id") or "")
+                        host = str(w.get("hostname") or "")
+                        if wid and host:
+                            mapping[wid] = host
+                            mapping[host] = host
+                except Exception as e:
+                    print(f"[E2E] Warning: Could not resolve worker table from /workers: {e}", file=sys.stderr)
+            self._worker_map = mapping
+        return self._worker_map
+
+    def resolve_hostname(self, worker_id_or_host: Optional[str]) -> str:
+        if not worker_id_or_host:
+            return ""
+        s = str(worker_id_or_host).strip()
+        mapping = self.get_worker_mapping()
+        return mapping.get(s, s)
 
     def _make_base_payload(self, plan: Dict[str, Any], env_vars: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         envs = {"TOY_DURATION_SEC": str(self.toy_duration_s)}
@@ -317,22 +362,26 @@ class E2EScenarioRunner:
 
         m1 = n1.get("machine") or n1.get("worker_id")
         m2 = n2.get("machine") or n2.get("worker_id")
+        h1 = self.resolve_hostname(m1)
+        h2 = self.resolve_hostname(m2)
         logs = self.client.get_job_logs(job_id)
 
         passed = (
             status_data.get("status") == "completed"
             and n1.get("status") == "done"
             and n2.get("status") == "done"
-            and (m1 == "HEC45801" or "HEC45801" in str(m1))
-            and (m2 == "HEC45803" or "HEC45803" in str(m2))
+            and ("HEC45801" in h1)
+            and ("HEC45803" in h2)
         )
         proof = {
             "job_id": job_id,
             "branch_b_step1_machine": m1,
+            "branch_b_step1_resolved": h1,
             "branch_b_step2_machine": m2,
+            "branch_b_step2_resolved": h2,
             "cas_p2p_log_detected": ("P2P" in logs or "CAS" in logs or "fetch" in logs),
         }
-        details = "Transfert inter-machines certifié" if passed else f"Machines obtenues: b1={m1}, b2={m2}"
+        details = "Transfert inter-machines certifié" if passed else f"Machines obtenues: b1={h1} ({m1}), b2={h2} ({m2})"
         return ScenarioReport("p2p_inter_workers", desc, dep, passed, job_id, dur, details, proof)
 
     # =========================================================================
@@ -517,20 +566,27 @@ class E2EScenarioRunner:
         p1 = nodes_map.get("pack_light_1", {})
         p2 = nodes_map.get("pack_light_2", {})
 
+        m1 = p1.get("machine") or p1.get("worker_id")
+        m2 = p2.get("machine") or p2.get("worker_id")
+        h1 = self.resolve_hostname(m1)
+        h2 = self.resolve_hostname(m2)
+
         passed = (
             status_data.get("status") == "completed"
             and p1.get("status") == "done"
             and p2.get("status") == "done"
-            and p1.get("machine") == "HEC45801"
-            and p2.get("machine") == "HEC45801"
+            and ("HEC45801" in h1)
+            and ("HEC45801" in h2)
         )
         proof = {
             "job_id": job_id,
-            "pack_light_1_machine": p1.get("machine"),
-            "pack_light_2_machine": p2.get("machine"),
+            "pack_light_1_machine": m1,
+            "pack_light_1_resolved": h1,
+            "pack_light_2_machine": m2,
+            "pack_light_2_resolved": h2,
             "runners": [p1.get("runner_id"), p2.get("runner_id")],
         }
-        details = "Exécution simultanée/empaquetée réussie" if passed else "Échec de packing sur HEC45801"
+        details = "Exécution simultanée/empaquetée réussie" if passed else f"Échec de packing sur HEC45801: p1={h1} ({m1}), p2={h2} ({m2})"
         return ScenarioReport("same_machine_two_nodes", desc, dep, passed, job_id, dur, details, proof)
 
     # =========================================================================
@@ -570,14 +626,16 @@ class E2EScenarioRunner:
 
         join_node = next((n for n in status_data.get("nodes", []) if n["name"] == "join"), {})
         join_m = join_node.get("machine") or join_node.get("worker_id")
-        passed = (status_data.get("status") == "completed") and (join_node.get("status") == "done") and ("isipol09" in str(join_m))
+        join_h = self.resolve_hostname(join_m)
+        passed = (status_data.get("status") == "completed") and (join_node.get("status") == "done") and ("isipol09" in join_h)
 
         proof = {
             "job_id": job_id,
             "join_machine": join_m,
+            "join_resolved": join_h,
             "join_status": join_node.get("status"),
         }
-        details = "Allocation GPU isipol09 certifiée" if passed else f"Machine join: {join_m}"
+        details = "Allocation GPU isipol09 certifiée" if passed else f"Machine join: {join_h} ({join_m})"
         return ScenarioReport("two_gpus_isipol09", desc, dep, passed, job_id, dur, details, proof)
 
     # =========================================================================
@@ -607,31 +665,35 @@ class E2EScenarioRunner:
 
         start_t = time.monotonic()
 
-        # 1. Bob's low priority job
+        # 1. Bob's low priority job - saturates HEC45801 (16 CPUs, 70GB RAM) with long duration
         plan_bob = copy.deepcopy(base_plan)
         for node in plan_bob.get("nodes", []):
             node["scheduling_priority"] = "low"
             if "resources" in node:
                 node["resources"]["priority"] = "low"
                 node["resources"]["workers"] = ["HEC45801"]
+                node["resources"]["cpus"] = 16
+                node["resources"]["ram_gb"] = 70
 
-        payload_bob = self._make_base_payload(plan_bob)
+        payload_bob = self._make_base_payload(plan_bob, env_vars={"TOY_DURATION_SEC": "30"})
         payload_bob["username"] = "bob"
         payload_bob["priority"] = "low"
         payload_bob["scheduling_priority"] = "low"
 
         bob_job_id = self.client.submit_job(payload_bob)
-        time.sleep(self.poll_interval_s)
+        time.sleep(3.0)
 
-        # 2. Alice's high priority job
+        # 2. Alice's high priority job - also requires 16 CPUs, 70GB RAM on HEC45801
         plan_alice = copy.deepcopy(base_plan)
         for node in plan_alice.get("nodes", []):
             node["scheduling_priority"] = "high"
             if "resources" in node:
                 node["resources"]["priority"] = "high"
                 node["resources"]["workers"] = ["HEC45801"]
+                node["resources"]["cpus"] = 16
+                node["resources"]["ram_gb"] = 70
 
-        payload_alice = self._make_base_payload(plan_alice)
+        payload_alice = self._make_base_payload(plan_alice, env_vars={"TOY_DURATION_SEC": "5"})
         payload_alice["username"] = "alice"
         payload_alice["priority"] = "high"
         payload_alice["scheduling_priority"] = "high"
@@ -648,6 +710,7 @@ class E2EScenarioRunner:
         passed = (
             alice_status.get("status") == "completed"
             and bob_status.get("status") == "completed"
+            and len(preempted_nodes) >= 1
         )
         proof = {
             "bob_job_id": bob_job_id,
@@ -658,7 +721,7 @@ class E2EScenarioRunner:
         }
         details = (
             f"Préemption certifiée ({len(preempted_nodes)} nœud(s) préempté(s) chez Bob, jobs complétés)"
-            if passed else "Échec de préemption ciblée"
+            if passed else f"Échec de préemption ciblée (preempted_count={len(preempted_nodes)})"
         )
         return ScenarioReport("priority_preemption", desc, dep, passed, alice_job_id, dur, details, proof)
 

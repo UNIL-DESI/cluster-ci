@@ -1019,6 +1019,29 @@ def submit_job():
             for n in plan.get("nodes", []):
                 if n.get("scheduling_priority") in (None, "normal") and n.get("resources", {}).get("priority") in (None, "normal"):
                     n["scheduling_priority"] = scheduling_priority
+
+        # Filtrage sous-DAG STAGES (Bug 11 / Lot F)
+        stages_filter = None
+        if env_vars and isinstance(env_vars, dict) and env_vars.get("STAGES"):
+            stages_filter = env_vars["STAGES"]
+        elif data.get("stages"):
+            stages_filter = data["stages"]
+        elif data.get("STAGES"):
+            stages_filter = data["STAGES"]
+        elif data.get("target_stages"):
+            stages_filter = data["target_stages"]
+
+        if stages_filter:
+            try:
+                from src.planner.stage_plan import filter_plan_to_stages
+                plan = filter_plan_to_stages(plan, stages_filter, mark_skipped=True)
+            except ImportError:
+                try:
+                    from stage_plan import filter_plan_to_stages
+                    plan = filter_plan_to_stages(plan, stages_filter, mark_skipped=True)
+                except Exception as e:
+                    app.logger.warning(f"Could not filter plan with STAGES: {e}")
+
         init_job_nodes_from_plan(job_id, plan)
 
     return jsonify({

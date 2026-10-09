@@ -1619,18 +1619,19 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
                 )
             except Exception as e:
                 logger.warning(
-                    "Worker agent preemption call failed for runner %s on %s: %s (requeueing immediately)",
+                    "Worker agent preemption call failed for runner %s on %s: %s",
                     v_runner_id, service_url, e
                 )
-                # En cas d'inaccessibilité immédiate du worker, repli direct en 'ready'
-                handle_node_failure_or_retry(
-                    conn,
-                    job_id=v_job_id,
-                    node_name=v_node_name,
-                    is_preempted=True,
-                    preempted_by=preempted_by_str,
-                )
-                update_dag_ready_states(v_job_id)
+
+        # 4. Requeue systématique et immédiat du nœud victime en 'ready' (preempt_count + 1)
+        handle_node_failure_or_retry(
+            conn,
+            job_id=v_job_id,
+            node_name=v_node_name,
+            is_preempted=True,
+            preempted_by=preempted_by_str,
+        )
+        update_dag_ready_states(v_job_id)
 
         conn.commit()
         preempted_any = True

@@ -5,6 +5,7 @@ and computes node staleness and execution priorities without requiring heavy dat
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -529,6 +530,95 @@ def compute_stage_plan(
         "defaults": DEFAULT_RESOURCES,
         "nodes": nodes,
     }
+
+
+def filter_plan_to_stages(
+    plan: Dict[str, Any],
+    target_stages: Union[str, List[str]],
+    mark_skipped: bool = True,
+) -> Dict[str, Any]:
+    """Filter an execution plan according to target stages and their upstream closure.
+
+    Args:
+        plan: The plan dictionary containing 'nodes'.
+        target_stages: String or list of target stage names (e.g. 'branch_b_step2').
+        mark_skipped: If True, keep non-selected nodes in the plan with stale=False,
+            stale_reason='skipped_by_stages_filter', and priority=0. If False, prune
+            non-selected nodes entirely from plan['nodes'].
+
+    Returns:
+        The filtered plan dictionary.
+    """
+    if not target_stages or not plan or "nodes" not in plan:
+        return plan
+
+    cleaned_targets: List[str] = []
+    if isinstance(target_stages, str):
+        raw_items = [target_stages]
+    else:
+        raw_items = list(target_stages)
+    for item in raw_items:
+        if item:
+            for sub in re.split(r'[\s,]+', str(item)):
+                sub_clean = sub.strip()
+                if sub_clean:
+                    cleaned_targets.append(sub_clean)
+
+    if not cleaned_targets:
+        return plan
+
+    nodes = plan.get("nodes", [])
+    all_valid_names = {n["name"] for n in nodes}
+    resolved_targets: Set[str] = set()
+
+    for t in cleaned_targets:
+        matched = False
+        if t in all_valid_names:
+            resolved_targets.add(t)
+            matched = True
+        else:
+            prefix = f"{t}@"
+            foreach_matches = [s for s in all_valid_names if s.startswith(prefix)]
+            if foreach_matches:
+                resolved_targets.update(foreach_matches)
+                matched = True
+
+        if not matched:
+            raise ValueError(
+                f"Nom de stage inconnu dans STAGES : '{t}'. "
+                f"Cause : aucun stage ne correspond à ce nom ou à ce préfixe foreach dans le plan. "
+                f"Stages valides disponibles : {sorted(all_valid_names)}."
+            )
+
+    forward_dag = nx.DiGraph()
+    for n in nodes:
+        name = n["name"]
+        forward_dag.add_node(name)
+        for u in n.get("deps", []):
+            forward_dag.add_edge(u, name)
+
+    target_closure: Set[str] = set(resolved_targets)
+    for t in resolved_targets:
+        if t in forward_dag:
+            target_closure.update(nx.ancestors(forward_dag, t))
+
+    if mark_skipped:
+        filtered_nodes = []
+        for n in nodes:
+            name = n["name"]
+            n_copy = copy.deepcopy(n)
+            if name in target_closure:
+                filtered_nodes.append(n_copy)
+            else:
+                n_copy["stale"] = False
+                n_copy["stale_reason"] = "skipped_by_stages_filter"
+                n_copy["priority"] = 0
+                filtered_nodes.append(n_copy)
+        plan["nodes"] = filtered_nodes
+    else:
+        plan["nodes"] = [n for n in nodes if n["name"] in target_closure]
+
+    return plan
 
 
 def replan(
