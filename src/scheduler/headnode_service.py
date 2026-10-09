@@ -1056,9 +1056,15 @@ def submit_job():
 
         init_job_nodes_from_plan(job_id, plan)
 
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,))
+        job_row = cursor.fetchone()
+        submitted_status = job_row['status'] if job_row and 'status' in job_row.keys() else 'pending'
+
     return jsonify({
         "job_id": job_id,
-        "status": "pending",
+        "status": submitted_status,
         "scheduling_priority": scheduling_priority,
         "required_hashes_count": len(required_hashes),
         "is_local": 1 if is_local else 0,

@@ -392,6 +392,21 @@ def init_job_nodes_from_plan(job_id, plan_data):
 
     update_dag_ready_states(job_id)
 
+    # Issue #113 : Si tous les nœuds du DAG sont 'skipped', marquer le job comme 'completed'
+    with get_db_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT status FROM job_nodes WHERE job_id = ?', (job_id,))
+        node_rows = cursor.fetchall()
+        if node_rows and all(r['status'] == 'skipped' for r in node_rows):
+            cursor.execute('''
+                UPDATE jobs
+                SET status = 'completed',
+                    finished_at = CURRENT_TIMESTAMP,
+                    exit_code = 0
+                WHERE job_id = ?
+            ''', (job_id,))
+            conn.commit()
+
 def update_dag_ready_states(job_id=None):
     """
     Met à jour l'état du DAG pour un job donné ou tous les jobs actifs :
