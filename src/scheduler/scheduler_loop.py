@@ -908,13 +908,19 @@ def handle_next_node(req):
 
         # Vérifier si ce nœud est en cours de préemption
         is_node_preempting = False
+        already_requeued_preempted = False
         node_preempted_by = None
         with get_db_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT status, preempted_by FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, node_name))
+            cursor.execute("SELECT status, preempted_by, preempt_count FROM job_nodes WHERE job_id = ? AND node_name = ?", (job_id, node_name))
             nr = cursor.fetchone()
             if nr and nr[0] == "preempting":
                 is_node_preempting = True
+                node_preempted_by = nr[1]
+            elif nr and (nr[1] is not None or (nr[2] or 0) > 0) and (exit_code in (137, -15, None) or failure_reason in ("JobPreempted", "Cancelled") or status == "preempted"):
+                is_node_preempting = True
+                if nr[0] == "ready":
+                    already_requeued_preempted = True
                 node_preempted_by = nr[1]
 
         if status == "done" or (is_node_preempting and (exit_code == 0 or status == "completed")):
@@ -927,17 +933,25 @@ def handle_next_node(req):
                         record_node_outputs(conn, job_id, node_name, worker_id, outputs_to_record)
                 except Exception as e:
                     logger.debug(f"Failed to record node outputs in artifact registry: {e}")
-        elif is_node_preempting or status == "preempted":
+        elif is_node_preempting or status == "preempted" or failure_reason == "JobPreempted":
             # Interception préemption : requeue en 'ready', preempt_count + 1, pas de retry, pas d'OOM
-            with get_db_conn() as conn:
-                handle_node_failure_or_retry(
-                    conn,
-                    job_id=job_id,
-                    node_name=node_name,
-                    is_preempted=True,
-                    preempted_by=node_preempted_by,
+            if not already_requeued_preempted:
+                with get_db_conn() as conn:
+                    handle_node_failure_or_retry(
+                        conn,
+                        job_id=job_id,
+                        node_name=node_name,
+                        is_preempted=True,
+                        preempted_by=node_preempted_by,
+                    )
+                update_dag_ready_states(job_id)
+            else:
+                logger.info(
+                    "⚡ [PREEMPTION] Node '%s' (job %s) was already requeued to 'ready' by scheduler; acknowledging preemption exit for runner %s",
+                    node_name, job_id, runner_id
                 )
-            update_dag_ready_states(job_id)
+            # Machine libérée pour le job prioritaire : ordonner au runner de céder la machine
+            return {"action": "yield"}
         elif status == "failed":
             if not error_message and exit_code == 137:
                 error_message = f"OOMKilled: Stage '{node_name}' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)"

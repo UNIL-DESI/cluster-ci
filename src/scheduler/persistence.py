@@ -420,14 +420,15 @@ def update_dag_ready_states(job_id=None):
         for jid, nodes_by_name in jobs_map.items():
             for name, node_row in nodes_by_name.items():
                 current_status = node_row["status"]
-                if current_status not in ("pending", "ready"):
+                if current_status not in ("pending", "ready", "blocked"):
                     continue
 
                 raw_deps = node_row.get("deps")
                 deps = json.loads(raw_deps) if raw_deps else []
                 if not deps:
-                    if current_status == "pending":
+                    if current_status in ("pending", "blocked"):
                         cursor.execute('UPDATE job_nodes SET status = "ready" WHERE job_id = ? AND node_name = ?', (jid, name))
+                        node_row["status"] = "ready"
                         updated = True
                     continue
 
@@ -441,12 +442,19 @@ def update_dag_ready_states(job_id=None):
                         updated = True
                     continue
 
-                # Si tous les parents sont terminés avec succès
+                # Si tous les parents sont terminés avec succès -> ready
                 if all(ps in ("done", "skipped") for ps in parent_statuses):
-                    if current_status == "pending":
+                    if current_status in ("pending", "blocked"):
                         cursor.execute('UPDATE job_nodes SET status = "ready" WHERE job_id = ? AND node_name = ?', (jid, name))
                         node_row["status"] = "ready"
                         updated = True
+                    continue
+
+                # Si aucun parent n'est en échec/bloqué mais que certains sont encore en cours (pending, ready, running)
+                if current_status == "blocked":
+                    cursor.execute('UPDATE job_nodes SET status = "pending" WHERE job_id = ? AND node_name = ?', (jid, name))
+                    node_row["status"] = "pending"
+                    updated = True
 
         if updated:
             conn.commit()
