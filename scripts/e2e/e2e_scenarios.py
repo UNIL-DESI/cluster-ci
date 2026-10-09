@@ -66,6 +66,19 @@ class HeadnodeClient:
     def __init__(self, base_url: str, token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.token = token or os.environ.get("CLUSTER_TOKEN")
+        if not self.token:
+            for env_path in [".env", os.path.join(os.path.dirname(__file__), "..", "..", ".env")]:
+                if os.path.isfile(env_path):
+                    try:
+                        with open(env_path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                if line.strip().startswith("CLUSTER_TOKEN="):
+                                    self.token = line.split("=", 1)[1].strip().strip('"\'')
+                                    break
+                    except Exception:
+                        pass
+                if self.token:
+                    break
         self.headers = {"Content-Type": "application/json"}
         if self.token:
             self.headers["Authorization"] = f"Bearer {self.token}"
