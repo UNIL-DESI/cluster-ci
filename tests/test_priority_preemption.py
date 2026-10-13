@@ -107,12 +107,13 @@ def test_nominal_preemption_high_preempts_low_different_user(prem_db):
     assert alice_node["status"] == "running"
     assert alice_node["worker_id"] == "worker-1"
 
-def test_anti_starvation_cap_at_3(prem_db):
+@pytest.mark.parametrize("preempt_count", [3, 4, 5, 6])
+def test_anti_starvation_cap_at_5(prem_db, preempt_count):
     conn, _ = prem_db
     setup_single_worker(conn, "worker-1", total_ram=32.0)
     cursor = conn.cursor()
 
-    # Job Bob avec nœud low ayant DÉJÀ atteint preempt_count = 3
+    # Vérifier les deux côtés du nouveau plafond de cinq préemptions.
     cursor.execute("""
         INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
         VALUES ('job-bob', 'bob', 'running', 1, 'worker-1', '["worker-1"]')
@@ -122,12 +123,12 @@ def test_anti_starvation_cap_at_3(prem_db):
             job_id, node_name, status, scheduling_priority, worker_id, runner_id,
             started_at, resources, attempt, retry_count, preempt_count
         ) VALUES (
-            'job-bob', 'stage-low', 'running', 'low', 'worker-1', 'runner-bob-3',
-            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, 3
+            'job-bob', 'stage-low', 'running', 'low', 'worker-1', 'runner-bob-cap',
+            CURRENT_TIMESTAMP, '{"cpus": 4, "ram_gb": 20.0}', 1, 0, ?
         )
-    """)
+    """, (preempt_count,))
     conn.commit()
-    record_runner_heartbeat('job-bob', 'runner-bob-3', 'worker-1', 'stage-low')
+    record_runner_heartbeat('job-bob', 'runner-bob-cap', 'worker-1', 'stage-low')
 
     # Job Alice avec nœud high
     cursor.execute("""
@@ -145,12 +146,15 @@ def test_anti_starvation_cap_at_3(prem_db):
 
     schedule_iteration()
 
-    # Le nœud de Bob ne doit PAS être préempté car preempt_count == 3 (plafond atteint)
+    # À trois/quatre, une préemption reste possible ; à cinq/six, immunité.
+    eligible = preempt_count < 5
     bob_node = get_job_node("job-bob", "stage-low")
-    assert bob_node["status"] == "running"
-    assert bob_node["preempt_count"] == 3
+    assert bob_node["status"] == ("ready" if eligible else "running")
+    assert bob_node["preempt_count"] == preempt_count + int(eligible)
+    assert bob_node["retry_count"] == 0
+    assert bob_node["attempt"] == 1
 
-    # Le nœud d'Alice reste en ready car aucune machine n'est libérée
+    # Alice ne démarre le nœud qu'après la requête next_node du worker.
     alice_node = get_job_node("job-alice", "stage-high")
     assert alice_node["status"] == "ready"
 

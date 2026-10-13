@@ -1490,7 +1490,7 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
        - Statut 'running'.
        - Priorité 'low' (normal et high sont strictement immunisés).
        - Utilisateur distinct : U_requester != U_victim (jamais au sein du même utilisateur).
-       - Anti-famine : preempt_count < 3 (immunité au-delà).
+       - Anti-famine : preempt_count < 5 (immunité au-delà).
        - Le plus récent d'abord : started_at DESC pour minimiser le travail perdu.
        - La machine exécutant la victime doit être admissible pour le nœud 'high' demandeur.
     3. Exécution :
@@ -1540,7 +1540,7 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
 
         # Chercher une victime 'low' en cours d'exécution
         # Inter-user strict : j.username != req_user
-        # Anti-famine : preempt_count < 3
+        # Anti-famine : preempt_count < 5
         # Plus récent d'abord : started_at DESC
         cursor.execute("""
             SELECT jn.job_id, jn.node_name, jn.worker_id, jn.runner_id, jn.started_at,
@@ -1549,7 +1549,7 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
             JOIN jobs j ON jn.job_id = j.job_id
             WHERE jn.status = 'running'
               AND jn.scheduling_priority = 'low'
-              AND COALESCE(jn.preempt_count, 0) < 3
+              AND COALESCE(jn.preempt_count, 0) < 5
             ORDER BY jn.started_at DESC, jn.node_name ASC
         """)
         running_low_candidates = [dict(r) for r in cursor.fetchall()]
