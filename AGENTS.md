@@ -15,6 +15,7 @@ All endpoints serving file contents, workspace archives, execution control, or p
   - `GET /api/projects/<repo>/run/<commit>/hydra-params` (when `is_local_revision()` via `require_local_files()`)
   - `GET /api/jobs/<job_id>/download_code` (local source archive transfer)
   - `POST /api/jobs/<job_id>/sync_results` and `GET/DELETE /api/jobs/<job_id>/results`
+- `GET /api/jobs/<job_id>/node_results/<node_name>` (local parallel-node output/checkpoint handoff)
   - `POST /api/local_transfers`, `PUT /api/local_transfers/<transfer_id>/chunks/<chunk_index>`, `POST /complete`, `DELETE /<transfer_id>`
   - `POST /api/jobs/<job_id>/next_node` and `POST /api/jobs/<job_id>/runner_heartbeat` (runner control)
   - State modification endpoints (`submit_job`, `register_worker`, `worker_poll`, `update_job_status`, etc.)

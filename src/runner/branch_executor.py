@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import socket
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1321,6 +1322,22 @@ class BranchExecutor:
                     self.current_node = None
                     continue
 
+                if os.environ.get('IS_LOCAL') == '1':
+                    from src.runner.local_workspace import restore_remote_node, runner_record_path
+                    exact, directories, patterns = get_dag_stage_outputs(repo_dir=self.repo_dir)
+                    producers = {info.get('stage') for p in dep_paths
+                                 for is_output, info in [is_dag_stage_output(p, exact, directories, patterns)]
+                                 if is_output and info and info.get('stage')}
+                    for producer in sorted(producers | {target_node}):
+                        restore_remote_node(self.repo_dir, self.main_repo_dir, self.job_id,
+                                            producer, self.headnode_url, self.cluster_token)
+                    record = runner_record_path(self.main_repo_dir, self.runner_id)
+                    record.parent.mkdir(parents=True, exist_ok=True)
+                    temporary_record = record.with_suffix('.tmp')
+                    temporary_record.write_text(json.dumps({'source': self.main_repo_dir,
+                        'workspace': self.repo_dir, 'job_id': self.job_id, 'node': target_node}))
+                    os.replace(temporary_record, record)
+
                 # 2. Vérification et rapatriement des dep_paths via W6
                 missing = self.fetch_missing_deps(
                     node=target_node,
@@ -1358,6 +1375,10 @@ class BranchExecutor:
                     resources=resources,
                 )
                 node_duration = time.time() - node_start_time
+
+                if os.environ.get('IS_LOCAL') == '1':
+                    from src.runner.local_workspace import preserve_runner_record
+                    preserve_runner_record(record, self.headnode_url, self.cluster_token)
 
                 if node_exit_code == 0:
                     # 4. Commit + push de dvc.lock et sorties non cachées via W5
@@ -1443,6 +1464,12 @@ class BranchExecutor:
             self.is_running = False
             self._stop_heartbeat()
             self.stop_current_container()
+            if os.environ.get('IS_LOCAL') == '1':
+                from src.runner.local_workspace import runner_record_path, preserve_runner_record
+                record = runner_record_path(self.main_repo_dir, self.runner_id)
+                # Physical stop precedes archival; failed handoff leaves both
+                # the private checkpoint archive and worktree available to retry.
+                preserve_runner_record(record, self.headnode_url, self.cluster_token)
             self.cleanup_worktree()
 
     def cleanup_worktree(self) -> None:
@@ -1465,6 +1492,7 @@ class BranchExecutor:
 # =====================================================================
 
 def main() -> None:
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
     parser = argparse.ArgumentParser(description="Cluster-CI v3 Branch Executor")
     parser.add_argument("--headnode-url", default=os.environ.get("HEADNODE_URL", "http://localhost:5000"))
     parser.add_argument("--job-id", default=os.environ.get("CLUSTER_CI_JOB_ID", os.environ.get("JOB_ID", "default-job")))

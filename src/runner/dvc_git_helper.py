@@ -403,7 +403,7 @@ def _delete_local_transfer(headnode_url, transfer_id, cluster_token=None):
         pass
 
 
-def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_id=None):
+def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_id=None, node_name=None):
     total_size = os.path.getsize(path)
     create_payload = {
         'purpose': purpose,
@@ -412,6 +412,8 @@ def _upload_file_in_chunks(path, headnode_url, purpose, cluster_token=None, job_
     }
     if job_id:
         create_payload['job_id'] = job_id
+    if node_name is not None:
+        create_payload['node_name'] = node_name
     create_req = urllib.request.Request(
         f"{headnode_url.rstrip('/')}/api/local_transfers",
         data=json.dumps(create_payload).encode('utf-8'),

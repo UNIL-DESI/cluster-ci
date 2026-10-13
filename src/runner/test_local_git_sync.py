@@ -124,6 +124,8 @@ def test_local_metrics_keep_existing_http_transport(monkeypatch):
 
 
 def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypatch):
+    from src.runner import local_workspace
+    import zipfile
     repo, remote = repositories
     # The current runner sanitizes through DVC before each node; use a real
     # initialized DVC workspace while retaining the local Git/no-push assertions.
@@ -132,6 +134,9 @@ def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypa
                    check=True, capture_output=True, text=True)
     before_head = git(repo, "rev-parse", "HEAD")
     monkeypatch.setenv("IS_LOCAL", "1")
+    monkeypatch.setattr(local_workspace, 'restore_remote_node', Mock())
+    upload = Mock()
+    monkeypatch.setattr(local_workspace, 'upload_node_archive', upload)
     docker = Mock(spec=branch.DockerRunner)
     docker.create_volume.return_value = 0
     docker.run_container.return_value = 0
@@ -151,7 +156,8 @@ def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypa
     monkeypatch.setattr(executor, "call_next_node", next_node)
 
     def execute(node, gpu_ids_str, **kwargs):
-        (repo / "metrics.json").write_text('{"synthetic_stage": "' + node + '"}\n')
+        from pathlib import Path
+        (Path(executor.repo_dir) / "metrics.json").write_text('{"synthetic_stage": "' + node + '"}\n')
         return 0, ""
 
     monkeypatch.setattr(executor, "execute_node_in_container", execute)
@@ -161,4 +167,6 @@ def test_local_branch_completes_nodes_across_image_switch(repositories, monkeypa
     assert [call.kwargs["env"]["IS_LOCAL"] for call in docker.run_container.call_args_list] == ["1", "1"]
     assert git(repo, "rev-parse", "HEAD") == before_head
     assert git(remote, "rev-parse", "main") == before_head
-    assert (repo / "metrics.json").read_text() == '{"synthetic_stage": "evaluate"}\n'
+    with zipfile.ZipFile(local_workspace.node_archive_path(repo, 'evaluate')) as archive:
+        assert archive.read('metrics.json').decode() == '{"synthetic_stage": "evaluate"}\n'
+    assert upload.call_count == 2

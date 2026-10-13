@@ -2,9 +2,11 @@
 
 Normal jobs keep their existing `repositories/<owner>/<repo>` workspace, cache,
 Docker volume names, and dashboard access. Local jobs use
-`repositories/_local/<owner>/<repo>` and a separate home volume. Local jobs of the
-same repository share that workspace on each worker; this is not a per-run
-snapshot or isolation between trusted cluster members.
+`repositories/_local/<owner>/<repo>` and a separate home volume. Classic local jobs share that workspace on each worker. Parallel local jobs
+freeze each uploaded submission under `.cluster-ci-local/jobs/<job_id>/source`
+and create separate runner working copies from its real private Git commit.
+Explicitly uploaded Git-ignored inputs are copied into each working copy; they
+are not put into Git history. This is not isolation between trusted members.
 
 Local workspace files, dataset inputs, result contents, and local viewers require
 the existing `CLUSTER_TOKEN`. The CLI already supplies that token for result
@@ -69,9 +71,32 @@ Local workspaces are evicted without `dvc push`, even if their configuration
 contains a remote. Pending-sync draining skips local workspace keys.
 Local jobs receive no additional retention guarantee.
 
-Headnode transfer/result packages retain their existing 24-hour expiry. They are
-separate from worker workspaces. Download results promptly; historical local run
-identifiers do not turn the shared workspace into historical snapshots.
+Headnode transfer/result packages retain their existing 24-hour expiry after
+completion; active jobs' node result packages are protected from age eviction.
+Worker snapshots and caches still follow the workspace GC policy. Download
+completed results promptly.
+
+## Local parallel results and resume
+
+Each node saves its declared DVC outputs (including partial checkpoints) in an
+atomic private archive on its worker, then transfers that archive through the
+existing authenticated, no-redirect cluster transfer API. The headnode keeps a
+separate archive per node; downstream nodes and retries restore outputs and
+merge only the producer's lock entry. Uncached outputs are supported. Combined
+job result downloads flatten node outputs rather than returning nested archives.
+Local helpers never use Git/DVC push for this handoff.
+
+Temporary working copies are deleted only after handoff succeeds. A failed save
+or transfer retains the working copy and local archive for recovery. Worker-side
+cleanup also preserves a stopped runner's declared outputs if the executor was
+force-killed. No arbitrary undeclared files are included.
+
+The training command must implement checkpoint loading. Declare checkpoint
+outputs with `persist: true` if DVC should retain them when rerunning an unfinished
+stage. Preservation cannot restore state that the application has not saved.
+Archives of declared model/optimizer outputs add compression, disk and transfer
+costs; Git-ignored input copies also require per-runner disk space. No new service
+is installed and all result transfers remain within configured cluster endpoints.
 
 ## Existing workspaces
 

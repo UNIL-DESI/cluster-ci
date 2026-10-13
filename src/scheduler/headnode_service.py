@@ -226,7 +226,7 @@ def require_token():
         return jsonify({"error": "Unauthorized"}), 401
     # Only protect API endpoints that workers or users use to modify state
     protected_endpoints = ['register_worker', 'submit_job', 'submit_maintenance_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
-    local_transfers = {'download_code', 'sync_results', 'get_job_results', 'create_local_transfer',
+    local_transfers = {'download_code', 'sync_results', 'get_job_results', 'get_local_node_results', 'create_local_transfer',
                        'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer'}
     if request.endpoint in local_transfers and not local_token_valid():
         return jsonify({"error": "Unauthorized"}), 401
@@ -324,6 +324,11 @@ def _cleanup_stale_local_results():
     for name in os.listdir(root):
         path = os.path.join(root, name)
         try:
+            job_id = name.removesuffix('.zip')
+            with get_db_conn() as conn:
+                job = conn.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,)).fetchone()
+            if job and job['status'] in ('pending', 'assigned', 'running'):
+                continue  # Active DAG handoff/checkpoints must not expire by age.
             if os.path.getmtime(path) >= cutoff:
                 continue
             if os.path.isdir(path):
@@ -349,8 +354,8 @@ def _sha256_file(path):
 def create_local_transfer():
     data = request.get_json(silent=True) or {}
     purpose = data.get("purpose")
-    if purpose not in ("source", "results"):
-        return jsonify({"error": "purpose must be 'source' or 'results'"}), 400
+    if purpose not in ("source", "results", "node_results"):
+        return jsonify({"error": "Invalid transfer purpose"}), 400
     try:
         total_size = int(data.get("total_size"))
     except (TypeError, ValueError):
@@ -360,8 +365,11 @@ def create_local_transfer():
         return jsonify({"error": "A positive total_size and SHA-256 are required"}), 400
 
     job_id = data.get("job_id")
-    if purpose == "results" and not _local_results_paths(job_id)[0]:
+    if purpose in ('results', 'node_results') and not _local_results_paths(job_id)[0]:
         return jsonify({"error": "A valid job_id is required for result transfers"}), 400
+    node_name = data.get('node_name')
+    if purpose == 'node_results' and not _local_node_results_path(job_id, node_name):
+        return jsonify({"error": "A local DAG node is required"}), 400
 
     _cleanup_stale_local_transfers()
     _cleanup_stale_local_results()
@@ -371,7 +379,8 @@ def create_local_transfer():
     metadata = {
         "transfer_id": transfer_id,
         "purpose": purpose,
-        "job_id": job_id if purpose == "results" else None,
+        "job_id": job_id if purpose != "source" else None,
+        "node_name": node_name if purpose == 'node_results' else None,
         "total_size": total_size,
         "sha256": expected_sha256,
         "chunk_size": LOCAL_TRANSFER_CHUNK_SIZE,
@@ -473,9 +482,18 @@ def complete_local_transfer(transfer_id):
             if unix_mode == 0o120000:
                 return jsonify({"error": f"Symlink archive member is not allowed: {member.filename}"}), 400
 
-    _, result_zip_path = _local_results_paths(metadata["job_id"])
+    if metadata['purpose'] == 'node_results':
+        result_zip_path = _local_node_results_path(metadata['job_id'], metadata['node_name'])
+        if not result_zip_path:
+            return jsonify({'error': 'Local node no longer exists'}), 404
+    else:
+        _, result_zip_path = _local_results_paths(metadata["job_id"])
     os.makedirs(os.path.dirname(result_zip_path), exist_ok=True)
     os.replace(paths["payload"], result_zip_path)
+    if metadata['purpose'] == 'node_results':
+        _, combined = _local_results_paths(metadata['job_id'])
+        if os.path.exists(combined):
+            os.unlink(combined)
     shutil.rmtree(paths["directory"], ignore_errors=True)
     return jsonify({"status": "ok", "archived_files": len(members)})
 
@@ -1295,6 +1313,27 @@ def _safe_result_name(file_name):
     return clean_name
 
 
+def _local_node_results_path(job_id, node_name):
+    directory, _ = _local_results_paths(job_id)
+    if not directory or not isinstance(node_name, str):
+        return None
+    with get_db_conn() as conn:
+        node = conn.execute('SELECT j.is_local FROM job_nodes n JOIN jobs j ON j.job_id=n.job_id '
+                            'WHERE n.job_id=? AND n.node_name=?', (job_id, node_name)).fetchone()
+    if not node or not node['is_local']:
+        return None
+    return os.path.join(directory, '.nodes', hashlib.sha256(node_name.encode()).hexdigest() + '.zip')
+
+
+@app.route('/api/jobs/<job_id>/node_results/<path:node_name>', methods=['GET'])
+def get_local_node_results(job_id, node_name):
+    path = _local_node_results_path(job_id, node_name)
+    if not path or not os.path.isfile(path):
+        return jsonify({'error': 'Local node results unavailable'}), 404
+    os.utime(os.path.dirname(os.path.dirname(path)), None)
+    return send_file(path, mimetype='application/zip')
+
+
 @app.route('/api/jobs/<job_id>/sync_results', methods=['POST'])
 def sync_results(job_id):
     job_results_dir, _ = _local_results_paths(job_id)
@@ -1345,6 +1384,38 @@ def get_job_results(job_id):
             shutil.rmtree(job_results_dir)
         return jsonify({"status": "ok"})
 
+    nodes_dir = os.path.join(job_results_dir, '.nodes')
+    if os.path.isdir(nodes_dir):
+        # Assemble on disk, streaming large checkpoints instead of nesting ZIP
+        # files or holding their contents in memory. One archive per DAG node
+        # prevents concurrent producers from replacing one another's results.
+        import yaml
+        fd, temporary = tempfile.mkstemp(suffix='.zip', dir=os.path.dirname(zip_file_path))
+        os.close(fd)
+        locks = {'schema': '2.0', 'stages': {}}
+        try:
+            with zipfile.ZipFile(temporary, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as combined:
+                written = set()
+                for name in sorted(os.listdir(nodes_dir)):
+                    if not name.endswith('.zip'):
+                        continue
+                    with zipfile.ZipFile(os.path.join(nodes_dir, name)) as node_zip:
+                        node_lock = yaml.safe_load(node_zip.read('dvc.lock')) or {}
+                        locks['stages'].update(node_lock.get('stages') or {})
+                        for item in node_zip.infolist():
+                            if item.filename == 'dvc.lock' or item.is_dir():
+                                continue
+                            if item.filename in written:
+                                raise ValueError('DAG nodes declare overlapping result paths')
+                            written.add(item.filename)
+                            with node_zip.open(item) as source, combined.open(item.filename, 'w', force_zip64=True) as target:
+                                shutil.copyfileobj(source, target, 1024 * 1024)
+                combined.writestr('dvc.lock', yaml.safe_dump(locks))
+            os.replace(temporary, zip_file_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
     if os.path.exists(zip_file_path):
         os.utime(zip_file_path, None)
         return send_file(
@@ -1355,7 +1426,6 @@ def get_job_results(job_id):
         )
     elif os.path.exists(job_results_dir) and os.listdir(job_results_dir):
         memory_file = io.BytesIO()
-        import zipfile
         with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
             for root, _, files in os.walk(job_results_dir):
                 for file in files:

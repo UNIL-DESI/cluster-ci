@@ -937,6 +937,7 @@ def execute_job(job):
             "repo": repo,
             "branch": branch,
             "is_parallel": is_parallel,
+            "is_local": bool(job.get('is_local')),
             "start_time": time.time(),
             "process": None
         }
@@ -1575,7 +1576,7 @@ def cancel_job(target_id):
             }), 404
 
 
-def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30):
+def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30, executor=None):
     """Termine gracieusement un runner préempté (SIGTERM puis SIGKILL après 30s) sans marquer le job comme échoué."""
     logger.info(f"🛑 [PREEMPTION] Terminating runner {runner_id} (grace period {grace_period_s}s)")
     if process_to_kill:
@@ -1631,6 +1632,10 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30)
     except Exception as e:
         logger.warning(f"Error cleaning docker containers for runner {runner_id}: {e}")
 
+    if executor and executor.get('is_local'):
+        from src.runner.local_workspace import private_job_root, runner_record_path, preserve_runner_record
+        source = private_job_root(os.path.join(REPOS_DIR, '_local', executor['repo']), executor['job_id']) / 'source'
+        preserve_runner_record(runner_record_path(source, runner_id), HEADNODE_URL, CLUSTER_TOKEN)
     purge_ollama_vram_on_host()
     kill_dvc_viewer_processes()
     logger.info(f"✅ [PREEMPTION] Preemption cleanup complete for runner {runner_id}")
@@ -1645,15 +1650,18 @@ def preempt_runner(runner_id):
     global current_job_id, current_process
     logger.info(f"Received preemption request for runner {runner_id}")
     matching_process = None
+    matching_executor = None
     with job_lock:
         preempted_runner_ids.add(runner_id)
         if runner_id in active_executors:
             ex = active_executors.pop(runner_id)
+            matching_executor = ex
             matching_process = ex.get("process")
         else:
             for k, ex in list(active_executors.items()):
                 if ex.get("runner_id") == runner_id:
                     active_executors.pop(k)
+                    matching_executor = ex
                     matching_process = ex.get("process")
                     break
 
@@ -1667,7 +1675,7 @@ def preempt_runner(runner_id):
 
     cleanup_thread = threading.Thread(
         target=_async_runner_preempt_cleanup,
-        args=(runner_id, matching_process, 30),
+        args=(runner_id, matching_process, 30, matching_executor),
         daemon=True
     )
     cleanup_thread.start()
