@@ -486,14 +486,14 @@ def mark_node_status(job_id, node_name, status, duration_s=None, exit_code=None,
             cursor.execute('''
                 UPDATE job_nodes
                 SET status = ?, duration_s = ?, exit_code = ?,
-                    error_message = CASE WHEN ? THEN NULL ELSE error_message END,
+                    error_message = CASE WHEN ? THEN NULL ELSE COALESCE(?, error_message) END,
                     failure_reason = CASE WHEN ? THEN NULL ELSE COALESCE(?, failure_reason) END,
                     cas_transfers = COALESCE(?, cas_transfers),
                     worker_id = COALESCE(?, worker_id),
                     runner_id = COALESCE(?, runner_id),
                     finished_at = CURRENT_TIMESTAMP, gpu_ids = '[]', gpu_indices = '[]'
                 WHERE job_id = ? AND node_name = ?
-            ''', (status, duration_s, exit_code, clear_err, clear_err, failure_reason, cas_json, worker_id, runner_id, job_id, node_name))
+            ''', (status, duration_s, exit_code, clear_err, error_message, clear_err, failure_reason, cas_json, worker_id, runner_id, job_id, node_name))
         else:
             cursor.execute('''
                 UPDATE job_nodes

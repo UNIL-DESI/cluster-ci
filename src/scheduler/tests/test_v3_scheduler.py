@@ -566,6 +566,32 @@ def test_missing_deps_retry_and_exhaustion(client):
     assert "could not be recovered" in cons2["error_message"]
 
 
+@pytest.mark.parametrize("status,exit_code,message,expected", [
+    ("failed", 1, "New failure", "New failure"),
+    ("failed", 1, None, "Previous failure"),
+    ("done", 0, "New failure", None),
+    ("done", None, "New failure", None),
+    ("done", 1, "New failure", "New failure"),
+])
+def test_terminal_node_error_message_lifecycle(isolated_db, status, exit_code, message, expected):
+    """Persist reported failures, preserve omitted errors, and clear on success."""
+    job_id = "job_error_message"
+    with persistence.get_db_conn() as conn:
+        conn.execute("INSERT INTO jobs (job_id, status) VALUES (?, 'running')", (job_id,))
+        conn.execute('''
+            INSERT INTO job_nodes (job_id, node_name, status, error_message)
+            VALUES (?, 'stage', 'running', 'Previous failure')
+        ''', (job_id,))
+        conn.commit()
+
+    persistence.mark_node_status(job_id, "stage", status,
+                                 exit_code=exit_code, error_message=message)
+
+    node = persistence.get_job_node(job_id, "stage")
+    assert node["status"] == status
+    assert node["error_message"] == expected
+
+
 # =========================================================================
 # 8. Annulation de Job
 # =========================================================================
