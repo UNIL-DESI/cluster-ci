@@ -561,10 +561,18 @@ fi
 if [ -n "$CLUSTER_CI_SECRETS_FILE" ] && [ -f "$CLUSTER_CI_SECRETS_FILE" ]; then
     log_info "Injecting secure job secrets from $CLUSTER_CI_SECRETS_FILE"
     ENV_FILE_FLAG="$ENV_FILE_FLAG --env-file $CLUSTER_CI_SECRETS_FILE"
-    # Source secrets on host to expose runtime configuration (e.g., SKIP_CODE_INVALIDATION)
-    set -a
-    . "$CLUSTER_CI_SECRETS_FILE"
-    set +a
+    # Job secrets are Docker env-file data, not shell code. Only this explicit
+    # host-side setting is needed; never let job variables override local mode,
+    # cluster destinations, credentials or runner identity in the parent process.
+    # Other job variables still reach containers through --env-file above.
+    while IFS='=' read -r job_env_key job_env_value || [ -n "$job_env_key" ]; do
+        if [ "$job_env_key" = "SKIP_CODE_INVALIDATION" ]; then
+            case "$job_env_value" in
+                0|1) export SKIP_CODE_INVALIDATION="$job_env_value" ;;
+                *) log_error "SKIP_CODE_INVALIDATION must be 0 or 1"; exit 1 ;;
+            esac
+        fi
+    done < "$CLUSTER_CI_SECRETS_FILE"
 fi
 
 # Create a volume for the user's home to avoid redownloading dvc every time and to keep uv/pip caches
