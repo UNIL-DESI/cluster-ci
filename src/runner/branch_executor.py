@@ -204,6 +204,7 @@ class DockerRunner:
         resources: Optional[Dict[str, Any]] = None,
         labels: Optional[Dict[str, str]] = None,
         dvc_cache_dir: Optional[str] = None,
+        git_common_dir: Optional[str] = None,
     ) -> int:
         from src.runner.host_guard import docker_resource_args
 
@@ -250,6 +251,10 @@ class DockerRunner:
             cache_path.mkdir(parents=True, exist_ok=True)
             (cache_path / "files" / "md5").mkdir(parents=True, exist_ok=True)
             cmd.extend(["-v", f"{dvc_cache_dir}:/workspace/.dvc/cache"])
+        if git_common_dir:
+            # A worktree's .git file uses this absolute host path. DVC needs to
+            # resolve it inside the container too; it is private local metadata.
+            cmd.extend(["-v", f"{git_common_dir}:{git_common_dir}"])
         if env:
             for k, v in env.items():
                 cmd.extend(["-e", f"{k}={v}"])
@@ -409,6 +414,9 @@ class BranchExecutor:
                             logger.info("Symlinked DVC cache: %s -> %s", source_cache, target_cache)
                         except Exception as e:
                             logger.warning("Failed to symlink DVC cache: %s", e)
+                    if os.environ.get('IS_LOCAL') == '1':
+                        from src.runner.local_workspace import copy_extra_inputs
+                        copy_extra_inputs(self.main_repo_dir, wt_path)
                     for config_file in ["config", "config.local"]:
                         src_c = os.path.join(self.main_repo_dir, ".dvc", config_file)
                         dst_c = os.path.join(wt_dvc_dir, config_file)
@@ -940,6 +948,7 @@ class BranchExecutor:
             resources=resources,
             labels=labels,
             dvc_cache_dir=main_dvc_cache,
+            git_common_dir=os.path.join(self.main_repo_dir, '.git') if self.worktree_dir else None,
         )
         if ret != 0:
             raise RuntimeError(f"docker run failed for {container_name} (code {ret})")

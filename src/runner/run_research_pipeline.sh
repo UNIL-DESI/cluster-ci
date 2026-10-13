@@ -335,17 +335,27 @@ if [ "$IS_LOCAL" = "1" ]; then
     mkdir -p "$BASE_DIR/$REPO_WORK_DIR"
     cd "$BASE_DIR/$REPO_WORK_DIR"
 
+    LOCAL_SOURCE_ARCHIVE=$(mktemp)
     log_info "[LOCAL MODE] Downloading code archive from $HEADNODE_URL/api/jobs/$JOB_ID/download_code..."
     if [ -n "$CLUSTER_TOKEN" ]; then
         curl -s -f -H "Authorization: Bearer $CLUSTER_TOKEN" \
-             "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o /tmp/local_source.tar.gz
+             "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o "$LOCAL_SOURCE_ARCHIVE"
     else
-        curl -s -f "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o /tmp/local_source.tar.gz
+        curl -s -f "$HEADNODE_URL/api/jobs/$JOB_ID/download_code" -o "$LOCAL_SOURCE_ARCHIVE"
     fi
 
-    log_info "[LOCAL MODE] Extracting source archive..."
-    tar -xzf /tmp/local_source.tar.gz -C .
-    rm -f /tmp/local_source.tar.gz
+    if [ "$CLUSTER_CI_PARALLEL_MODE" = "1" ]; then
+        LOCAL_SOURCE_DIR=$(python3 "$BASE_DIR/src/runner/local_workspace.py" \
+            --archive "$LOCAL_SOURCE_ARCHIVE" --repo-dir "$(pwd)" --job-id "$JOB_ID")
+        cd "$LOCAL_SOURCE_DIR"
+        # A private real revision is used internally; the dashboard keeps its
+        # local-* identity and no remote is configured on this snapshot repo.
+        export CALLER_COMMIT_SHA=$(git rev-parse HEAD)
+    else
+        log_info "[LOCAL MODE] Extracting source archive..."
+        tar -xzf "$LOCAL_SOURCE_ARCHIVE" -C .
+    fi
+    rm -f "$LOCAL_SOURCE_ARCHIVE"
 
     # Initialize minimal git repo for DVC compatibility
     if [ ! -d ".git" ]; then
