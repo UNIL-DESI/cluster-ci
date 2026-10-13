@@ -1117,10 +1117,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#local-parallel-results-and-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local parallel results and resume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#existing-workspaces" class="md-nav__link">
     <span class="md-ellipsis">
       
         Existing workspaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preemption-confirmation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preemption confirmation
       
     </span>
   </a>
@@ -1147,9 +1169,11 @@
 <h1 id="local-workspaces">Local workspaces</h1>
 <p>Normal jobs keep their existing <code>repositories/&lt;owner&gt;/&lt;repo&gt;</code> workspace, cache,
 Docker volume names, and dashboard access. Local jobs use
-<code>repositories/_local/&lt;owner&gt;/&lt;repo&gt;</code> and a separate home volume. Local jobs of the
-same repository share that workspace on each worker; this is not a per-run
-snapshot or isolation between trusted cluster members.</p>
+<code>repositories/_local/&lt;owner&gt;/&lt;repo&gt;</code> and a separate home volume. Classic local jobs share that workspace on each worker. Parallel local jobs
+freeze each uploaded submission under <code>.cluster-ci-local/jobs/&lt;job_id&gt;/source</code>
+and create separate runner working copies from its real private Git commit.
+Explicitly uploaded Git-ignored inputs are copied into each working copy; they
+are not put into Git history. This is not isolation between trusted members.</p>
 <p>Local workspace files, dataset inputs, result contents, and local viewers require
 the existing <code>CLUSTER_TOKEN</code>. The CLI already supplies that token for result
 transfers. Dashboard status, timing, terminal output, file names and sizes remain
@@ -1203,9 +1227,28 @@ maintenance threshold is 100 GB free (configurable with
 Local workspaces are evicted without <code>dvc push</code>, even if their configuration
 contains a remote. Pending-sync draining skips local workspace keys.
 Local jobs receive no additional retention guarantee.</p>
-<p>Headnode transfer/result packages retain their existing 24-hour expiry. They are
-separate from worker workspaces. Download results promptly; historical local run
-identifiers do not turn the shared workspace into historical snapshots.</p>
+<p>Headnode transfer/result packages retain their existing 24-hour expiry after
+completion; active jobs' node result packages are protected from age eviction.
+Worker snapshots and caches still follow the workspace GC policy. Download
+completed results promptly.</p>
+<h2 id="local-parallel-results-and-resume">Local parallel results and resume</h2>
+<p>Each node saves its declared DVC outputs (including partial checkpoints) in an
+atomic private archive on its worker, then transfers that archive through the
+existing authenticated, no-redirect cluster transfer API. The headnode keeps a
+separate archive per node; downstream nodes and retries restore outputs and
+merge only the producer's lock entry. Uncached outputs are supported. Combined
+job result downloads flatten node outputs rather than returning nested archives.
+Local helpers never use Git/DVC push for this handoff.</p>
+<p>Temporary working copies are deleted only after handoff succeeds. A failed save
+or transfer retains the working copy and local archive for recovery. Worker-side
+cleanup also preserves a stopped runner's declared outputs if the executor was
+force-killed. No arbitrary undeclared files are included.</p>
+<p>The training command must implement checkpoint loading. Declare checkpoint
+outputs with <code>persist: true</code> if DVC should retain them when rerunning an unfinished
+stage. Preservation cannot restore state that the application has not saved.
+Archives of declared model/optimizer outputs add compression, disk and transfer
+costs; Git-ignored input copies also require per-runner disk space. No new service
+is installed and all result transfers remain within configured cluster endpoints.</p>
 <h2 id="existing-workspaces">Existing workspaces</h2>
 <p>Deployment does not automatically classify or move existing directories. Before
 resuming local jobs, inventory the affected workers and migrate directories that
@@ -1220,6 +1263,17 @@ contents before migration. Existing containers and viewers must be restarted wit
 the new layout, and old public copies must not remain accessible. Deploy the
 headnode, workers and runner together using the administrator's normal deployment
 procedure. Do not use this patch alone as proof that an old directory is protected.</p>
+<h2 id="preemption-confirmation">Preemption confirmation</h2>
+<p>A selected node enters <code>preempting</code> and continues reserving CPU, RAM and GPU
+slots. An HTTP acceptance or failed request does not release those reservations.
+The worker acknowledges physical shutdown only after processes/containers have
+stopped and any local node archive is preserved and handed off. Repeated requests
+are idempotent; failed stops or saves remain pending and retryable. Counts increase
+only on acknowledgement; a node becomes immune after five confirmed preemptions.</p>
+<p>A naturally completed stage remains reserved until its runner stops, then its
+success is retained. Large checkpoint archival can extend the handoff beyond the
+30-second termination grace. A permanently unreachable/restarted worker may
+require manual reconciliation; heartbeat silence alone is not proof of shutdown.</p>
 
 
 
