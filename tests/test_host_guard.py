@@ -379,16 +379,16 @@ def test_docker_resource_args_pytorch_cuda_alloc_conf_injection():
         "total_ram_gb": 120.0,
     }
     args_gb10 = docker_resource_args(gb10_host, {"ram_gb": 16.0})
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gb10
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gb10
 
     # 2. Sur hôte discrete standard avec GPU demandé : injection présente
     discrete_host = {"role": "worker", "total_ram_gb": 64.0, "unified_memory": False}
     args_gpu = docker_resource_args(discrete_host, {"ram_gb": 16.0, "gpus": 1, "gpu_ids": [0]})
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gpu
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in args_gpu
 
     # 3. Sur hôte discrete standard CPU-only : pas d'injection PyTorch CUDA
     args_cpu = docker_resource_args(discrete_host, {"ram_gb": 8.0, "gpus": 0})
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_cpu
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_cpu
 
     # 4. Respect de la configuration utilisateur : NE PAS écraser une valeur personnalisée
     # Cas A: spécifiée via dict env dans node_resources
@@ -396,16 +396,16 @@ def test_docker_resource_args_pytorch_cuda_alloc_conf_injection():
         gb10_host,
         {"ram_gb": 16.0, "env": {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"}},
     )
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128" in args_user_env
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_env
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128" in args_user_env
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_env
 
     # Cas B: spécifiée via clé directe pytorch_cuda_alloc_conf
     args_user_direct = docker_resource_args(
         discrete_host,
         {"ram_gb": 16.0, "gpus": 1, "gpu_ids": [0], "pytorch_cuda_alloc_conf": "garbage_collection_threshold:0.8"},
     )
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8" in args_user_direct
-    assert "-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_direct
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8" in args_user_direct
+    assert "--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" not in args_user_direct
 
 
 def test_cli_watchdog_invocation(monkeypatch, tmp_path):

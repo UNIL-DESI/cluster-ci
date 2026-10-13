@@ -611,9 +611,12 @@ def docker_resource_args(
                     ids_str = ",".join(str(g) for g in gpu_ids)
                 else:
                     ids_str = str(gpu_ids).strip("[] ")
-                args.append(f'--gpus=device={ids_str}')
-                args.append(f'-e NVIDIA_VISIBLE_DEVICES={ids_str}')
-                args.append(f'-e CUDA_VISIBLE_DEVICES={ids_str}')
+                # Docker parses --gpus as CSV: quote the device list inside the
+                # argument so multiple IDs do not become Count + DeviceIDs.
+                args.append(f'--gpus="device={ids_str}"')
+                args.append(f'--env=NVIDIA_VISIBLE_DEVICES={ids_str}')
+                logical_ids = ','.join(str(i) for i in range(len(ids_str.split(','))))
+                args.append(f'--env=CUDA_VISIBLE_DEVICES={logical_ids}')
             else:
                 raise ValueError(f"req_gpus={req_gpus} requested but no gpu_ids assigned")
 
@@ -630,9 +633,9 @@ def docker_resource_args(
             user_alloc_conf = str(raw_conf)
 
     if user_alloc_conf:
-        args.append(f"-e PYTORCH_CUDA_ALLOC_CONF={user_alloc_conf}")
+        args.append(f"--env=PYTORCH_CUDA_ALLOC_CONF={user_alloc_conf}")
     elif unified or ("gpus" in node_resources and int(node_resources.get("gpus") or 0) > 0):
-        args.append("-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+        args.append("--env=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 
     return args
 

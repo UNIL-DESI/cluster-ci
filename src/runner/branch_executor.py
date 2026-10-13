@@ -1084,10 +1084,8 @@ class BranchExecutor:
         env = {}
         if self.current_pythonpath:
             env["PYTHONPATH"] = self.current_pythonpath
-        if gpu_ids_str != "":
-            env["CUDA_VISIBLE_DEVICES"] = gpu_ids_str
-        elif gpu_ids_str == "":
-            env["CUDA_VISIBLE_DEVICES"] = ""
+        # Docker selected physical IDs; CUDA numbers that subset from zero.
+        logical_cuda_ids = ','.join(str(i) for i in range(len(gpu_ids_str.split(',')))) if gpu_ids_str else ''
 
         # Contrat CLUSTER_CI_NODE_ATTEMPT et propagation des variables d'environnement
         env["CLUSTER_CI_NODE_ATTEMPT"] = str(attempt)
@@ -1118,6 +1116,7 @@ class BranchExecutor:
             'HEADNODE_URL': self.headnode_url,
             'CLUSTER_TOKEN': self.cluster_token or '',
             'CLUSTER_CI_NODE_ATTEMPT': str(attempt),
+            'CUDA_VISIBLE_DEVICES': logical_cuda_ids,
         })
         if env['IS_LOCAL'] == '1':
             env['DVC_NO_ANALYTICS'] = '1'
