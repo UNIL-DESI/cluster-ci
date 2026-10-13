@@ -178,3 +178,38 @@ def test_failed_transfer_keeps_checkpoint_and_worktree(env, monkeypatch):
     assert archive.exists()
     records = list(source.parent.glob('runner-*.json'))
     assert records and Path(json.loads(records[0].read_text())['workspace']).exists()
+
+
+def test_worker_preserves_force_killed_runner_before_acknowledgement(env, monkeypatch):
+    import worker_agent as worker
+    from src.runner.local_workspace import runner_record_path
+    worker_root = env['tmp'] / 'force-kill-worker'
+    source = prepare_submission(env['archive'], worker_root / '_local/lab/test', env['job'])
+    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source).decode().strip()
+    executor = branch.BranchExecutor('http://cluster.invalid', env['job'], 'killed-runner',
+                'w', source, 'lab/test', 'local-draft/test', start_commit=sha, docker=Mock())
+    workspace = Path(executor.repo_dir)
+    (workspace / 'outputs').mkdir()
+    (workspace / 'outputs/checkpoint.txt').write_text('1')
+    record = runner_record_path(source, 'killed-runner')
+    record.write_text(json.dumps({'source':source, 'workspace':str(workspace),
+                                  'job_id':env['job'], 'node':'checkpoint'}))
+    process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    process.kill()
+    process.wait()
+    monkeypatch.setattr(worker, 'REPOS_DIR', str(worker_root))
+    monkeypatch.setattr(worker, 'HEADNODE_URL', 'http://cluster.invalid')
+    monkeypatch.setattr(worker, 'CLUSTER_TOKEN', TOKEN)
+    monkeypatch.setattr(worker.subprocess, 'run', lambda *a, **k: Mock(returncode=0,stdout='',stderr=''))
+    def acknowledge(*args, **kwargs):
+        result = env['client'].get(f"/api/jobs/{env['job']}/node_results/checkpoint", headers=AUTH)
+        assert result.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(result.data)) as saved:
+            assert saved.read('outputs/checkpoint.txt') == b'1'
+    try:
+        with patch.object(worker, 'update_job_status', side_effect=acknowledge) as ack:
+            worker._async_runner_preempt_cleanup('killed-runner', process, 0,
+                        {'job_id':env['job'], 'repo':'lab/test','is_local':True})
+        ack.assert_called_once()
+    finally:
+        executor.cleanup_worktree()

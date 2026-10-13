@@ -1605,11 +1605,15 @@ def update_job_status():
         # Interception explicite et prioritaire des nœuds en état 'preempting' :
         # Doit s'exécuter AVANT toute logique d'annulation sur exit_code négatif (ex: SIGTERM -15 ou SIGKILL -9).
         cursor.execute('''
-            SELECT node_name, status, retry_count, preempted_by, runner_id, worker_id
+            SELECT node_name, status, retry_count, preempted_by, runner_id, worker_id, exit_code
             FROM job_nodes
             WHERE job_id = ? AND status = 'preempting'
         ''', (job_id,))
         preempting_nodes = cursor.fetchall()
+        if not preempting_nodes and data.get('failure_reason') == 'JobPreempted':
+            # Retrying a lost HTTP acknowledgement must not cancel or requeue
+            # the stage again after its stop has already been processed.
+            return jsonify({'status': 'ignored', 'message': 'No matching pending preemption'}), 200
 
         if preempting_nodes and status in ['failed', 'completed', 'done']:
             caller_worker = data.get('worker_id') or data.get('worker')
@@ -1617,15 +1621,15 @@ def update_job_status():
             matched_nodes = []
             if caller_runner:
                 matched_nodes = [p for p in preempting_nodes if p[4] == caller_runner]
-            if not matched_nodes and caller_worker:
+            if not caller_runner and caller_worker:
                 matched_nodes = [p for p in preempting_nodes if p[5] == caller_worker]
             if not matched_nodes:
-                matched_nodes = preempting_nodes
+                return jsonify({'error': 'Preemption acknowledgement does not match the runner'}), 409
 
             for p_row in matched_nodes:
                 p_name = p_row[0]
                 p_preempted_by = p_row[3]
-                if (status in ['completed', 'done']) and (exit_code == 0 or exit_code is None):
+                if p_row[6] == 0 or ((status in ['completed', 'done']) and (exit_code == 0 or exit_code is None)):
                     # Le succès naturel prévaut
                     cursor.execute('''
                         UPDATE job_nodes
@@ -1653,6 +1657,13 @@ def update_job_status():
             # Libérer le worker / runner appelant
             if caller_worker:
                 cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ? AND assigned_job_id = ?', (caller_worker, job_id))
+            if caller_worker:
+                remaining = cursor.execute("SELECT COUNT(*) FROM job_nodes WHERE job_id=? AND worker_id=? AND status IN ('running','preempting')", (job_id, caller_worker)).fetchone()[0]
+                if not remaining:
+                    active = cursor.execute('SELECT active_workers FROM jobs WHERE job_id=?', (job_id,)).fetchone()[0]
+                    active = [w for w in json.loads(active or '[]') if w != caller_worker]
+                    cursor.execute('UPDATE jobs SET active_workers=? WHERE job_id=?',
+                                   (json.dumps(active), job_id))
             if caller_runner:
                 cursor.execute('DELETE FROM runner_heartbeats WHERE runner_id = ?', (caller_runner,))
             elif caller_worker:

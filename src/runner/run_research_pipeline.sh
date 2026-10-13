@@ -132,6 +132,9 @@ else
     VIEWER_CONTAINER_NAME="cluster-viewer-${SAFE_JOB_ID}"
 fi
 COMMON_LABELS="--label cluster-ci-job=${JOB_ID} --label cluster-ci-repo=${TARGET_REPO}"
+if [ -n "$CLUSTER_CI_RUNNER_ID" ]; then
+    COMMON_LABELS="$COMMON_LABELS --label cluster-ci.runner-id=$CLUSTER_CI_RUNNER_ID"
+fi
 
 # Delegation mode: If not explicitly in executor mode,
 # delegate the task to the scheduler via submit_job.py
@@ -297,18 +300,22 @@ function cleanup_job_resources() {
             kill -9 "$pid" 2>/dev/null || true
         done
     fi
-    # Backup cleanup of any leftover dvc-viewer process globally on host since this job is ending
-    for pid in $(pgrep -f "dvc-viewer" || true); do
-        log_info "Force-cleaning residual dvc-viewer process on host (PID: $pid)..."
-        kill -9 "$pid" 2>/dev/null || true
-    done
+    if [ "$CLUSTER_CI_PARALLEL_MODE" != "1" ]; then
+        # Legacy single-runner cleanup must not affect parallel siblings.
+        for pid in $(pgrep -f "dvc-viewer" || true); do
+            log_info "Force-cleaning residual dvc-viewer process on host (PID: $pid)..."
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
 
     [ -n "$DVC_VIEWER_PID" ] && kill -9 "$DVC_VIEWER_PID" 2>/dev/null || true
     [ -n "$WATCHDOG_PID" ] && kill -9 "$WATCHDOG_PID" 2>/dev/null || true
     [ -n "$GPU_WATCHDOG_PID" ] && kill -9 "$GPU_WATCHDOG_PID" 2>/dev/null || true
     # Kill pipeline siblings (gpu_watchdog.sh survives when only tee PID is killed)
-    pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
-    pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
+    if [ "$CLUSTER_CI_PARALLEL_MODE" != "1" ]; then
+        pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
+        pkill -9 -f "dvc_watchdog.sh" 2>/dev/null || true
+    fi
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$WORKSPACE_KEY" "$BASE_DIR/$REPO_WORK_DIR"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
@@ -322,13 +329,15 @@ log_info "[Step 2/3] Preventive purge of residual containers and processes..."
 # This ensures that if a previous attempt of the SAME job failed/crashed, we clean it up.
 docker rm -f "${MAIN_CONTAINER_NAME}" "${VIEWER_CONTAINER_NAME}" 2>/dev/null || true
 
-# 2.2 Cleanup residual dvc-viewer processes globally on the host worker.
-# Since the worker only runs one research job at a time, any leftover dvc-viewer
-# process on the host is a stale orphan from a previous job and must be purged.
-for pid in $(pgrep -f "dvc-viewer" || true); do
-    log_info "Cleaning up leftover dvc-viewer process on host (PID: $pid)..."
-    kill -9 "$pid" 2>/dev/null || true
-done
+if [ "$CLUSTER_CI_PARALLEL_MODE" != "1" ]; then
+    # 2.2 Cleanup residual dvc-viewer processes globally on the host worker.
+    # Since the worker only runs one research job at a time, any leftover dvc-viewer
+    # process on the host is a stale orphan from a previous job and must be purged.
+    for pid in $(pgrep -f "dvc-viewer" || true); do
+        log_info "Cleaning up leftover dvc-viewer process on host (PID: $pid)..."
+        kill -9 "$pid" 2>/dev/null || true
+    done
+fi
 
 if [ "$IS_LOCAL" = "1" ]; then
     log_info "[LOCAL MODE] Bypassing Git operations. Downloading source archive from Headnode..."

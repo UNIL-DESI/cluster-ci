@@ -114,3 +114,17 @@ contents before migration. Existing containers and viewers must be restarted wit
 the new layout, and old public copies must not remain accessible. Deploy the
 headnode, workers and runner together using the administrator's normal deployment
 procedure. Do not use this patch alone as proof that an old directory is protected.
+
+## Preemption confirmation
+
+A selected node enters `preempting` and continues reserving CPU, RAM and GPU
+slots. An HTTP acceptance or failed request does not release those reservations.
+The worker acknowledges physical shutdown only after processes/containers have
+stopped and any local node archive is preserved and handed off. Repeated requests
+are idempotent; failed stops or saves remain pending and retryable. Counts increase
+only on acknowledgement; a node becomes immune after five confirmed preemptions.
+
+A naturally completed stage remains reserved until its runner stops, then its
+success is retained. Large checkpoint archival can extend the handoff beyond the
+30-second termination grace. A permanently unreachable/restarted worker may
+require manual reconciliation; heartbeat silence alone is not proof of shutdown.

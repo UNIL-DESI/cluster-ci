@@ -323,6 +323,8 @@ if not ROLE:
 # Global state for multi-runner tracking (A11)
 active_executors = {}  # runner_id -> dict(job_id=..., process=..., is_parallel=..., start_time=..., repo=..., branch=...)
 preempted_runner_ids = set()  # runner_ids flagged for graceful preemption
+preemption_executors = {}  # retained until physical stop and notification succeed
+preemption_in_progress = set()
 current_job_id = None
 current_process = None
 job_lock = threading.Lock()
@@ -1217,8 +1219,9 @@ def execute_job(job):
                 preempted_runner_ids.discard(runner_id)
 
         if is_preempted:
-            logger.info(f"Runner {runner_id} for job {job_id} was preempted; notifying headnode of preemption.")
-            update_job_status(job_id, 'failed', exit_code=-15, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID, failure_reason="JobPreempted")
+            logger.info(f"Runner {runner_id} for job {job_id} was preempted; waiting for physical shutdown acknowledgement.")
+            # The cleanup thread reports only after containers and local state are safe.
+            pass
         elif exit_code == 137:
             marker_file = "host_guard_killed.marker"
             if os.path.exists(marker_file):
@@ -1286,15 +1289,18 @@ def execute_job(job):
             logger.error(f"Error purging job containers in finally: {docker_err}")
             
         try:
-            purge_ollama_vram_on_host()
+            if not is_parallel:
+                purge_ollama_vram_on_host()
         except Exception as ollama_err:
             logger.error(f"Error purging Ollama VRAM in finally: {ollama_err}")
 
-        kill_dvc_viewer_processes()
+        if not is_parallel:
+            kill_dvc_viewer_processes()
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
         with job_lock:
-            active_executors.pop(runner_id, None)
+            if runner_id not in preemption_executors:
+                active_executors.pop(runner_id, None)
             if active_executors:
                 first_active = next(iter(active_executors.values()))
                 current_job_id = first_active.get("job_id")
@@ -1576,7 +1582,7 @@ def cancel_job(target_id):
             }), 404
 
 
-def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30, executor=None):
+def _stop_runner_and_preserve(runner_id, process_to_kill, grace_period_s=30, executor=None):
     """Termine gracieusement un runner préempté (SIGTERM puis SIGKILL après 30s) sans marquer le job comme échoué."""
     logger.info(f"🛑 [PREEMPTION] Terminating runner {runner_id} (grace period {grace_period_s}s)")
     if process_to_kill:
@@ -1595,11 +1601,14 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30,
                     p.kill()
                 except psutil.NoSuchProcess:
                     pass
+            _, still_alive = psutil.wait_procs(alive, timeout=5) if alive else ([], [])
+            if still_alive:
+                raise RuntimeError('Runner processes remain alive after termination')
             logger.info(f"✅ [PREEMPTION] Successfully terminated runner {runner_id}")
         except psutil.NoSuchProcess:
             pass
         except Exception as e:
-            logger.error(f"❌ [PREEMPTION] Error terminating runner {runner_id}: {e}")
+            raise RuntimeError(f"Runner termination was not confirmed: {e}") from e
 
     try:
         # Recherche par label canonique cluster-ci.runner-id ou cluster-ci.runner, fallback sur name
@@ -1607,6 +1616,8 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30,
             ["docker", "ps", "-a", "--filter", f"label=cluster-ci.runner-id={runner_id}", "--format", "{{.Names}}"],
             capture_output=True, text=True, timeout=5
         )
+        if res.returncode != 0:
+            raise RuntimeError('Docker state could not be inspected')
         containers = []
         if res.returncode == 0 and res.stdout.strip():
             containers = [c.strip() for c in res.stdout.strip().split("\n") if c.strip()]
@@ -1616,6 +1627,8 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30,
                 ["docker", "ps", "-a", "--filter", f"label=cluster-ci.runner={runner_id}", "--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=5
             )
+            if res_alt.returncode != 0:
+                raise RuntimeError('Docker state could not be inspected')
             if res_alt.returncode == 0 and res_alt.stdout.strip():
                 containers = [c.strip() for c in res_alt.stdout.strip().split("\n") if c.strip()]
 
@@ -1624,21 +1637,55 @@ def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30,
                 ["docker", "ps", "-a", "--filter", f"name={runner_id}", "--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=5
             )
+            if res_legacy.returncode != 0:
+                raise RuntimeError('Docker state could not be inspected')
             if res_legacy.returncode == 0 and res_legacy.stdout.strip():
                 containers = [c.strip() for c in res_legacy.stdout.strip().split("\n") if c.strip()]
 
         if containers:
             safe_docker_rm_f(containers, timeout=8)
+            for container in containers:
+                check = subprocess.run(['docker', 'inspect', '--format', '{{.State.Running}}', container],
+                                       capture_output=True, text=True, timeout=5)
+                if check.returncode == 0 and check.stdout.strip() != 'false':
+                    raise RuntimeError('Runner container remains running')
+                if check.returncode != 0 and 'No such' not in (check.stderr or ''):
+                    raise RuntimeError('Container shutdown could not be inspected')
+                # Missing container is expected after rm; other Docker failures
+                # are caught by the successful query below.
+            verify = subprocess.run(['docker', 'ps', '-a', '--filter', f'label=cluster-ci.runner-id={runner_id}',
+                                     '--format', '{{.Names}}'], capture_output=True, text=True, timeout=5)
+            if verify.returncode != 0 or verify.stdout.strip():
+                raise RuntimeError('Runner container removal was not confirmed')
     except Exception as e:
-        logger.warning(f"Error cleaning docker containers for runner {runner_id}: {e}")
+        raise RuntimeError(f'Container shutdown was not confirmed: {e}') from e
 
     if executor and executor.get('is_local'):
         from src.runner.local_workspace import private_job_root, runner_record_path, preserve_runner_record
         source = private_job_root(os.path.join(REPOS_DIR, '_local', executor['repo']), executor['job_id']) / 'source'
         preserve_runner_record(runner_record_path(source, runner_id), HEADNODE_URL, CLUSTER_TOKEN)
-    purge_ollama_vram_on_host()
-    kill_dvc_viewer_processes()
     logger.info(f"✅ [PREEMPTION] Preemption cleanup complete for runner {runner_id}")
+
+
+def _async_runner_preempt_cleanup(runner_id, process_to_kill, grace_period_s=30, executor=None):
+    global current_job_id, current_process
+    try:
+        _stop_runner_and_preserve(runner_id, process_to_kill, grace_period_s, executor)
+        if executor:
+            update_job_status(executor['job_id'], 'failed', exit_code=-15,
+                              runner_id=runner_id, worker_id=WORKER_ID, failure_reason='JobPreempted')
+        with job_lock:
+            active_executors.pop(runner_id, None)
+            preemption_executors.pop(runner_id, None)
+            preempted_runner_ids.discard(runner_id)
+            first = next(iter(active_executors.values()), {})
+            current_job_id = first.get('job_id')
+            current_process = first.get('process')
+    except Exception:
+        logger.exception('Preemption is unconfirmed for runner %s; reservation must remain', runner_id)
+    finally:
+        with job_lock:
+            preemption_in_progress.discard(runner_id)
 
 
 @app.route('/api/worker/preempt_runner/<runner_id>', methods=['POST'])
@@ -1649,29 +1696,19 @@ def preempt_runner(runner_id):
 
     global current_job_id, current_process
     logger.info(f"Received preemption request for runner {runner_id}")
-    matching_process = None
-    matching_executor = None
     with job_lock:
+        if runner_id in preemption_in_progress:
+            return jsonify({'status': 'preempting', 'runner_id': runner_id}), 202
+        matching_executor = preemption_executors.get(runner_id) or active_executors.get(runner_id)
+        if matching_executor is None:
+            matching_executor = next((ex for ex in active_executors.values()
+                                      if ex.get('runner_id') == runner_id), None)
+        if matching_executor is None:
+            return jsonify({'error': 'Runner not found'}), 404
         preempted_runner_ids.add(runner_id)
-        if runner_id in active_executors:
-            ex = active_executors.pop(runner_id)
-            matching_executor = ex
-            matching_process = ex.get("process")
-        else:
-            for k, ex in list(active_executors.items()):
-                if ex.get("runner_id") == runner_id:
-                    active_executors.pop(k)
-                    matching_executor = ex
-                    matching_process = ex.get("process")
-                    break
-
-        if active_executors:
-            first_active = next(iter(active_executors.values()))
-            current_job_id = first_active.get("job_id")
-            current_process = first_active.get("process")
-        else:
-            current_job_id = None
-            current_process = None
+        preemption_executors[runner_id] = matching_executor
+        preemption_in_progress.add(runner_id)
+        matching_process = matching_executor.get('process')
 
     cleanup_thread = threading.Thread(
         target=_async_runner_preempt_cleanup,
@@ -1681,10 +1718,10 @@ def preempt_runner(runner_id):
     cleanup_thread.start()
 
     return jsonify({
-        "status": "preempted",
+        "status": "preempting",
         "runner_id": runner_id,
         "message": "Preemption initiated with 30s graceful SIGTERM."
-    }), 200
+    }), 202
 
 
 @app.route('/job_logs/<job_id>', methods=['GET'])
@@ -2537,7 +2574,7 @@ def main_loop():
             with job_lock:
                 for r_id in list(active_executors.keys()):
                     proc = active_executors[r_id].get("process")
-                    if proc and proc.poll() is not None:
+                    if proc and proc.poll() is not None and r_id not in preemption_executors:
                         active_executors.pop(r_id, None)
                 active_count = len(active_executors)
                 try:

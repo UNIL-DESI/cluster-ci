@@ -300,14 +300,14 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None):
             SELECT n.job_id, n.node_name, n.resources, n.gpu_ids, j.repo
             FROM job_nodes n
             LEFT JOIN jobs j ON n.job_id = j.job_id
-            WHERE n.worker_id = ? AND n.status = 'running' AND NOT (n.job_id = ? AND n.node_name = ?)
+            WHERE n.worker_id = ? AND n.status IN ('running', 'preempting') AND NOT (n.job_id = ? AND n.node_name = ?)
         ''', (worker_id, exclude_node[0], exclude_node[1]))
     else:
         cursor.execute('''
             SELECT n.job_id, n.node_name, n.resources, n.gpu_ids, j.repo
             FROM job_nodes n
             LEFT JOIN jobs j ON n.job_id = j.job_id
-            WHERE n.worker_id = ? AND n.status = 'running'
+            WHERE n.worker_id = ? AND n.status IN ('running', 'preempting')
         ''', (worker_id,))
     running_nodes = cursor.fetchall()
 
@@ -923,7 +923,16 @@ def handle_next_node(req):
                     already_requeued_preempted = True
                 node_preempted_by = nr[1]
 
-        if status == "done" or (is_node_preempting and (exit_code == 0 or status == "completed")):
+        if is_node_preempting:
+            # A completed stage is not yet a physically stopped runner. Keep
+            # its reservation until the worker's stop acknowledgement arrives.
+            with get_db_conn() as conn:
+                conn.execute("UPDATE job_nodes SET exit_code=? WHERE job_id=? AND node_name=? AND status='preempting'",
+                             (0 if status == 'done' else exit_code, job_id, node_name))
+                conn.commit()
+            return {'action': 'yield'}
+
+        if status == "done":
             # Le succès prévaut toujours !
             mark_node_status(job_id, node_name, "done", duration_s=duration_s, exit_code=0, cas_transfers=cas_transfers, worker_id=worker_id, runner_id=runner_id)
             outputs_to_record = req.get("outputs") or req.get("out_paths")
@@ -1497,7 +1506,7 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
        - Signal gracieux POST /api/worker/preempt_runner/<runner_id> (SIGTERM 30s puis kill).
        - Requeue en 'ready' avec preempt_count + 1, preempted_by, preempted_at.
        - ZÉRO impact sur retry_count ni attempt, sans failure_reason d'échec.
-       - Libération immédiate des structures du worker (heartbeats, assigned_job_id).
+       - Libération après confirmation de l’arrêt physique par le worker.
     """
     cursor = conn.cursor()
 
@@ -1512,9 +1521,6 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
         ORDER BY j.created_at ASC, jn.node_name ASC
     """)
     high_ready_nodes = [dict(r) for r in cursor.fetchall()]
-
-    if not high_ready_nodes:
-        return False
 
     workers_by_id = {w['worker_id']: w for w in workers}
     preempted_any = False
@@ -1600,59 +1606,34 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
             UPDATE job_nodes
             SET status = 'preempting',
                 preempted_by = ?,
-                preempted_at = CURRENT_TIMESTAMP
+                preempted_at = CURRENT_TIMESTAMP, exit_code = NULL
             WHERE job_id = ? AND node_name = ?
         """, (preempted_by_str, v_job_id, v_node_name))
 
-        # 2. Nettoyage immédiat des heartbeats et allocations de ce runner pour libérer la machine
-        if v_runner_id:
-            cursor.execute("DELETE FROM runner_heartbeats WHERE runner_id = ?", (v_runner_id,))
-        cursor.execute("DELETE FROM runner_heartbeats WHERE job_id = ? AND worker_id = ?", (v_job_id, v_wid))
-        cursor.execute("UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ? AND assigned_job_id = ?", (v_wid, v_job_id))
-
-        # Retirer v_wid de active_workers du job de la victime si présent
-        cursor.execute("SELECT active_workers FROM jobs WHERE job_id = ?", (v_job_id,))
-        act_row = cursor.fetchone()
-        if act_row and act_row[0]:
-            try:
-                act = json.loads(act_row[0])
-                if v_wid in act:
-                    act.remove(v_wid)
-                    cursor.execute("UPDATE jobs SET active_workers = ? WHERE job_id = ?", (json.dumps(act), v_job_id))
-            except Exception:
-                pass
+        # Keep allocations and heartbeats until the worker confirms physical
+        # shutdown. A failed HTTP request or an accepted asynchronous request
+        # is not evidence that GPU resources are free.
         conn.commit()
 
-        # 3. Envoi de la notification de préemption au worker agent (HTTP POST) avec token
-        service_url = victim_worker.get('service_url')
-        if service_url and v_runner_id:
-            token = os.environ.get("CLUSTER_TOKEN", "")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-            try:
-                requests.post(
-                    f"{service_url.rstrip('/')}/api/worker/preempt_runner/{v_runner_id}",
-                    headers=headers,
-                    timeout=5
-                )
-            except Exception as e:
-                logger.warning(
-                    "Worker agent preemption call failed for runner %s on %s: %s",
-                    v_runner_id, service_url, e
-                )
-
-        # 4. Requeue systématique et immédiat du nœud victime en 'ready' (preempt_count + 1)
-        handle_node_failure_or_retry(
-            conn,
-            job_id=v_job_id,
-            node_name=v_node_name,
-            is_preempted=True,
-            preempted_by=preempted_by_str,
-        )
-        update_dag_ready_states(v_job_id)
-
-        conn.commit()
         preempted_any = True
 
+    cursor.execute("""
+        SELECT n.runner_id, w.service_url FROM job_nodes n
+        JOIN workers w ON w.worker_id=n.worker_id
+        WHERE n.status='preempting'
+    """)
+    for pending in cursor.fetchall():
+        if not pending['service_url'] or not pending['runner_id']:
+            continue
+        token = os.environ.get('CLUSTER_TOKEN', '')
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        try:
+            response = requests.post(
+                f"{pending['service_url'].rstrip('/')}/api/worker/preempt_runner/{pending['runner_id']}",
+                headers=headers, timeout=5, allow_redirects=False)
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning('Preemption remains pending for %s: %s', pending['runner_id'], exc)
     return preempted_any
 
 

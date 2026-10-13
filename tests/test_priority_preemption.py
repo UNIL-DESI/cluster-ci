@@ -94,6 +94,7 @@ def test_nominal_preemption_high_preempts_low_different_user(prem_db):
     assert bob_node["attempt"] == 1      # Inchangé !
     assert bob_node["failure_reason"] is None
 
+    schedule_iteration()  # Only a confirmed stop makes capacity available.
     # Et job-alice doit avoir reçu worker-1 comme home_worker libéré
     cursor = conn.cursor()
     cursor.execute("SELECT home_worker FROM jobs WHERE job_id = 'job-alice'")
@@ -149,8 +150,8 @@ def test_anti_starvation_cap_at_5(prem_db, preempt_count):
     # À trois/quatre, une préemption reste possible ; à cinq/six, immunité.
     eligible = preempt_count < 5
     bob_node = get_job_node("job-bob", "stage-low")
-    assert bob_node["status"] == ("ready" if eligible else "running")
-    assert bob_node["preempt_count"] == preempt_count + int(eligible)
+    assert bob_node["status"] == ("preempting" if eligible else "running")
+    assert bob_node["preempt_count"] == preempt_count
     assert bob_node["retry_count"] == 0
     assert bob_node["attempt"] == 1
 
@@ -298,6 +299,10 @@ def test_worker_agent_preempt_runner_endpoint(monkeypatch):
     import src.scheduler.worker_agent as worker_agent_mod
     monkeypatch.setattr(worker_agent_mod, "CLUSTER_TOKEN", "test-secret-token")
 
+    monkeypatch.setattr(worker_agent_mod, 'active_executors', {'test-runner-123': {'runner_id': 'test-runner-123', 'job_id': 'test-job', 'process': None}})
+    monkeypatch.setattr(worker_agent_mod, 'preemption_executors', {})
+    monkeypatch.setattr(worker_agent_mod, 'preemption_in_progress', set())
+    monkeypatch.setattr(worker_agent_mod.threading.Thread, 'start', lambda self: None)
     client = worker_app.test_client()
 
     # 1. Requête sans Authorization -> 401
@@ -312,14 +317,14 @@ def test_worker_agent_preempt_runner_endpoint(monkeypatch):
     )
     assert resp_bad.status_code == 401
 
-    # 3. Requête avec token valide -> 200
+    # 3. Requête avec token valide -> 202 (arrêt non encore confirmé)
     resp_ok = client.post(
         "/api/worker/preempt_runner/test-runner-123",
         headers={"Authorization": "Bearer test-secret-token"}
     )
-    assert resp_ok.status_code == 200
+    assert resp_ok.status_code == 202
     data = resp_ok.get_json()
-    assert data["status"] == "preempted"
+    assert data["status"] == "preempting"
     assert data["runner_id"] == "test-runner-123"
 
 
