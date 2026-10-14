@@ -1601,6 +1601,8 @@ def update_job_status():
 
         job_dict = dict(job)
         current_status = job_dict['status']
+        if current_status in ('failed', 'completed'):
+            return jsonify({'status': 'ignored', 'message': 'Job already terminated'}), 200
 
         # Interception explicite et prioritaire des nœuds en état 'preempting' :
         # Doit s'exécuter AVANT toute logique d'annulation sur exit_code négatif (ex: SIGTERM -15 ou SIGKILL -9).

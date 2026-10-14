@@ -901,6 +901,12 @@ def handle_next_node(req):
     missing_paths = req.get("missing_paths") or req.get("missing_deps") or []
     current_image = req.get("current_image")
 
+    # Late completion/cancellation reports must not requeue a terminated DAG.
+    with get_db_conn() as conn:
+        job_state = conn.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,)).fetchone()
+    if job_state and job_state['status'] in ('failed', 'completed'):
+        return {'action': 'finish'}
+
     # 1. Enregistrement résultat nœud précédent
     if node_name:
         failure_reason = req.get("failure_reason")
@@ -1019,6 +1025,8 @@ def handle_next_node(req):
         if not job_row:
             return {"action": "finish", "error": "Job not found"}
         job = dict(job_row)
+        if job["status"] in ("failed", "completed"):
+            return {"action": "finish"}
 
         cursor.execute('SELECT * FROM workers WHERE worker_id = ? OR hostname = ?', (worker_id, worker_id))
         worker_row = cursor.fetchone()

@@ -698,7 +698,8 @@ def get_all_job_nodes(job_id):
 def get_aggregated_job_status(job_id):
     """
     Calcule le statut consolidé du job (completed, failed, running, pending).
-    Dérivé strictement de l'agrégat de tous ses nœuds DAG (Bug 10).
+    Une terminaison explicite du job prime sur les états résiduels des nœuds.
+    Sinon, le statut est dérivé de l'agrégat de ses nœuds DAG (Bug 10).
     """
     with get_db_conn() as conn:
         cursor = conn.cursor()
@@ -706,6 +707,10 @@ def get_aggregated_job_status(job_id):
         job = cursor.fetchone()
         if not job:
             return None
+        # Admission rejection/cancellation may leave ready nodes behind. They
+        # cannot revive a job that the scheduler has explicitly terminated.
+        if job["status"] in ("failed", "completed"):
+            return job["status"]
 
         cursor.execute('SELECT node_name, status, stale FROM job_nodes WHERE job_id = ?', (job_id,))
         nodes = [dict(row) for row in cursor.fetchall()]

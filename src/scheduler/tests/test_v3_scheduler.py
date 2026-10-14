@@ -1674,3 +1674,94 @@ def test_headnode_placement_priority_last_resort_a13(client):
 
 
 
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_impossible_parallel_node_cannot_hide_terminal_job_failure(client, local):
+    """A rejected node plus two ready branches must not keep the CLI polling."""
+    with persistence.get_db_conn() as conn:
+        conn.execute('''INSERT INTO workers
+            (worker_id, hostname, service_url, total_ram_gb, total_vram_gb,
+             unified_memory, cpus, status, last_seen)
+            VALUES ('W_SMALL', 'w_small', 'http://127.0.0.1:9000', 32, 0,
+                    1, 8, 'online', CURRENT_TIMESTAMP)''')
+        conn.commit()
+    plan = {"version": "3.0", "nodes": [
+        {"name": "prepare_a", "deps": [], "resources": {"ram_gb": 2, "cpus": 1}},
+        {"name": "prepare_b", "deps": [], "resources": {"ram_gb": 2, "cpus": 1}},
+        {"name": "too_big", "deps": [], "resources": {"ram_gb": 64, "cpus": 2}},
+    ]}
+    job_id = _submit_test_job(client, json={
+        'repo': 'owner/terminal-status', 'branch': 'main', 'plan': plan, 'is_local': local,
+    }).get_json()['job_id']
+    scheduler_loop.schedule_iteration()
+    with persistence.get_db_conn() as conn:
+        job = conn.execute('SELECT status, finished_at FROM jobs WHERE job_id = ?',
+                           (job_id,)).fetchone()
+        assert job['status'] == 'failed' and job['finished_at']
+        statuses = dict(conn.execute('SELECT node_name, status FROM job_nodes WHERE job_id = ?',
+                                     (job_id,)).fetchall())
+        assert statuses == {'prepare_a': 'ready', 'prepare_b': 'ready', 'too_big': 'failed'}
+    response = client.get('/job_status/' + job_id).get_json()
+    assert response['status'] == 'failed'
+    assert response['exit_code'] == 1
+    assert 'too_big' in response['error_message']
+
+
+@pytest.mark.parametrize('terminal', ['failed', 'completed'])
+@pytest.mark.parametrize('node_status', ['pending', 'ready', 'running', 'preempting', 'done'])
+def test_explicit_terminal_job_status_survives_stale_node_state(client, terminal, node_status):
+    plan = {'version': '3.0', 'nodes': [
+        {'name': 'stage', 'deps': [], 'resources': {'ram_gb': 2, 'cpus': 1}},
+    ]}
+    job_id = client.post('/submit_job', json={
+        'repo': 'owner/terminal-status', 'branch': 'main', 'plan': plan,
+    }).get_json()['job_id']
+    with persistence.get_db_conn() as conn:
+        conn.execute('UPDATE jobs SET status = ?, finished_at = CURRENT_TIMESTAMP WHERE job_id = ?',
+                     (terminal, job_id))
+        conn.execute('UPDATE job_nodes SET status = ? WHERE job_id = ?', (node_status, job_id))
+        conn.commit()
+    assert persistence.get_aggregated_job_status(job_id) == terminal
+    assert client.get('/job_status/' + job_id).get_json()['status'] == terminal
+
+
+def test_nonterminal_job_keeps_independent_ready_branches_running(client):
+    """A branch failure alone is not an explicit whole-job termination."""
+    plan = {'version': '3.0', 'nodes': [
+        {'name': name, 'deps': [], 'resources': {'ram_gb': 2, 'cpus': 1}}
+        for name in ['failed_branch', 'ready_branch']
+    ]}
+    job_id = client.post('/submit_job', json={
+        'repo': 'owner/partial-status', 'branch': 'main', 'plan': plan,
+    }).get_json()['job_id']
+    with persistence.get_db_conn() as conn:
+        conn.execute("UPDATE jobs SET status = 'running' WHERE job_id = ?", (job_id,))
+        conn.execute("UPDATE job_nodes SET status = 'failed' WHERE job_id = ? AND node_name = 'failed_branch'", (job_id,))
+        conn.commit()
+    assert client.get('/job_status/' + job_id).get_json()['status'] == 'running'
+
+
+@pytest.mark.parametrize('reported_status,exit_code', [('running', None), ('failed', -15), ('completed', 0)])
+def test_late_worker_updates_cannot_revive_cancelled_dag(client, reported_status, exit_code):
+    plan = {'version': '3.0', 'nodes': [
+        {'name': 'stage', 'deps': [], 'resources': {'ram_gb': 2, 'cpus': 1}},
+    ]}
+    job_id = client.post('/submit_job', json={
+        'repo': 'owner/late-worker', 'branch': 'main', 'plan': plan,
+    }).get_json()['job_id']
+    assert client.post('/api/jobs/' + job_id + '/stop').status_code == 200
+    response = client.post('/update_job_status', json={
+        'job_id': job_id, 'status': reported_status, 'exit_code': exit_code,
+        'runner_id': 'late-runner', 'worker_id': 'late-worker',
+    })
+    assert response.status_code == 200
+    assert response.get_json()['status'] == 'ignored'
+    next_response = client.post('/api/jobs/' + job_id + '/next_node', json={
+        'node': 'stage', 'status': 'failed', 'exit_code': -15,
+        'worker_id': 'late-worker', 'runner_id': 'late-runner',
+    })
+    assert next_response.get_json()['action'] == 'finish'
+    with persistence.get_db_conn() as conn:
+        assert conn.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,)).fetchone()[0] == 'failed'
+        assert conn.execute('SELECT status FROM job_nodes WHERE job_id = ?', (job_id,)).fetchone()[0] == 'blocked'
