@@ -210,7 +210,8 @@ class TestWorkerCapacities(unittest.TestCase):
     @patch("src.scheduler.worker_agent.safe_docker_rm_f")
     @patch("src.scheduler.worker_agent.update_job_status")
     @patch("src.scheduler.worker_agent.purge_orphan_runners_and_containers")
-    def test_parallel_mode_execution_env_vars(self, mock_purge, mock_status, mock_docker_rm, mock_popen):
+    @patch("src.scheduler.worker_agent.get_runner_host_profile", return_value={"unified_memory": False, "total_ram_gb": 125})
+    def test_parallel_mode_execution_env_vars(self, mock_profile, mock_purge, mock_status, mock_docker_rm, mock_popen):
         """Verify execution in parallel_mode sets CLUSTER_CI_PARALLEL_MODE=1,
         CLUSTER_CI_RUNNER_ID, CLUSTER_CI_JOB_ID, and HEADNODE_URL.
         """
@@ -249,7 +250,8 @@ class TestWorkerCapacities(unittest.TestCase):
     @patch("src.scheduler.worker_agent.safe_docker_rm_f")
     @patch("src.scheduler.worker_agent.update_job_status")
     @patch("src.scheduler.worker_agent.purge_orphan_runners_and_containers")
-    def test_classic_mode_execution_unmodified(self, mock_purge, mock_status, mock_docker_rm, mock_popen):
+    @patch("src.scheduler.worker_agent.get_runner_host_profile", return_value={"unified_memory": False, "total_ram_gb": 125})
+    def test_classic_mode_execution_unmodified(self, mock_profile, mock_purge, mock_status, mock_docker_rm, mock_popen):
         """Verify execution in classic mode does NOT set CLUSTER_CI_PARALLEL_MODE."""
         mock_proc = MagicMock()
         mock_proc.poll.side_effect = [0]

@@ -359,6 +359,19 @@ def is_headnode_host(host_profile: Dict[str, Any]) -> bool:
 
 
 
+def executor_host_profile() -> Dict[str, Any]:
+    """Read the hardware context supplied by the worker to its runner process."""
+    raw = os.environ.get("CLUSTER_CI_HOST_PROFILE")
+    profile = json.loads(raw) if raw else {}
+    if not isinstance(profile, dict):
+        raise ValueError("CLUSTER_CI_HOST_PROFILE must be a JSON object")
+    profile.setdefault("role", os.environ.get("CLUSTER_CI_ROLE", "worker"))
+    profile.setdefault("is_headnode", os.environ.get("IS_HEADNODE") == "1"
+                       or os.environ.get("CLUSTER_CI_ROLE") == "headnode")
+    profile["verify_cgroup"] = False  # Preserve the executor's existing validation path.
+    return profile
+
+
 def is_unified_memory_host(host_profile: Dict[str, Any]) -> bool:
     """Determine whether the host utilizes unified memory (e.g. Grace-Blackwell GB10)."""
     val = host_profile.get("unified_memory")

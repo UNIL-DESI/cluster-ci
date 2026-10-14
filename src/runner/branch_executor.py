@@ -207,13 +207,9 @@ class DockerRunner:
         dvc_cache_dir: Optional[str] = None,
         git_common_dir: Optional[str] = None,
     ) -> int:
-        from src.runner.host_guard import docker_resource_args
+        from src.runner.host_guard import docker_resource_args, executor_host_profile
 
-        host_profile = {
-            "role": os.environ.get("CLUSTER_CI_ROLE", "worker"),
-            "is_headnode": os.environ.get("IS_HEADNODE") == "1" or os.environ.get("CLUSTER_CI_ROLE") == "headnode",
-            "verify_cgroup": False,
-        }
+        host_profile = executor_host_profile()
         node_res = dict(resources or {})
         node_res.setdefault("ram_gb", ram_limit)
         node_res.setdefault("vram_gb", vram_limit)
@@ -866,13 +862,9 @@ class BranchExecutor:
     # -----------------------------------------------------------------
 
     def compute_docker_resource_args(self, resources: Optional[Dict[str, Any]] = None) -> List[str]:
-        from src.runner.host_guard import docker_resource_args
+        from src.runner.host_guard import docker_resource_args, executor_host_profile
 
-        host_profile = {
-            "role": os.environ.get("CLUSTER_CI_ROLE", "worker"),
-            "is_headnode": os.environ.get("IS_HEADNODE") == "1" or os.environ.get("CLUSTER_CI_ROLE") == "headnode",
-            "verify_cgroup": False,
-        }
+        host_profile = executor_host_profile()
         node_res = dict(resources or {})
         node_res.setdefault("ram_gb", self.ram_limit)
         node_res.setdefault("vram_gb", self.vram_limit)

@@ -731,6 +731,23 @@ def get_docker_images():
         logger.error(f"Error querying docker images via 'docker image ls': {e}")
         return None
 
+def get_runner_host_profile():
+    """Raw host capacities for runtime guards, before advertised reserves."""
+    total_ram, _ = get_ram_info()
+    _, free_disk = get_storage_info()
+    gpu_name, _, _, _, _, unified = get_gpu_info()
+    return {
+        "role": ROLE,
+        "is_headnode": ROLE.lower() in ("headnode", "headnode_worker"),
+        "total_ram_gb": total_ram,
+        "disk_free_gb": free_disk,
+        "cpus": get_cpu_info(),
+        "gpu_name": gpu_name,
+        "unified_memory": bool(unified),
+        "arch": get_arch_info(),
+    }
+
+
 def get_worker_capabilities():
     """Aggregates all worker capacities into a single structured dictionary."""
     total_ram_gb, available_ram_gb = get_ram_info()
@@ -1024,6 +1041,9 @@ def execute_job(job):
         if job.get("executor_role"):
             env["CLUSTER_CI_EXECUTOR_ROLE"] = str(job["executor_role"])
         logger.info(f"Parallel mode configured: runner_id={runner_id}, job_id={job_id}, headnode={HEADNODE_URL}")
+
+    # Worker-owned hardware metadata; job secrets never replace the parent context.
+    env["CLUSTER_CI_HOST_PROFILE"] = json.dumps(get_runner_host_profile())
 
     secrets_file = None
     parsed_vars = {}
