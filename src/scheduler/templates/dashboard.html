@@ -1650,6 +1650,7 @@
                     name: name,
                     status: status, // done, running, ready, pending, blocked, failed, missing_deps, skipped
                     machine: en.machine || en.worker_id || null,
+                    worker_id: en.worker_id || null,
                     runner_id: en.runner_id || null,
                     image: en.image || mergedRes.image,
                     priority: en.priority !== undefined ? en.priority : (pn.priority || 0.0),
@@ -3928,8 +3929,11 @@
 
                 // Collect all active executors per machine (A11 - packing & multi-executors)
                 const executorsPerWorker = {};
+                const workerIdByMachine = {};
                 onlineWorkers.forEach(w => {
                     executorsPerWorker[w.worker_id] = [];
+                    workerIdByMachine[w.worker_id] = w.worker_id;
+                    if (w.hostname) workerIdByMachine[w.hostname] = w.worker_id;
                 });
 
                 activeRuns.forEach(r => {
@@ -3943,11 +3947,13 @@
                         const parsed = v3DetailsMap[jobId];
                         const nodes = parsed.nodes || [];
                         const homeWorker = parsed.rawJob?.home_worker || r.home_worker;
+                        const homeWorkerId = workerIdByMachine[homeWorker];
 
                         // Find all nodes running on each machine
                         nodes.forEach(n => {
-                            if (n.status === 'running' && n.machine && executorsPerWorker[n.machine]) {
-                                executorsPerWorker[n.machine].push({
+                            const workerId = workerIdByMachine[n.worker_id] || workerIdByMachine[n.machine];
+                            if (n.status === 'running' && workerId && executorsPerWorker[workerId]) {
+                                executorsPerWorker[workerId].push({
                                     type: 'v3_node',
                                     jobId: jobId,
                                     repo: repoStr,
@@ -3963,7 +3969,7 @@
                                     vramGb: n.resources?.vram_gb || 0,
                                     storageGb: n.resources?.storage_gb || 0,
                                     duration: n.duration,
-                                    isHome: (n.machine === homeWorker),
+                                    isHome: (workerId === homeWorkerId),
                                     isLocal: !!(r.is_local || parsed.rawJob?.is_local),
                                     priority: n.scheduling_priority || n.priority || r.scheduling_priority || 'normal',
                                     preemptCount: n.preempt_count || 0
@@ -3971,32 +3977,9 @@
                             }
                         });
 
-                        // If home worker has no currently running node but job is active, list coordinator
-                        if (homeWorker && executorsPerWorker[homeWorker]) {
-                            const hasRunningOnHome = executorsPerWorker[homeWorker].some(ex => ex.jobId === jobId);
-                            if (!hasRunningOnHome) {
-                                executorsPerWorker[homeWorker].push({
-                                    type: 'v3_coordinator',
-                                    jobId: jobId,
-                                    repo: repoStr,
-                                    branch: branchStr,
-                                    user: userStr,
-                                    nodeName: 'Main Coordinator',
-                                    runnerId: `home-coord-${homeWorker}`,
-                                    image: parsed.defaults?.image || 'nvcr.io/nvidia/pytorch:26.05-py3',
-                                    cpus: 1,
-                                    gpus: 0,
-                                    gpuIds: [],
-                                    ramGb: 2,
-                                    vramGb: 0,
-                                    storageGb: 0,
-                                    isHome: true,
-                                    isLocal: !!(r.is_local || parsed.rawJob?.is_local),
-                                    priority: r.scheduling_priority || 'normal',
-                                    preemptCount: 0
-                                });
-                            }
-                        }
+                        // A home assignment is metadata, not evidence of a separate
+                        // coordinator process or its resource consumption. Only show
+                        // running stages and worker-reported executors.
                     } else if (!isV3) {
                         // Classic job: single machine executor (stackable per A11)
                         const targetWorker = r.worker_id;
