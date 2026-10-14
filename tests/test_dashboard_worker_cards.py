@@ -72,3 +72,67 @@ def test_worker_reported_executors_preserved_and_deduplicated():
     cards = collect([dict(name='train', status='running', machine='worker-alpha',
                           worker_id='w-alpha', runner_id='train')], workers=workers)
     assert [x['runnerId'] for x in cards['w-alpha']] == ['train', 'other']
+
+
+def render_machine_section(priority='low', *, active=True, stage_priority=None):
+    source = TEMPLATE.read_text()
+    parser = source[source.index('        function parseJobPlan(job) {'):
+                    source.index('        // Generate clean Mermaid diagram')]
+    badges = source[source.index('        function formatPriorityBadge(priority) {'):
+                    source.index('        function parseCSV(')]
+    renderer = source[source.index('        async function loadClusterStats() {'):
+                      source.index('        // ── Log Segmentation Engine')]
+    workers = [dict(w, status='online', cpus=20, total_ram_gb=120, total_vram_gb=120,
+                    unified_memory=1, gpu_count=1, gpus_total=1, gpus_allocated=1 if i==0 and active else 0,
+                    total_storage_gb=1000, available_storage_gb=500) for i,w in enumerate(WORKERS)]
+    node = dict(name='train', status='running', machine='worker-alpha', worker_id='w-alpha',
+                runner_id='train', priority=1.0)
+    plan_node = dict(name='train', resources=dict(cpus=8, gpus=1, ram_gb=10, vram_gb=100))
+    if stage_priority: plan_node['scheduling_priority'] = stage_priority
+    job = dict(job_id='synthetic', parallel_mode=1, home_worker='w-beta', repo='example/synthetic',
+               scheduling_priority=priority, is_local=1, nodes=[node],
+               plan_json=dict(defaults={}, nodes=[plan_node]))
+    script = parser + badges + renderer + '\n'
+    script += 'const workers = '+json.dumps(workers)+'; const job = '+json.dumps(job)+';\n'
+    script += 'const activeRuns = '+(' [job]' if active else '[]')+';\n'
+    script += '''
+const container = {innerHTML: ''};
+const window = {};
+const document = {getElementById: () => container};
+function escapeHtml(x) { return String(x ?? ''); }
+function formatElapsed() { return '1m'; }
+function formatBytes(x) { return String(x); }
+async function getActiveRuns() { return activeRuns; }
+async function fetch(url) {
+    let value = url === '/workers' ? workers : url.startsWith('/job_status/') ? job : [];
+    return {ok: true, json: async () => value};
+}
+const errors = [];
+console.error = (...args) => errors.push(args.map(x => String(x)).join(' '));
+(async () => { await loadClusterStats(); console.log(JSON.stringify({html: container.innerHTML, errors})); })();
+'''
+    r = subprocess.run([NODE, '-e', script], check=True, text=True, capture_output=True)
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize('priority', ['low','normal','high'])
+def test_complete_machine_section_with_numeric_dag_rank(priority):
+    result = render_machine_section(priority)
+    assert result['errors'] == []
+    assert 'Machine & Executor Diagnostics' in result['html']
+    assert 'worker-alpha' in result['html'] and 'worker-beta' in result['html']
+    assert 'Stage : train' in result['html']
+    assert '>'+priority+'</span>' in result['html']
+
+
+def test_complete_machine_section_uses_stage_scheduling_priority():
+    result = render_machine_section('low', stage_priority='high')
+    assert result['errors'] == []
+    assert '>high</span>' in result['html']
+
+
+def test_complete_idle_machine_section():
+    result = render_machine_section(active=False)
+    assert result['errors'] == []
+    assert 'Machine & Executor Diagnostics' in result['html']
+    assert 'Coordinator' not in result['html']

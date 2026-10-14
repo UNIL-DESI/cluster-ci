@@ -1654,6 +1654,7 @@
                     runner_id: en.runner_id || null,
                     image: en.image || mergedRes.image,
                     priority: en.priority !== undefined ? en.priority : (pn.priority || 0.0),
+                    scheduling_priority: en.scheduling_priority || res.priority || pn.scheduling_priority || pn.resources?.priority || job.scheduling_priority || 'normal',
                     stale: en.stale !== undefined ? !!en.stale : (pn.stale !== undefined ? pn.stale : true),
                     stale_reason: en.stale_reason || pn.stale_reason || null,
                     duration: en.duration !== undefined ? en.duration : (en.duration_s !== undefined ? en.duration_s : null),
@@ -2566,7 +2567,8 @@
         }
 
         function formatPriorityBadge(priority) {
-            const prio = (priority || 'normal').toLowerCase();
+            // DAG ordering ranks are numeric; scheduling classes are named strings.
+            const prio = typeof priority === 'string' ? priority.toLowerCase() : 'normal';
             if (prio === 'high') {
                 return `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size:0.68rem; padding: 1px 6px;"><i class="bi bi-arrow-up-circle-fill me-1"></i>high</span>`;
             } else if (prio === 'low') {
@@ -3971,7 +3973,7 @@
                                     duration: n.duration,
                                     isHome: (workerId === homeWorkerId),
                                     isLocal: !!(r.is_local || parsed.rawJob?.is_local),
-                                    priority: n.scheduling_priority || n.priority || r.scheduling_priority || 'normal',
+                                    priority: n.scheduling_priority || r.scheduling_priority || 'normal',
                                     preemptCount: n.preempt_count || 0
                                 });
                             }
