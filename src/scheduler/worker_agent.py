@@ -5,6 +5,12 @@ import os
 import re
 import sys
 
+# Direct service execution exposes src/ and src/scheduler/, but package-qualified
+# imports used during private checkpoint preservation also need the source root.
+_SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+if _SOURCE_ROOT not in sys.path:
+    sys.path.insert(0, _SOURCE_ROOT)
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 if hasattr(sys.stderr, "reconfigure"):
