@@ -630,8 +630,11 @@ if [ -n "$BNB_DIR" ] && command -v nvcc >/dev/null; then
     fi
 fi
 
-# Ensure isolated DVC launcher from uv tool is preserved in /home/user/.local/bin
-UV_DVC_BIN="$USER_BASE/share/uv/tools/dvc/bin/dvc"
+# Prefer the durable platform-tool prefix; retain compatibility with old workers.
+UV_DVC_BIN="${CLUSTER_CI_TOOLS_ROOT:-$HOME_DIR/.local/share/cluster-ci-tools}/bin/dvc"
+if [ ! -x "$UV_DVC_BIN" ]; then
+    UV_DVC_BIN="$USER_BASE/share/uv/tools/dvc/bin/dvc"
+fi
 if [ -f "$UV_DVC_BIN" ]; then
     mkdir -p "$USER_BASE/bin"
     ln -sf "$UV_DVC_BIN" "$USER_BASE/bin/dvc"
