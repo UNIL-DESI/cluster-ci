@@ -162,7 +162,7 @@ Set the appropriate priority in your `.cluster-ci` configuration or via the `--p
 
 ### Stage Granularity & Checkpointing for Preemption Resilience
 When designing pipelines that run under `low` priority:
-* **The 30-Second Preemption Signal**: When the scheduler preempts a low-priority container (`scheduler_loop.py:1483`), the worker agent issues a `SIGTERM` signal, granting a **30-second graceful window** before sending `SIGKILL` (`src/runner/worker_agent.py:1578-1597`).
+* **The 30-Second Preemption Signal**: When the scheduler preempts a low-priority container (`scheduler_loop.py:1483`), the worker agent issues a `SIGTERM` signal, granting a **30-second graceful window** before sending `SIGKILL` (`src/scheduler/worker_agent.py:1578-1597`).
 * **Granular DVC Stages**: Decompose monolithic multi-day training scripts into modular DVC stages (e.g. data preprocessing, tokenization, training, evaluation). Stages that have already completed are permanently cached in DVC and will not be recomputed upon requeue.
 * **Regular Checkpointing**: Ensure your training loop saves periodic model weights and optimizer states to disk. Handle `SIGTERM` gracefully or resume automatically from the latest checkpoint so that preempted jobs resume without compute loss.
 
