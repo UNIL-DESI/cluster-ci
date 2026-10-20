@@ -29,11 +29,36 @@ Standard runners operate with the `--ephemeral` flag, processing exactly one job
 For worker nodes to run reliably under heavy GPU training workloads on Grace Blackwell (GB10) architectures, low-level OS configurations must be properly set.
 
 ### Passwordless Sudoers Policy
-The system relies on a dedicated sudoers drop-in configuration at `/etc/sudoers.d/cluster-ci`:
+The system relies on a dedicated sudoers drop-in configuration at `/etc/sudoers.d/cluster-ci` (`src/cluster/setup_runner.sh:144`):
+
 ```text
-$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-worker-agent, /usr/bin/dmesg, /usr/bin/journalctl
+Defaults:$USER !requiretty
+$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-scheduler-loop, /bin/systemctl restart cluster-worker, /usr/bin/systemctl restart cluster-runner-manager, /usr/bin/systemctl restart cluster-scheduler, /usr/bin/systemctl restart cluster-scheduler-loop, /usr/bin/systemctl restart cluster-worker, /usr/bin/dmesg, /bin/dmesg, /usr/bin/journalctl, /bin/journalctl
 ```
-This enables the unprivileged cluster agent user to restart systemd services and read system telemetry logs without interactive password prompts.
+
+This enables the unprivileged cluster agent user to restart the 4 core services and query system telemetry without interactive password prompts.
+
+### Architecture of the 4 Real Systemd Services
+Cluster-CI infrastructure is decoupled into 4 dedicated systemd units:
+
+1. **`cluster-scheduler.service`**: Hosts the Flask/FastAPI REST API on the Headnode (`src/scheduler/headnode_service.py`), handling job submissions, health checks, log queries, and the Web Dashboard.
+2. **`cluster-scheduler-loop.service`**: Runs the decoupled, autonomous scheduling and preemption evaluation engine (`src/scheduler/scheduler_loop.py`), ranking jobs every 5 seconds.
+3. **`cluster-runner-manager.service`**: Manages ephemeral GitHub Actions self-hosted runners (`src/scheduler/runner_manager.py`), auto-healing hung or cancelled slots.
+4. **`cluster-worker.service`**: The worker execution daemon (`src/scheduler/worker_agent.py`), deployed on dedicated compute nodes (`HEC45801`, `HEC45803`) and in dual-mode on the Headnode (`isipol09`).
+
+### Systemd Service Hardening (`10-headnode-guard.conf`)
+To safeguard critical scheduler daemons from eviction during severe memory pressure, a systemd drop-in configuration `10-headnode-guard.conf` is installed on all core services (`/etc/systemd/system/*.service.d/10-headnode-guard.conf`):
+
+* **`OOMScoreAdjust=-900`**: Immunizes the service against the Linux kernel OOM Killer, ensuring the kernel terminates user compute containers before ever touching the scheduler or worker agent.
+* **`MemoryLow=2G` & `MemoryMin=512M`**: Reserves memory protection guarantees from kernel page reclaim.
+* **`CPUWeight=1000` & `CPUShares=2048`**: Guarantees maximum CPU scheduling priority for cluster daemons over batch workloads.
+
+### Cgroup Host Memory Isolation (`cluster-jobs-cgroup.service`)
+To ensure Docker execution containers cannot starve the operating system, `setup_runner.sh:248-283` installs a persistent boot service `cluster-jobs-cgroup.service`:
+
+* Creates `/sys/fs/cgroup/cluster-jobs` (supporting both cgroup v1 and v2).
+* Sets a hard aggregate memory ceiling: `memory.max = MemTotal - 16.0 GB` (or `memory.limit_in_bytes`).
+* Sanctuaries **16 GB of physical RAM** exclusively for the Linux OS, SSH access, and Headnode daemons. All user containers are executed under `--cgroup-parent=/cluster-jobs`.
 
 ### Systemd Hardware Recovery Watchdog
 NVIDIA Grace Blackwell architectures can suffer from kernel panics or physical freezes when CUDA drivers crash under extreme memory allocation conditions. To prevent physical server hangs, systemd's hardware watchdog interface is configured in `/etc/systemd/system.conf`:
@@ -98,23 +123,48 @@ To facilitate distributed computing and peer-to-peer (P2P) artifact sharing, the
 
 ---
 
-## 6. Google Drive Authorization for DVC Storage
+## 6. Cluster Maintenance & Upgrades: `cluster-update`
 
-Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC artifact caching. The credentials must be pre-authorized on each worker host so that headless Docker containers can pull/push artifacts without interactive OAuth prompts.
+The `cluster-update` CLI tool is installed into `$HOME/.local/bin/` (with a `.cmd` wrapper on Windows) to orchestrate software updates and maintenance operations across all cluster machines.
 
-### Standard Headless Authorization Process:
+### Execution Modes
 
-1.  **Generate Credentials Locally**:
-    On a machine with a web browser, initialize the Google Drive authentication flow:
-    ```bash
-    uv run dvc remote modify my_gdrive_remote auth gdrive
-    ```
-2.  **Perform OAuth Authentication**:
-    DVC will display a link. Open this URL in your web browser, log in with your authorized institutional Google account, and grant the required permissions.
-3.  **Retrieve Token**:
-    Copy the authorization code from the browser and paste it back into the terminal. This creates a local token cache file containing the refresh token.
-4.  **Deploy Credentials on Workers**:
-    The resulting token must be deployed on each worker host via the `.env` / `.env.secrets` configuration files. The worker agents automatically mount these credentials at runtime, ensuring DVC commands (`dvc pull`, `dvc push`) run with full permissions inside containers.
+#### Managed Drain Mode (`--queue`, Default)
+The recommended, safe method for rolling out updates across workers:
+```bash
+cluster-update --queue
+```
+*   **Draining Barrier**: Calls `POST /api/maintenance/submit` on the Headnode.
+*   **Non-Disruptive**: Waits for currently running user computation jobs to complete naturally while blocking new jobs from starting.
+*   **Rolling Upgrade**: Updates worker daemons, pulls fresh runtime container images, and restarts systemd services (`cluster-scheduler-loop`, `cluster-worker`, `cluster-runner-manager`).
+*   **Interactive Monitoring**: Streams live maintenance progress to your terminal with automatic recovery if network connections drop temporarily.
+
+#### Emergency Direct Mode (`--force`)
+When the scheduler API is unresponsive or urgent hotfixes are required:
+```bash
+cluster-update --force
+```
+*   Bypasses the queue and Headnode API entirely.
+*   Directly connects via SSH across all physical nodes (`isipol09`, `HEC45801`, `HEC45803`).
+*   Applies code updates and restarts cluster services immediately.
+
+### CLI Options Reference
+
+```text
+cluster-update [--queue | --force] [--branch BRANCH] [--target-repo REPO] [--headnode-url URL] [--token TOKEN] [--description DESC] [--no-wait] [--add-worker HOST]
+```
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--queue` | *(default)* | Submit a queued maintenance job with worker draining. |
+| `--force` | `false` | Bypass queue and execute direct SSH update across all machines. |
+| `--branch` | `main` | Target Git branch of Cluster-CI to deploy. |
+| `--target-repo` | `UNIL-DESI/cluster-ci` | Target Git repository for the update. |
+| `--headnode-url` | `http://130.223.73.209:5000` | Headnode API base endpoint. |
+| `--token` | `$CLUSTER_CI_TOKEN` | Cluster authentication token. |
+| `--description` | `"Cluster upgrade"` | Audit note attached to the maintenance event. |
+| `--no-wait` | `false` | Submit the queued update job and exit immediately without streaming progress. |
+| `--add-worker` | `null` | Register and provision a new physical worker node into the cluster. |
 
 ---
 
@@ -141,7 +191,7 @@ To integrate a new physical worker into the cluster:
 2. Provide the `HEADNODE_URL` and `CLUSTER_TOKEN` when prompted.
 3. Distribute the inter-worker SSH public key (`~/.ssh/id_rsa.pub`) to enable peer-to-peer artifact transfers.
 
-Once the `cluster-worker-agent` service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.
+Once the `cluster-worker` service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.
 
 ### Automatic Capability Discovery
 
@@ -211,4 +261,35 @@ The garbage collector operates in 5 progressive tiers, stopping immediately once
 | **Tier 3** | **Inactive Shared DVC Cache (LRU)** | Purges local DVC cache files for the oldest inactive repositories by LRU (Least Recently Used). |
 | **Tier 4** | **Unused Docker Images (LRU)** | Removes unreferenced Docker images sorted by LRU. Images referenced by any existing container (running or stopped) are strictly protected. |
 | **Tier 5** | **Inactive Workspaces (LRU)** | Completely deletes inactive repository checkouts under `repositories/` in oldest LRU order as a last resort. |
+
+---
+
+## 11. Shared Lab Governance, Co-Administration & Resource Allocation
+
+To guarantee high operational availability, fair resource sharing, and transparent governance across the AAIL research community, administrative responsibilities and access policies are formally structured under the faculty delegation of **Prof. Yash Raj Shrestha**.
+
+### Co-Administration Protocol (Henri Jamet & Johannes David)
+
+System and platform operations are jointly managed in a complementary co-administration model between **Henri Jamet** and **Johannes David**:
+
+* **Henri Jamet (Lead Platform Architect & User Operations)**:
+    * **Single Point of Contact (SPOC)**: Triages user onboarding requests and daily support through the dedicated Microsoft Teams channel **DESI - Compute & Clusters**.
+    * **Access & Governance**: Manages GitHub organization memberships (`UNIL-DESI`), team permissions, and repository provisioning.
+    * **Scheduling & Quotas**: Oversees scheduler algorithm tuning (`scheduling_order.py`, `scheduler_loop.py`), priority arbitration, and cluster-wide preemption policies.
+* **Johannes David (System Infrastructure & Hardware Co-Administrator)**:
+    * **Physical Infrastructure Co-Administration**: Full administrative and root access across all cluster compute nodes (`isipol09`, `HEC45801`, `HEC45803`).
+    * **CDI & Driver Persistence**: Maintenance of the NVIDIA Container Device Interface (CDI) configuration and boot services (`nvidia-cdi-refresh.service`).
+    * **Data Isolation & Security**: Supervision of the `--local` execution flag and local mount security for sensitive partner datasets (e.g. Caritas).
+    * **Operational Backup**: Mutual operational continuity and failover administration when rolling out cluster updates (`cluster-update --queue` / `--force`).
+
+### Resource & Priority Matrix across User Profiles
+
+The cluster enforces a tiered governance matrix calibrated to align compute availability with research milestones:
+
+| User Profile | Typical Workload & Scope | Priority Allocation | Quotas & Execution Lifespan | Target Infrastructure |
+| :--- | :--- | :--- | :--- | :--- |
+| **Core AAIL Researchers**<br>*(PhD candidates, Postdocs)* | Core research papers, foundational training, major conference submissions. | **`normal`** default;<br>**`high`** during conference deadline crunches. | **Permanent access**.<br>Multi-machine fair-share automatically rebalanced across active users. | `HEC45801`<br>`HEC45803`<br>`isipol09` |
+| **External Collaborators**<br>*(e.g. Colombo HCI Lab / `deeptrace-bench`)* | Joint research benchmarks, external peer collaboration, multi-institutional studies. | **`normal`** for interactive runs;<br>**`low`** strongly encouraged for large hyperparameter sweeps. | **6-month renewable window**.<br>Preemptable under `low` priority with automatic requeue. | `HEC45801`<br>`HEC45803`<br>`isipol09` |
+| **Master's Thesis Students**<br>*(Supervised academic projects)* | Master's thesis modeling and empirical evaluations. | **`low`** by default;<br>**`normal`** for final evaluation runs. | **Contingent of 2 students/year** (attributed/mentored by Henri).<br>Strict 24h job timeout ceiling (`MAX_RUNTIME_HOURS <= 24`). | Primary nodes under fair-share |
+
 
