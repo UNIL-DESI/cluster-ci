@@ -432,10 +432,15 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         print("Error: HEADNODE_URL is required to submit a job.")
         sys.exit(1)
 
+    token = os.environ.get("CLUSTER_TOKEN")
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     # Active JIT Network Diagnostic
     try:
         print(f"Connecting to headnode at {headnode_url} (checking connectivity)...")
-        requests.get(f"{headnode_url}/check_space", timeout=3, allow_redirects=False)
+        requests.get(f"{headnode_url}/check_space", headers=headers, timeout=3, allow_redirects=False)
     except requests.exceptions.Timeout:
         print(f"Error: Connection to headnode at {headnode_url} timed out (limit: 3s).")
         print("   Please check that the headnode service is running and accessible.")
@@ -444,20 +449,23 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         print(f"Error: Could not connect to headnode at {headnode_url}: {e}")
         print("   Please verify the URL and network configuration.")
         sys.exit(1)
+
+    target_repo_dir = repo_dir or (local_repo_path if (is_local and local_repo_path) else None)
+    if not target_repo_dir and os.environ.get("GITHUB_WORKSPACE"):
+        target_repo_dir = os.environ.get("GITHUB_WORKSPACE")
+
     if not commit_hash:
         commit_hash = os.environ.get("CALLER_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
         if not commit_hash:
             try:
                 import subprocess
-                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+                cmd_cwd = target_repo_dir if (target_repo_dir and os.path.exists(target_repo_dir)) else None
+                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cmd_cwd, text=True).strip()
             except Exception:
                 commit_hash = "local-head"
 
     # Strategy: Fetch .cluster-ci content first to parse all requirements
     content = None
-    target_repo_dir = repo_dir or (local_repo_path if (is_local and local_repo_path) else None)
-    if not target_repo_dir and os.environ.get("GITHUB_WORKSPACE"):
-        target_repo_dir = os.environ.get("GITHUB_WORKSPACE")
 
     if target_repo_dir:
         ci_file = os.path.join(target_repo_dir, ".cluster-ci")
@@ -849,7 +857,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             # 2. Récupérer l'URL du worker si disponible pour notification de repli direct
             try:
-                resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10, allow_redirects=False)
+                resp = requests.get(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
                 if resp.status_code == 200:
                     job = resp.json()
                     worker_url = job.get('worker_service_url')
@@ -918,7 +926,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
     while True:
         try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}", timeout=10, allow_redirects=False)
+            resp = requests.get(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
             resp.raise_for_status()
             status_retry_tracker.record_success()
             job = resp.json()
@@ -931,7 +939,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 if now - last_queue_check >= 10:
                     last_queue_check = now
                     try:
-                        status_resp = requests.get(f"{headnode_url}/scheduler_status", timeout=5, allow_redirects=False)
+                        status_resp = requests.get(f"{headnode_url}/scheduler_status", headers=headers, timeout=5, allow_redirects=False)
                         if status_resp.status_code == 200:
                             data = status_resp.json()
                             workers = data.get("workers", [])
@@ -1096,7 +1104,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
             logs_resp = None
             if headnode_url:
                 try:
-                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", timeout=5, allow_redirects=False)
+                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                     if h_resp.status_code == 200:
                         logs_resp = h_resp
                     elif h_resp.status_code == 404:
@@ -1106,7 +1114,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                 f"Bascule de repli vers /api/jobs/{job_id}/logs.\n"
                             )
                             fallback_warned = True
-                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", timeout=5, allow_redirects=False)
+                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
                 except requests.exceptions.RequestException as e:
@@ -1124,7 +1132,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             if logs_resp is None and worker_url:
                 try:
-                    logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", timeout=5, allow_redirects=False)
+                    logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                 except requests.exceptions.RequestException as e:
                     is_exhausted, err_msg = log_retry_tracker.record_error(
                         error=e,

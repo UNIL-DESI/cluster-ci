@@ -66,13 +66,33 @@ DOCKER_IMAGE_AMD64=my-custom-registry/my-project-image-amd64:latest
 
 ## 3. Container Lifecycle in Parallel Mode (v3)
 
-When running with `PARALLEL_STAGES=true`:
-* **Long-Lived Container**: A container is kept running on the assigned worker across multiple stages belonging to the same job.
-* **Dynamic Image Switching**: If the next assigned node specifies a different Docker image, the executor stops the current container and starts a new one with the requested image.
-* **Isolated Home Volumes**: To preserve package installations across runs while avoiding ABI incompatibilities between different images or Python versions, each image uses a dedicated Docker named volume mounted onto `/home/user`:
-  ```text
-  cluster-ci-home-${REPO_SLUG}-${IMAGE_SLUG}
-  ```
+When running with `PARALLEL_STAGES=true`, branch executors optimize container reuse while strictly enforcing resource boundaries (`src/runner/branch_executor.py:1230-1262`):
+
+### Dynamic Container Reuse & Hot Recreation
+* **Warm Container Persistence**: On each assigned worker, the container remains running between consecutive DAG stages of the same job to eliminate container boot overhead.
+* **Strict Parameter Comparison**: Before executing the next assigned stage, the branch executor computes the exact Docker runtime arguments (`compute_docker_resource_args`):
+  - `--memory` and `--memory-swap`
+  - `--cpus`
+  - `--gpus` (or `CUDA_VISIBLE_DEVICES`)
+  - `--shm-size`
+  - `--cgroup-parent`
+* **Hot Container Recreation**: If either the required Docker image changes (`action: "switch_image"`) OR any resource constraint changes between two consecutive stages, the executor gracefully stops the active container and launches a fresh container tailored to the new stage's requirements.
+
+### Isolated Per-Image Home Volumes
+To preserve package installations across runs while avoiding ABI incompatibilities between different images or Python versions, each image uses a dedicated Docker named volume mounted onto `/home/user`:
+
+```text
+cluster-ci-home-${REPO_SLUG}-${IMAGE_SLUG}
+```
+
+* For direct local runs submitted via `cluster-run --local`, the repository slug is prefixed with `_local-` (yielding `cluster-ci-home-_local-${REPO_SLUG}-${IMAGE_SLUG}`).
+* This guarantees complete hermetic isolation between heterogeneous runtimes (e.g. NVIDIA NeMo vs standard PyTorch) while preserving installed wheels and virtual environments across runs of the same project and image.
+
+### Shared Fast Package Caches
+To avoid redundant network downloads across different containers, workspaces, and images on the same physical worker, every execution container mounts shared worker-level cache volumes:
+
+* **`cluster-ci-uv-cache`**: Mounted onto `/root/.cache/uv` (or `/home/user/.cache/uv`), accelerating `uv pip install` resolutions.
+* **`cluster-ci-pip-cache`**: Mounted onto `/root/.cache/pip` (or `/home/user/.cache/pip`), providing shared wheel caching.
 
 ---
 

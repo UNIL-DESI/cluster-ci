@@ -14,50 +14,30 @@ Below is the high-level technical architecture of the Cluster-CI platform showin
 
 ## 1. Garbage Collection
 
-The cluster implements a multi-tiered garbage collection system to manage disk space on worker nodes. The primary orchestrator is `src/runner/gc_orchestrator.py`.
+The cluster implements a multi-tiered, Least Recently Used (LRU) garbage collection system to manage disk space on worker nodes (`src/runner/gc_orchestrator.py`).
 
-### Just-In-Time (JIT) Tiered LRU Garbage Collection
+### Tiered LRU Garbage Collection Architecture
 
-To prevent worker hard drives from filling up, the runner executes a JIT cleanup routine managed by `gc_orchestrator.py` before and after each job run.
+To prevent worker hard drives from filling up, the runner executes a JIT cleanup routine before and after each job run:
 
-*   **Safety Threshold**: The safety threshold is set to **100 GB** (configured via `GC_FREE_SPACE_THRESHOLD_GB` on the worker host).
-*   **LRU Registry**: The system maintains a metadata registry (`repositories/registry.json`) tracking project usage (active/idle status, last execution timestamp, and disk size).
-*   **Trigger**: If the free space on the partition drops below 100 GB when starting a job, the GC selects the oldest `idle` repositories and applies a **5-level progressive purge** (Least Recently Used first) until the threshold is restored.
+*   **Standard Eviction Threshold**: Triggered when partition free space drops below **100 GB** (`FREE_SPACE_THRESHOLD_GB = 100`).
+*   **Panic Threshold**: Escalates if free space drops below **50 GB** (`PANIC_THRESHOLD_GB = 50`), running aggressive pruning.
+*   **Active Job Protection Window**: Any workspace with an active container or whose execution finished within the last **6 hours** (`GC_PROTECT_HOURS = 6.0`) is strictly protected against eviction.
+*   **Project Metadata Registry**: Maintains `repositories/registry.json` tracking project usage (`status: "idle"|"running"`, `last_execution` timestamp, and disk footprint).
 
-#### Progressive Cleanup Levels
-The garbage collector frees space in five progressive steps:
+#### Strict 5-Tier Eviction Hierarchy
 
-| Level | Target | Action & Recovery |
-| :--- | :--- | :--- |
-| **Level 1** | **DVC History Purge** | Purges historical DVC files in the local cache, preserving only the **last 2 commits** of the repository. |
-| **Level 2** | **Large Untracked Files** | Force-deletes any untracked or ignored files in the workspace that are **larger than 500 MB**. |
-| **Level 3** | **Docker Dependency Volume** | Deletes the project-specific Docker volume (`cluster-ci-home-<owner-repo>`), clearing cached `uv` and `pip` installations. They will be re-downloaded/reinstalled during the next run. |
-| **Level 4** | **Local DVC Cache Wipe** | Wipes the entire local `.dvc/cache` directory. Before wiping, the GC pushes dirty/idle caches to the central backup (Google Drive). The next run will pull them back over the LAN or GDrive. |
-| **Level 5** | **Full Repository Wipe** | Deletes the entire repository directory (`repositories/<owner-repo>`) from the worker. |
+When free disk space is below threshold, `gc_orchestrator.py` sequentially iterates through 5 hierarchical cleanup tiers, stopping immediately once free space exceeds the target threshold:
 
-Active repositories currently running jobs are **never** targeted by the GC.
+| Tier | Category | Targets & Actions | Safety Guarantees |
+| :--- | :--- | :--- | :--- |
+| **Tier 1** | **Regenerable Caches** | - `docker system prune -f`<br>- `dvc gc --workspace --rev HEAD`<br>- Caches under `.cache/uv`, `.cache/pip`, `.cache/huggingface`, `.cache/torch`, and `__pycache__` | **Zero loss**: Never deletes `.venv` directories, Git history, or tracked repository files. |
+| **Tier 2** | **Inactive Docker Volumes** | Deletes idle named Docker home volumes (`cluster-ci-home-*`) belonging to inactive projects. | Cached wheels are cleared; packages will be re-installed from locks on next run. |
+| **Tier 3** | **Stale DVC Cache Entries** | Cleans shared and local DVC cache files for the oldest idle repositories according to the LRU registry. | Only unreferenced DVC hashes are removed; remote backups remain intact. |
+| **Tier 4** | **Unused Docker Images** | Prunes dangling and unused Docker images in LRU order (`docker image rm`). | Images currently referenced by active or stopped containers are strictly preserved. |
+| **Tier 5** | **Full Inactive Workspaces** | Deletes complete workspace directories under `repositories/` for the least recently used idle projects. | **Last Resort**: Executed only after Tiers 1–4 are exhausted and disk space remains critical. |
 
-### Emergency Garbage Collection (50 GB Threshold)
-
-The worker node implements an automatic, destructive **Emergency Garbage Collection** loop within `src/runner/gc_orchestrator.py` designed to prevent disk space exhaustion.
-
-1.  **Triggering and Panic Threshold**: The emergency GC is launched via `run_gc()`. It checks the free space of the storage partition where repositories reside (derived using `shutil.disk_usage`). The panic threshold is set to a hardcoded limit of **50 GB** (`PANIC_THRESHOLD_GB = 50`).
-2.  **Resource Pruning**: Before deleting workspace directories, the script executes a general Docker system cleanup by calling `docker system prune -f` to reclaim space from dangling images, unused networks, and stopped containers.
-3.  **Workspace Eviction Strategy (FIFO/LRU)**: If the storage space remains below 50 GB after the Docker prune, the script parses the `registry.json` database. It filters out all projects marked as `status: "idle"`. It then sorts these idle projects chronologically by their `last_execution` timestamp, placing the least recently used (LRU) project at the front.
-4.  **Destructive Cleanup**: For each candidate project, the GC invokes `cleanup_level_5(project_path, project_name)`, which executes a recursive directory deletion via `shutil.rmtree(project_path)`. No remote backups or DVC pushes are executed during this emergency routine.
-5.  **Termination Condition**: The deletion loop stops immediately once the available disk space climbs back above the 50 GB limit. The database `registry.json` is updated, writing `status: "deleted"` and `size_bytes: 0` for all evicted projects.
-
-### Lazy Workspace Transfer (`sync_status`)
-
-For standard maintenance, `src/runner/gc_orchestrator.py` implements a **Lazy Workspace Transfer** routine through `run_transfer_gc()` to offload older workspace folders.
-
-1.  **Threshold and Scan**: Triggered when the worker's free disk space drops below `FREE_SPACE_THRESHOLD_GB` (defaults to 100 GB, configurable via the `GC_FREE_SPACE_THRESHOLD_GB` environment variable). The orchestrator identifies candidate projects marked as `"idle"`.
-2.  **DVC Remote Verification**: The worker inspects the workspace configuration at `.dvc/config`. If a remote is configured (determined by searching for the `remote =` string), the project cannot be deleted without pushing its data.
-3.  **Headnode Query & Push**: The worker queries the central headnode API endpoint (`HEADNODE_URL/check_space`) to check if the remote repository has sufficient storage capacity. If the headnode is available and has enough space, the worker executes a local `dvc push` inside the project path.
-4.  **Eviction & Sync Status Update**:
-    *   If the `dvc push` succeeds, the project is evicted from the worker via `cleanup_level_5` (workspace directory deleted). The project status in `registry.json` is set to `"deleted"`, its size is set to `0`, and its `sync_status` is updated to `"done"`.
-    *   If the headnode is unreachable, full, or if the `dvc push` fails, the local workspace deletion is deferred. The project's `sync_status` is set to `"pending"` in the registry, ensuring it is kept locally until the next maintenance pass.
-    *   If the workspace has no DVC remote configured, it is directly evicted and marked as `status: "deleted"` and `sync_status: "done"`.
+Active repositories currently running jobs are **never** targeted by any tier of the GC.
 
 ---
 
@@ -113,16 +93,29 @@ The `bitsandbytes` quantization package loads pre-compiled CUDA backend librarie
 The cluster employs several watchdog processes to ensure job stability and prevent resource exhaustion.
 
 ### Double-Threshold GPU Memory Guard & Host Watchdog
-To prevent jobs from freezing the operating system or starving other tasks on unified memory platforms, `cluster-ci` implements a double-threshold memory protection system.
+To prevent jobs from freezing the operating system or starving other tasks on unified memory platforms (such as NVIDIA Grace Blackwell GB10), `cluster-ci` implements a double-threshold memory protection system.
 
 1.  **Process-Level CUDA Hard-Cap**: The script `src/runner/gpu_memory_guard.py` is injected into the container's `PYTHONSTARTUP` environment variable. Before user code executes, it checks `CLUSTER_CI_VRAM_LIMIT_GB`. If set, it calculates the VRAM fraction and hard-caps PyTorch's memory allocation via:
     `torch.cuda.set_per_process_memory_fraction(fraction, device=0)`
-2.  **Unified Memory (Grace Blackwell) Fallback**: On unified systems (e.g. Grace Blackwell GB10), standard CUDA device queries for total memory return `0` or `[N/A]`. The guard detects this and falls back to reading system RAM from `/proc/meminfo` (`MemTotal:`), which serves as the shared CPU-GPU pool.
+2.  **Unified Memory (Grace Blackwell GB10) Architecture**: On unified memory systems, CPU and GPU share a single physical NVLink-C2C memory pool (128 GB). Standard CUDA device queries for total memory return `0` or `[N/A]`. The guard detects this architecture and falls back to reading system RAM from `/proc/meminfo` (`MemTotal:`), dynamically enforcing limits against the shared pool.
 3.  **Host-Level Dual Threshold Watchdog**: The host script `src/runner/gpu_watchdog.sh` monitors the running container every 2 seconds:
     *   **Discrete GPU Mode**: Queries `nvidia-smi --query-gpu=memory.used`.
     *   **Unified Memory Mode**: Fallback to `/proc/meminfo` (`MemTotal - MemAvailable`).
     *   **Soft VRAM Threshold (User-declared)**: If memory exceeds this limit, it flags a violation. If the violation persists for `SOFT_THRESHOLD = 2` consecutive checks (4 seconds grace period), the watchdog kills the container (`docker kill`).
-    *   **Hard RAM Threshold (90% System RAM)**: If memory usage exceeds 90% of total system RAM, the watchdog immediately kills the container on the very first check to protect the host OS from kernel panic/OOM lockups.
+    *   **Hard Host Guard Threshold**: If host free memory drops to `MemAvailable < 12 GiB` or total system RAM usage exceeds **90%**, the watchdog immediately kills the container on the very first check to protect the host OS from kernel panics, freeze, or unrecoverable lockups.
+
+#### Forensic Exit Code 137 Diagnosis (`host_guard_killed.marker` vs `OOMKilled`)
+When a stage terminates abruptly with exit code `137` (SIGKILL), the execution runner performs an automated forensic check to distinguish host-level emergency eviction from container-level quota exhaustion:
+
+*   **Host Guard Emergency Termination (`host_guard_killed.marker`)**:
+    When `gpu_watchdog.sh` kills a runaway container to protect the server (`MemAvailable < 12 GiB` or RAM > 90%), it drops a marker file `host_guard_killed.marker` in the job directory. The runner catches this file and reports:
+    ```text
+    HostMemoryPressureExceeded: Stage '<stage>' was terminated by the host memory watchdog.
+    Cause: Available system memory fell below 12 GiB (or exceeded 90% capacity).
+    Remedy: Decrease concurrency, reduce DataLoader workers, or schedule on a worker with larger capacity.
+    ```
+*   **Container Quota OOM Killer (`OOMKilled`)**:
+    If no marker file exists, the runner inspects container metadata via `docker inspect --format '{{.State.OOMKilled}}'`. If `true`, the container was terminated by the Linux cgroup OOM Killer for exceeding its own declared memory envelope (`meta.cluster.ram_gb` or `vram_gb` on GB10). The runner prompts the researcher to increase `ram_gb` in `dvc.yaml`.
 
 ### Zombie GC (Multi-dimensional Inactivity)
 To prevent orphaned or stuck container processes from indefinitely consuming cluster resources, `src/runner/gc_orchestrator.py` runs a **Zombie Garbage Collection** daemon via `run_zombie_gc()`.

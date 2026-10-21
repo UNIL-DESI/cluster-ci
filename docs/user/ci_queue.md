@@ -48,16 +48,33 @@ Cluster-CI supports two scheduling modes depending on the `PARALLEL_STAGES` conf
 ### A. Classic Mode (`PARALLEL_STAGES=false` or omitted)
 * **Single-Worker Assignment**: One job occupies at most one machine.
 * **Sequential Repro**: The assigned worker runs `dvc repro` from start to finish.
-* **Queue Discipline**: Strict FIFO with branch exclusivity.
+* **Queue Discipline**: Governed by the unified multi-level scheduling order (priority, fair-share, and FIFO) with branch exclusivity.
 
 ### B. Parallel DAG Mode (`PARALLEL_STAGES=true`)
 * **Multi-Worker Scaling**: A single job can scale across multiple machines (up to 8 workers) to run independent DAG branches concurrently.
 * **Granular Stage Scheduling**: Stages are assigned individually as soon as their parents complete.
-* See the [Parallel DAG Execution Guide](parallel_execution.md) for architecture details.
+* **See the [Parallel DAG Execution Guide](parallel_execution.md) for architecture details.**
 
 ---
 
-## 4. Multi-Machine Fair-Share Scheduling (v3)
+## 4. Unified 6-Level Scheduling Order
+
+Cluster-CI evaluates all pending and ready execution nodes using a deterministic, 6-level hierarchical sort key (`src/scheduler/scheduling_order.py`):
+
+1. **Executable Status**: `ready` nodes (status rank `0`) are evaluated before unready `pending` nodes (status rank `1`).
+2. **Job Priority Level**: `high` priority (rank `0`) > `normal` priority (rank `1`) > `low` priority (rank `2`).
+3. **User Machine Fairness**: A researcher currently holding **0 active physical machines** is prioritized over a researcher already occupying $\ge 1$ machines (`jobs.username` machine count).
+4. **FIFO Arrival Order**: Older submissions are scheduled first based on submission timestamp (`jobs.created_at ASC`).
+5. **Warm Container Affinity & DAG Depth**:
+    * `direct_child` AND `same_image` (rank `0` — optimal warm cache and execution flow).
+    * `same_image` (rank `1` — avoids container recreation and image switching).
+    * `direct_child` (rank `2` — execution continuity).
+    * Topological DAG depth priority (`-priority`).
+6. **Tie-Breaker**: Lexicographical node name (`node_name ASC`).
+
+---
+
+## 5. Multi-Machine Fair-Share & Preemption Engine
 
 In parallel mode, Cluster-CI enforces an equitable resource-sharing algorithm across researchers.
 
@@ -98,12 +115,25 @@ flowchart TD
    * **Home Worker**: If no node is ready, it waits (`action: "wait"`).
    * **Additional Worker**: If no node is ready, it yields immediately (`action: "yield"`), ensuring no idle workers are hoarded.
 
-4. **Zero Preemption**:
-   **No running stage is ever interrupted or killed** to yield resources. Rebalancing occurs strictly when a stage completes and its outputs are committed.
+### Targeted High-Priority Preemption Engine
+To guarantee urgent turnaround for critical experiments without cluster starvation, Cluster-CI implements an active, targeted preemption engine (`src/scheduler/scheduler_loop.py:1483-1579`):
+
+* **Trigger Condition**: A `high` priority node is in `ready` state, but no eligible worker machine can accommodate it with the currently available CPU, RAM, or GPU resources.
+* **Target Victim Selection**:
+    1. **Strict Priority Inversion**: The running stage must have priority strictly equal to `low` (`normal` and `high` running jobs are completely immune to preemption).
+    2. **Cross-User Isolation**: Preemption operates strictly across different researchers: $U_{\text{requester}} \neq U_{\text{victim}}$. A user's high-priority run never preempts their own running low-priority stages.
+    3. **Anti-Starvation Bound**: The candidate stage must have been preempted fewer than 3 times ($N_{\text{preempt}} < 3$). Once a stage reaches 3 preemptions, it gains absolute immunity against further evictions.
+    4. **Minimizing Lost Compute**: Among eligible candidates, the scheduler picks the most recently started job (`started_at DESC`), preserving long-running computation.
+    5. **Hardware Admissibility**: The physical machine released by the victim must satisfy the hardware requirements of the requesting `high` priority node.
+* **Graceful Eviction Protocol**:
+    1. The scheduler invokes `POST /api/worker/preempt_runner/<runner_id>`.
+    2. The worker agent sends `SIGTERM` to the container process, granting a **30-second graceful termination window** to checkpoint intermediate artifacts (`src/runner/worker_agent.py:1578-1597`), followed by `SIGKILL` if still unresponsive.
+    3. The preempted stage is immediately and transparently requeued to `ready` status with `preempt_count += 1`, `preempted_by = "<job_id>:<node_name>"`, and timestamp `preempted_at`.
+    4. **Zero Penalty Guarantee**: Preemption is not an error; it incurs no failure status, leaves `retry_count` and `attempt` intact, and leaves zero error codes.
 
 ---
 
-## 5. Worker Selection & Data Locality
+## 6. Worker Selection & Data Locality
 
 When multiple eligible workers can execute a ready stage, the scheduler selects the worker with highest priority:
 1. **Continuation Priority**: Prefers assigning a child stage to the worker that just finished its parent (reusing the warm container and local cache).
@@ -112,7 +142,7 @@ When multiple eligible workers can execute a ready stage, the scheduler selects 
 
 ---
 
-## 6. Runtime Limits & Auto-Cancellation
+## 7. Runtime Limits & Auto-Cancellation
 
 ### Timeout Watchdog
 Every job must specify `MAX_RUNTIME_HOURS` in its `.cluster-ci` file (maximum: 24 hours). If your job exceeds this limit, it is automatically terminated.
@@ -121,5 +151,9 @@ Every job must specify `MAX_RUNTIME_HOURS` in its `.cluster-ci` file (maximum: 2
 You can cancel an active job from the [Dashboard](dashboard.md) by clicking **Stop**. All assigned workers release their containers and reclaim GPU memory within seconds.
 
 ### Auto-Cancellation on New Submissions
-* **Draft Branches (`cluster-draft/*`)**: Only one active run per researcher. Pushing a new run cancels earlier pending or running executions.
-* **Standard Branches (`main`, `feature/*`)**: Pushing a new commit cancels older **pending** jobs on that branch, while running jobs are allowed to complete.
+Cluster-CI prevents resource waste by automatically canceling superseded runs (`src/headnode/headnode_service.py:914-975`):
+
+* **Draft Branches (`cluster-draft/*`)**: Enforces **cross-repository single-run semantics** per researcher. Pushing a new draft commit automatically cancels any older active executions (pending, assigned, running) owned by that user across all repositories.
+* **Local Drafts (`local-draft/*`)**: Automatically cancels older active local runs owned by the same user.
+* **Standard Branches (`main`, `feature/*`)**: Pushing a new commit cancels older **pending** jobs on the same `(repo, branch)` pair. Running jobs are allowed to complete undisturbed.
+

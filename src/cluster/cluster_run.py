@@ -333,6 +333,9 @@ def find_job_id_from_headnode(headnode_url, repo, branch):
     try:
         url = f"{headnode_url}/api/projects/{repo}/runs"
         req = urllib.request.Request(url)
+        cluster_token = os.environ.get("CLUSTER_TOKEN")
+        if cluster_token:
+            req.add_header("Authorization", f"Bearer {cluster_token}")
         with cluster_urlopen(req, timeout=5) as resp:
             runs = json.loads(resp.read().decode())
             for run in runs:
@@ -996,6 +999,9 @@ def stream_logs(run_id, commit_sha, branch=None):
                         try:
                             url = f"{headnode_url}/job_status/{job_id}"
                             req = urllib.request.Request(url)
+                            cluster_token = os.environ.get("CLUSTER_TOKEN")
+                            if cluster_token:
+                                req.add_header("Authorization", f"Bearer {cluster_token}")
                             with cluster_urlopen(req, timeout=5) as resp:
                                 job_data = json.loads(resp.read().decode())
                                 status_val = job_data.get("status")

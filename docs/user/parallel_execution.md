@@ -78,7 +78,21 @@ flowchart TD
 
 ---
 
-## 4. Multi-Node Packing & Machine Sharing (A11)
+## 4. Dynamic Extra-Worker Allocation (`extra_worker_sort_key`)
+
+When independent stages in a DAG become ready simultaneously and idle worker capacity exists across the cluster, the scheduler dynamically assigns additional workers to burst execution.
+
+To guarantee cluster-wide fairness and prevent monopolization, competing jobs requesting extra workers are ranked using the canonical `extra_worker_sort_key` (`src/scheduler/scheduling_order.py:224-245` and `scheduler_loop.py:2095-2121`):
+
+1. **Job Priority Level**: Jobs with `high` priority take precedence over `normal`, which take precedence over `low` (`priority_val`: `high` = 0, `normal` = 1, `low` = 2).
+2. **Machine Allocation Fairness**: Prefers the job holding the fewest active worker machines (`len(current_active_workers)` ASC).
+3. **User Machine Balance**: Prefers the user with fewer total physical machines currently occupied across all their jobs (`user_machine_counts` ASC).
+4. **FIFO Ready Timestamp**: Prefers the job whose oldest ready stage has been waiting the longest (`oldest_ready_node_time ASC`).
+5. **Data Locality Affinity**: Ranks placement using descending data affinity score (`-data_affinity_score`), rewarding workers that already cache input dependencies.
+
+---
+
+## 5. Multi-Node Packing & Machine Sharing (A11)
 
 When hardware resources permit (`ALLOW_PACKING = True`), multiple branch executors can execute concurrently on the same physical machine:
 
@@ -88,7 +102,7 @@ When hardware resources permit (`ALLOW_PACKING = True`), multiple branch executo
 
 ---
 
-## 5. Headnode as Worker of Last Resort (A13/A14)
+## 6. Headnode as Worker of Last Resort (A13/A14)
 
 The Headnode functions primarily as the cluster API, database host, and DAG scheduler. To safeguard core cluster services:
 
@@ -98,7 +112,7 @@ The Headnode functions primarily as the cluster API, database host, and DAG sche
 
 ---
 
-## 6. Active Memory Ceilings & Isolation Flags (A12)
+## 7. Active Memory Ceilings & Isolation Flags (A12)
 
 To prevent unconstrained processes from causing host kernel panics or physical server freezes, strict resource isolation flags are unconditionally applied on all machines:
 
@@ -128,7 +142,7 @@ OOMKilled: Stage '<stage_name>' exceeded allocated memory and was killed by syst
 
 ---
 
-## 7. Git Synchronization and Merge Driver
+## 8. Git Synchronization and Merge Driver
 
 Because multiple workers execute nodes of the same branch simultaneously, Git synchronization is automated to avoid lock file collisions.
 
@@ -143,7 +157,7 @@ Because multiple workers execute nodes of the same branch simultaneously, Git sy
 
 ---
 
-## 8. Heavy Artifact Handling (No Centralization)
+## 9. Heavy Artifact Handling (No Centralization)
 
 Heavy model weights and datasets tracked by DVC are **never centralized** onto the headnode or pushed to intermediate Git commits.
 
@@ -163,7 +177,7 @@ Heavy model weights and datasets tracked by DVC are **never centralized** onto t
 
 ---
 
-## 9. Aggregated Real-Time Logging
+## 10. Aggregated Real-Time Logging
 
 When multiple stages run across distinct machines in parallel, their logs are unified and multiplexed.
 
@@ -177,3 +191,4 @@ Every log line emitted by an executor container is tagged with its stage name an
 ```
 
 Both the local CLI (`cluster-run`) and the [Web Dashboard](dashboard.md) stream these tagged logs in real time, with the ability to filter logs by stage or worker.
+

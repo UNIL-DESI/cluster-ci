@@ -26,7 +26,7 @@ If you are a researcher looking to run experiments on the cluster, start here:
 ### ⚙️ Platform Administration (For System Administrators)
 If you are a system administrator responsible for maintaining the cluster infrastructure:
 
-*   **[System Administration](admin/administration.md)**: RunnerManager slots, prerequisites, Maintenance Mode, SSH configuration, and Google Drive authorization.
+*   **[System Administration](admin/administration.md)**: RunnerManager slots, prerequisites, Maintenance Mode, SSH configuration, and cluster updates.
 *   **[Infrastructure Internals](admin/infrastructure_internals.md)**: Garbage collection, container hardening, data locality scoring, P2P transfers, and runtime watchdogs.
 
 ### 🛠️ Developer Docs (For Platform Maintainers)
@@ -50,4 +50,7 @@ Get your environment up and running in less than 5 minutes:
     ```
 3.  Configure your hardware requirements in [`.cluster-ci`](user/configuration.md) and define your pipeline in [`dvc.yaml`](user/dvc.md).
 4.  Run `cluster-run` to start your first GPU-accelerated job!
-5.  Monitor your job on the **[Dashboard](user/dashboard.md)** (requires [VPN UNIL](user/dashboard.md#accessing-the-dashboard)).
+5.  Monitor your job live on the **[Web Dashboard](http://130.223.73.209:5000/)** (see the **[Dashboard Guide](user/dashboard.md)**).
+
+!!! warning "VPN Required"
+    The Web Dashboard ([http://130.223.73.209:5000/](http://130.223.73.209:5000/)) is hosted on the Headnode and is accessible exclusively from the UNIL campus network or via the UNIL VPN (Pulse Secure / Cisco AnyConnect).

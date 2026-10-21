@@ -1434,7 +1434,7 @@ def workspace_path(repo, local=False):
 
 
 @app.before_request
-def require_local_file_token():
+def require_worker_token():
     local = request.args.get('local') == '1'
     protected = request.endpoint == 'local_viewer_proxy'
     if request.endpoint == 'fetch_cas_object':
@@ -1447,6 +1447,14 @@ def require_local_file_token():
         protected = relative.split(os.sep)[0] in {'_local', '_local_uploads', '_local_results', '_local_transfers'}
     if protected and not valid_cluster_token():
         return jsonify({"error": "Unauthorized"}), 401
+
+    if bool(CLUSTER_TOKEN):
+        control_and_diag = {
+            'cancel_job', 'preempt_runner', 'get_crash_report', 'get_job_logs',
+            'get_viewer_logs', 'drain_request'
+        }
+        if request.endpoint in control_and_diag and not valid_cluster_token():
+            return jsonify({"error": "Unauthorized"}), 401
 
 
 @app.route('/api/worker/local/view/<owner>/<repo>/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])

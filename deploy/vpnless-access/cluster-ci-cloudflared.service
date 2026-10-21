@@ -1,0 +1,22 @@
+[Unit]
+Description=Cluster-CI Cloudflare Tunnel (Zero-Trust VPN-Less Ingress)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/default/cluster-ci-tunnel
+# Mode 1 (Named Tunnel with token) if CLOUDFLARE_TUNNEL_TOKEN is set,
+# Mode 2 (Quick Zero-Account Tunnel) otherwise.
+ExecStart=/bin/sh -c 'if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then \
+    exec /usr/local/bin/cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN"; \
+  else \
+    exec /usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20000 --url http://127.0.0.1:5000; \
+  fi'
+Restart=always
+RestartSec=5s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

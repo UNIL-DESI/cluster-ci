@@ -118,6 +118,11 @@ def __getattr__(name: str):
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # Per-request guard; local transfers use smaller chunks.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
+app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+if os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes"):
+    app.config["SESSION_COOKIE_SECURE"] = True
+
 # Derive a stable secret_key from CLUSTER_TOKEN so sessions survive service restarts.
 # os.urandom(24) would invalidate all sessions on every restart.
 _token = os.environ.get("CLUSTER_TOKEN", "")
@@ -133,12 +138,16 @@ oauth.register(
     authorize_url='https://github.com/login/oauth/authorize',
     authorize_params=None,
     api_base_url='https://api.github.com/',
-    client_kwargs={'scope': 'repo,user:email', 'timeout': 10.0},
+    client_kwargs={'scope': 'repo,user:email read:org', 'timeout': 10.0},
 )
 
 FREE_SPACE_THRESHOLD_GB = 100
 CLUSTER_TOKEN = os.environ.get("CLUSTER_TOKEN")
 MAINTENANCE_MODE = False
+GITHUB_ALLOWED_ORG = os.environ.get("GITHUB_ALLOWED_ORG", "UNIL-DESI").strip()
+ZERO_TRUST_ENFORCE = os.environ.get("CLUSTER_ZERO_TRUST", "").lower() in ("1", "true", "yes")
+_GITHUB_AUTH_CACHE = {}  # key -> (is_authorized: bool, username: str, expires_at: float)
+_GITHUB_AUTH_CACHE_TTL = int(os.environ.get("GITHUB_AUTH_CACHE_TTL", "300"))
 
 def check_token():
     if not CLUSTER_TOKEN:
@@ -146,13 +155,136 @@ def check_token():
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return False
-    token = auth_header.split(" ")[1]
-    return token == CLUSTER_TOKEN
+    token = auth_header.split(" ", 1)[1].strip()
+    return hmac.compare_digest(token.encode("utf-8"), CLUSTER_TOKEN.encode("utf-8"))
 
 def local_token_valid():
     return bool(CLUSTER_TOKEN) and hmac.compare_digest(
         request.headers.get('Authorization', '').encode(), f'Bearer {CLUSTER_TOKEN}'.encode()
     )
+
+
+def verify_github_org_membership(access_token, username=None, allowed_org=None):
+    if isinstance(access_token, dict):
+        token_str = access_token.get("access_token", "")
+    else:
+        token_str = str(access_token or "").strip()
+    if not token_str:
+        return False
+    org = (allowed_org if allowed_org is not None else GITHUB_ALLOWED_ORG).strip()
+    if not org:
+        return False
+
+    cache_key = hashlib.sha256(f"{org.lower()}:{username or ''}:{token_str}".encode()).hexdigest()
+    now = time.time()
+    if cache_key in _GITHUB_AUTH_CACHE:
+        is_auth, cached_user, expires_at = _GITHUB_AUTH_CACHE[cache_key]
+        if now < expires_at:
+            return is_auth
+
+    headers = {
+        "Authorization": f"Bearer {token_str}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "cluster-ci-zero-trust"
+    }
+    is_authorized = False
+    try:
+        if username:
+            resp = requests.get(f"https://api.github.com/orgs/{org}/memberships/{username}", headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and data.get("state") == "active":
+                    is_authorized = True
+            elif resp.status_code in (403, 404):
+                resp_public = requests.get(f"https://api.github.com/orgs/{org}/members/{username}", headers=headers, timeout=5)
+                if resp_public.status_code == 204:
+                    is_authorized = True
+
+        if not is_authorized:
+            resp_orgs = requests.get("https://api.github.com/user/orgs", headers=headers, timeout=5)
+            if resp_orgs.status_code == 200:
+                orgs_list = resp_orgs.json()
+                if isinstance(orgs_list, list) and any(
+                    isinstance(item, dict) and str(item.get("login", "")).lower() == org.lower()
+                    for item in orgs_list
+                ):
+                    is_authorized = True
+    except Exception as e:
+        app.logger.warning(f"Error checking GitHub org membership for org '{org}': {e}")
+        is_authorized = False
+
+    ttl = _GITHUB_AUTH_CACHE_TTL if is_authorized else 60
+    _GITHUB_AUTH_CACHE[cache_key] = (is_authorized, username or "", now + ttl)
+    return is_authorized
+
+
+def verify_github_bearer_token():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return False
+    tok = auth_header.split(" ", 1)[1].strip()
+    if not tok:
+        return False
+    if CLUSTER_TOKEN and hmac.compare_digest(tok.encode("utf-8"), CLUSTER_TOKEN.encode("utf-8")):
+        return False
+    return verify_github_bearer_token_value(tok)
+
+
+def verify_github_bearer_token_value(tok):
+    if not tok or not isinstance(tok, str):
+        return False
+    tok = tok.strip()
+    if not tok:
+        return False
+
+    cache_user_key = hashlib.sha256(f"gh_user:{tok}".encode()).hexdigest()
+    now = time.time()
+    login = None
+    if cache_user_key in _GITHUB_AUTH_CACHE:
+        is_valid, cached_user, expires_at = _GITHUB_AUTH_CACHE[cache_user_key]
+        if now < expires_at and is_valid:
+            login = cached_user
+
+    if not login:
+        try:
+            resp = requests.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "cluster-ci-zero-trust"
+                },
+                timeout=5
+            )
+            if resp.status_code == 200:
+                user_info = resp.json()
+                if isinstance(user_info, dict):
+                    login = user_info.get("login")
+                    if login:
+                        _GITHUB_AUTH_CACHE[cache_user_key] = (True, login, now + _GITHUB_AUTH_CACHE_TTL)
+            else:
+                _GITHUB_AUTH_CACHE[cache_user_key] = (False, "", now + 60)
+                return False
+        except Exception as e:
+            app.logger.warning(f"Error verifying GitHub bearer token user: {e}")
+            return False
+
+    if not login:
+        return False
+
+    return verify_github_org_membership(tok, username=login)
+
+
+def is_dashboard_session_authorized():
+    if 'user' not in session:
+        return False
+    user = session.get('user')
+    if not isinstance(user, dict) or not user.get('login'):
+        return False
+    verified_org = session.get('org_verified', '')
+    if not isinstance(verified_org, str) or verified_org.lower() != GITHUB_ALLOWED_ORG.lower():
+        return False
+    return True
 
 
 def local_session_proof():
@@ -218,21 +350,60 @@ def local_worker_get(repo, endpoint, **params):
     return proxy_request(target, local_worker_api=True)
 
 
+PUBLIC_ENDPOINTS = {'login', 'authorize', 'auth_token', 'logout', 'dashboard', 'healthz', 'static'}
+MACHINE_ONLY_ENDPOINTS = {
+    'register_worker', 'heartbeat', 'worker_poll', 'update_job_status', 'notify_cleanup',
+    'api_next_node', 'api_runner_heartbeat', 'ingest_job_logs', 'maintenance_on',
+    'maintenance_off', 'submit_maintenance_job', 'download_code', 'sync_results',
+    'get_job_results', 'get_local_node_results', 'create_local_transfer',
+    'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer'
+}
+LOCAL_TRANSFERS = {
+    'download_code', 'sync_results', 'get_job_results', 'get_local_node_results',
+    'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer',
+    'delete_local_transfer'
+}
+
 @app.before_request
 def require_token():
+    if request.endpoint is None:
+        return None
+
     # Runner control can return secrets and mutate job state. Unlike public
     # dashboard metadata, it must also fail closed if no token is configured.
     if request.endpoint in {'api_next_node', 'api_runner_heartbeat'} and not local_token_valid():
         return jsonify({"error": "Unauthorized"}), 401
-    # Only protect API endpoints that workers or users use to modify state
-    protected_endpoints = ['register_worker', 'submit_job', 'submit_maintenance_job', 'update_job_status', 'worker_poll', 'notify_cleanup', 'maintenance_on', 'maintenance_off', 'download_code', 'sync_results', 'get_job_results', 'create_local_transfer', 'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer']
-    local_transfers = {'download_code', 'sync_results', 'get_job_results', 'get_local_node_results', 'create_local_transfer',
-                       'upload_local_transfer_chunk', 'complete_local_transfer', 'delete_local_transfer'}
-    if request.endpoint in local_transfers and not local_token_valid():
+
+    if request.endpoint in LOCAL_TRANSFERS and not local_token_valid():
         return jsonify({"error": "Unauthorized"}), 401
-    if request.endpoint in protected_endpoints:
-        if not check_token():
+
+    zero_trust_active = bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE
+
+    if request.endpoint in MACHINE_ONLY_ENDPOINTS:
+        # Machine endpoints require a valid cluster token / local token.
+        # User dashboard sessions are NOT allowed on machine endpoints.
+        if not check_token() and not local_token_valid():
             return jsonify({"error": "Unauthorized"}), 401
+        return None
+
+    if request.endpoint in {'submit_job', 'clean_ghosts'}:
+        if zero_trust_active:
+            if not (check_token() or verify_github_bearer_token() or is_dashboard_session_authorized()):
+                return jsonify({"error": "Unauthorized"}), 401
+        return None
+
+    if request.endpoint in PUBLIC_ENDPOINTS:
+        return None
+
+    # All other endpoints (scheduler_status, workers, job_status, artifacts, api_queue, etc.)
+    if zero_trust_active:
+        if is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token():
+            return None
+        if 'user' in session and not is_dashboard_session_authorized():
+            return jsonify({"error": f"Forbidden: Organization '{GITHUB_ALLOWED_ORG}' membership required"}), 403
+        return jsonify({"error": "Unauthorized"}), 401
+
+    return None
 
 def cleanup_local_archive(job_id_or_path):
     """Clean up uploaded local source code archive after job completion or failure."""
@@ -2556,7 +2727,11 @@ def api_run_files(job_id):
 
 @app.route('/api/jobs/<job_id>/stop', methods=['POST'])
 def api_stop_job(job_id):
-    if 'user' not in session and not check_token():
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    else:
+        authorized = ('user' in session) or check_token()
+    if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
 
     success = cancel_job_cleanly(job_id, exit_code=-1)
@@ -2567,7 +2742,11 @@ def api_stop_job(job_id):
 
 @app.route('/api/runs/active', methods=['GET'])
 def api_active_runs():
-    if 'user' not in session:
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    else:
+        authorized = ('user' in session) or check_token()
+    if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
     
     try:
@@ -2587,7 +2766,11 @@ def api_active_runs():
 @app.route('/api/queue', methods=['GET'])
 def api_queue():
     """Returns pending jobs with computed wait reasons for the dashboard."""
-    if 'user' not in session:
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    else:
+        authorized = ('user' in session) or check_token()
+    if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
@@ -2843,8 +3026,12 @@ def get_worker_queues(conn=None, target_worker_id=None):
 @app.route('/api/workers/queues', methods=['GET'])
 def api_workers_queues():
     """Returns queued/pending eligible nodes per worker for the dashboard."""
-    has_token = bool(CLUSTER_TOKEN) and check_token()
-    if 'user' not in session and not has_token:
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    else:
+        has_token = bool(CLUSTER_TOKEN) and check_token()
+        authorized = ('user' in session) or has_token
+    if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
@@ -2858,8 +3045,12 @@ def api_workers_queues():
 @app.route('/api/workers/<worker_id>/queue', methods=['GET'])
 def api_worker_queue(worker_id):
     """Returns queued/pending eligible nodes for a specific worker."""
-    has_token = bool(CLUSTER_TOKEN) and check_token()
-    if 'user' not in session and not has_token:
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    else:
+        has_token = bool(CLUSTER_TOKEN) and check_token()
+        authorized = ('user' in session) or has_token
+    if not authorized:
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
@@ -2870,9 +3061,18 @@ def api_worker_queue(worker_id):
         return jsonify({"error": "Internal server error"}), 500
 
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    return jsonify({"status": "ok"}), 200
+
 @app.route('/')
 def dashboard():
-    if 'user' not in session:
+    if not is_dashboard_session_authorized():
+        session.pop('local_files', None)
+        session.pop('user', None)
+        session.pop('token', None)
+        session.pop('org_verified', None)
+        session.pop('org_verified_at', None)
         return render_template('login.html')
 
     return render_template('dashboard.html', user=session['user'])
@@ -2880,34 +3080,95 @@ def dashboard():
 @app.route('/login')
 def login():
     redirect_uri = url_for('authorize', _external=True)
-    print(f"DEBUG: Redirecting to GitHub. redirect_uri={redirect_uri}", flush=True)
     return oauth.github.authorize_redirect(redirect_uri)
 
 @app.route('/authorize')
 def authorize():
-    print(f"DEBUG: /authorize reached. Args: {request.args}", flush=True)
     try:
-        print("DEBUG: Fetching access token...", flush=True)
         token = oauth.github.authorize_access_token()
-        print(f"DEBUG: Token received. Fetching user info...", flush=True)
         resp = oauth.github.get('user', token=token)
         user = resp.json()
-        print(f"DEBUG: User info received: {user.get('login')}. Setting session...", flush=True)
+        username = user.get('login') if isinstance(user, dict) else None
+        if not username or not verify_github_org_membership(token, username=username):
+            session.clear()
+            return jsonify({"error": f"Forbidden: GitHub account '{username or 'unknown'}' is not an active member of organization '{GITHUB_ALLOWED_ORG}'."}), 403
+
         session['user'] = user
         session['token'] = token
-        print("DEBUG: Redirecting to dashboard.", flush=True)
+        session['org_verified'] = GITHUB_ALLOWED_ORG.lower()
+        session['org_verified_at'] = time.time()
         return redirect(url_for('dashboard'))
     except Exception as e:
-        print(f"DEBUG ERROR in /authorize: {str(e)}", flush=True)
+        session.clear()
         import traceback
         traceback.print_exc()
-        return f"Authentication Error: {str(e)}", 500
+        return jsonify({"error": f"Authentication Error: {str(e)}"}), 500
+
+@app.route('/auth/token', methods=['POST'])
+def auth_token():
+    tok = request.form.get('token') or (request.json.get('token') if request.is_json else None)
+    if not tok:
+        return jsonify({"error": "Token is required"}), 400
+    tok = tok.strip()
+
+    cache_user_key = hashlib.sha256(f"gh_user:{tok}".encode()).hexdigest()
+    now = time.time()
+    login_user = None
+    if cache_user_key in _GITHUB_AUTH_CACHE:
+        is_valid, cached_user, expires_at = _GITHUB_AUTH_CACHE[cache_user_key]
+        if now < expires_at and is_valid:
+            login_user = cached_user
+
+    if not login_user:
+        try:
+            resp = requests.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "cluster-ci-zero-trust"
+                },
+                timeout=5
+            )
+            if resp.status_code == 200:
+                user_info = resp.json()
+                if isinstance(user_info, dict):
+                    login_user = user_info.get("login")
+                    if login_user:
+                        _GITHUB_AUTH_CACHE[cache_user_key] = (True, login_user, now + _GITHUB_AUTH_CACHE_TTL)
+            else:
+                _GITHUB_AUTH_CACHE[cache_user_key] = (False, "", now + 60)
+                if request.is_json:
+                    return jsonify({"error": "Invalid GitHub token"}), 401
+                return render_template('login.html', error="Invalid GitHub token"), 401
+        except Exception as e:
+            app.logger.warning(f"Error checking token at GitHub: {e}")
+            if request.is_json:
+                return jsonify({"error": "Failed to reach GitHub"}), 502
+            return render_template('login.html', error="Failed to reach GitHub"), 502
+
+    if not login_user or not verify_github_org_membership(tok, username=login_user):
+        session.clear()
+        if request.is_json:
+            return jsonify({"error": f"Forbidden: GitHub account '{login_user or 'unknown'}' is not an active member of organization '{GITHUB_ALLOWED_ORG}'."}), 403
+        return render_template('login.html', error=f"Account '{login_user}' is not a member of {GITHUB_ALLOWED_ORG}"), 403
+
+    session['user'] = {'login': login_user}
+    session['token'] = tok
+    session['org_verified'] = GITHUB_ALLOWED_ORG.lower()
+    session['org_verified_at'] = time.time()
+
+    if request.is_json:
+        return jsonify({"status": "ok", "user": login_user, "org": GITHUB_ALLOWED_ORG}), 200
+    return redirect(url_for('dashboard'))
 
 @app.route('/logout')
 def logout():
     session.pop('local_files', None)
     session.pop('user', None)
     session.pop('token', None)
+    session.pop('org_verified', None)
+    session.pop('org_verified_at', None)
     return redirect(url_for('dashboard'))
 
 # --- Proxy & DVC-Viewer Management ---

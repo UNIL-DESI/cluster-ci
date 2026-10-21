@@ -49,6 +49,7 @@ These parameters control resource allocation and job timeout.
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
+| `PRIORITY`<br>*(alias `DEFAULT_PRIORITY`)* | `normal` | Global scheduling priority for the job: `high`, `normal`, or `low`. Can be overridden via `cluster-run --priority` or per-stage via `meta.cluster.priority`. |
 | `PARALLEL_STAGES` | `false` | When set to `true`, enables **Parallel DAG execution** across multiple cluster workers. Independent branches of your `dvc.yaml` pipeline run concurrently on available nodes. See [Parallel DAG Execution](parallel_execution.md). |
 | `STAGES` | *(empty — runs full pipeline)* | Comma-separated list of DVC stage names to execute (used in classic sequential mode). If empty or set to `all`, the cluster runs `dvc repro`. |
 | `ALLOWED_WORKERS` | *(empty — all workers eligible)* | Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090). Overridden by `meta.cluster.workers`. |
@@ -67,6 +68,7 @@ Parameters specified in `dvc.yaml` take precedence over `.cluster-ci`:
 * `meta.cluster.vram_gb` overrides `REQUIRED_VRAM` (default: 0.0)
 * `meta.cluster.storage_gb` overrides `REQUIRED_STORAGE` / `REQUIRED_DISK` (default: 0.0)
 * `meta.cluster.workers` overrides `ALLOWED_WORKERS`
+* `meta.cluster.priority` overrides `PRIORITY` / `DEFAULT_PRIORITY` (default: `"normal"`)
 
 For complete syntax and examples, see the [Per-Stage Resources Guide](stage_resources.md).
 
@@ -122,6 +124,7 @@ Architecture-specific values take priority over the global value on matching wor
 REQUIRED_RAM=24GB
 REQUIRED_VRAM=24GB
 MAX_RUNTIME_HOURS=12
+PRIORITY=normal
 
 # ── Parallel Execution ──
 PARALLEL_STAGES=true
@@ -145,9 +148,10 @@ DOCKER_FLAGS=--env-file=custom.env
 When you run the install script, the following minimal template is created:
 
 ```ini
-REQUIRED_RAM=10GB
+REQUIRED_RAM=2GB
 REQUIRED_VRAM=0GB
 MAX_RUNTIME_HOURS=1
 ```
 
 Adjust these values to match your project's needs before running `cluster-run`.
+

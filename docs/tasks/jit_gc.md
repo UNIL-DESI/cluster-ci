@@ -13,17 +13,18 @@ The system relies on a local metadata registry (`repositories/registry.json`) th
 ### Cleanup Policy (Tiered LRU)
 Before each job, the orchestrator checks the available disk space on the repository partition.
 - **Safety Threshold:** 100 GB (configurable via `GC_FREE_SPACE_THRESHOLD_GB`).
-- If free space is below this threshold, the GC identifies projects marked as `idle`.
-- It executes a **Tiered Cleanup** (Levels 1 to 5) starting from the oldest (Least Recently Used) projects until the threshold is met.
+- **Emergency Panic Threshold:** 50 GB (configurable via `GC_PANIC_THRESHOLD_GB`).
+- **Protection Window:** Inactive projects are protected for 6 hours (configurable via `GC_PROTECT_HOURS`).
+- If free space is below the threshold, the GC executes a **Tiered Cleanup** (Tiers 1 to 5) starting from the oldest (Least Recently Used) idle projects until the threshold is met.
 
-#### Cleanup Levels:
-1. **Level 1 (DVC GC):** Purges DVC history, keeping only the last 2 commits to save space while keeping recent history.
-2. **Level 2 (Large Files):** Deletes untracked files larger than 500 MB in the workspace.
-3. **Level 3 (Docker Volume):** Deletes the project-specific Docker volume (`cluster-ci-home-<owner-repo>`) used for Python dependencies (`~/.local` and `uv` cache).
-4. **Level 4 (DVC Cache):** Deletes the entire local `.dvc/cache` directory.
-5. **Level 5 (Full Wipe):** Deletes the entire project repository directory.
+#### Cleanup Tiers:
+1. **Tier 1 (Regenerable Caches & Temp Files):** Cleans regenerable caches (`pip`, `uv`, `huggingface`, `torch`, `__pycache__`), temp files (`*.tmp`, `*.log`), and runs `docker system prune` in emergency mode.
+2. **Tier 2 (Docker Volumes):** Deletes project-specific home Docker volumes (`cluster-ci-home-<owner-repo>`) for idle projects.
+3. **Tier 3 (Local DVC Cache):** Purges `.dvc/cache` for the oldest inactive projects (LRU), ensuring no active executor shares the repository cache.
+4. **Tier 4 (Unused Docker Images):** Removes unused Docker images sorted by LRU, never targeting images used by active or protected projects.
+5. **Tier 5 (Full Workspace Wipe):** Deletes the entire project repository directory in last resort.
 
-Active projects (`running`) are never targeted by the GC.
+Active projects (`running`) and projects within the protection window (6 hours) are never targeted by the GC.
 
 ## 3. Environment Isolation
 To prevent dependency collisions between different projects running on the same worker, each project uses a dedicated Docker volume for its home directory. This ensures that `uv` or `pip` installations in one project do not overwrite system packages or caches of another project.
