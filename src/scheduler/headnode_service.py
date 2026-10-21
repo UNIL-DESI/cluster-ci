@@ -287,6 +287,13 @@ def is_dashboard_session_authorized():
     return True
 
 
+def _is_request_authorized():
+    """Check whether the incoming request is authorized via Zero-Trust org gate, Bearer token, or session."""
+    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
+        return is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
+    return ('user' in session) or check_token()
+
+
 def local_session_proof():
     key = app.secret_key
     if isinstance(key, str):
@@ -2727,11 +2734,7 @@ def api_run_files(job_id):
 
 @app.route('/api/jobs/<job_id>/stop', methods=['POST'])
 def api_stop_job(job_id):
-    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
-        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
-    else:
-        authorized = ('user' in session) or check_token()
-    if not authorized:
+    if not _is_request_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
     success = cancel_job_cleanly(job_id, exit_code=-1)
@@ -2742,11 +2745,7 @@ def api_stop_job(job_id):
 
 @app.route('/api/runs/active', methods=['GET'])
 def api_active_runs():
-    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
-        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
-    else:
-        authorized = ('user' in session) or check_token()
-    if not authorized:
+    if not _is_request_authorized():
         return jsonify({"error": "Unauthorized"}), 401
     
     try:
@@ -2766,11 +2765,7 @@ def api_active_runs():
 @app.route('/api/queue', methods=['GET'])
 def api_queue():
     """Returns pending jobs with computed wait reasons for the dashboard."""
-    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
-        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
-    else:
-        authorized = ('user' in session) or check_token()
-    if not authorized:
+    if not _is_request_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
@@ -3026,12 +3021,7 @@ def get_worker_queues(conn=None, target_worker_id=None):
 @app.route('/api/workers/queues', methods=['GET'])
 def api_workers_queues():
     """Returns queued/pending eligible nodes per worker for the dashboard."""
-    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
-        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
-    else:
-        has_token = bool(CLUSTER_TOKEN) and check_token()
-        authorized = ('user' in session) or has_token
-    if not authorized:
+    if not _is_request_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
@@ -3045,12 +3035,7 @@ def api_workers_queues():
 @app.route('/api/workers/<worker_id>/queue', methods=['GET'])
 def api_worker_queue(worker_id):
     """Returns queued/pending eligible nodes for a specific worker."""
-    if bool(CLUSTER_TOKEN) or ZERO_TRUST_ENFORCE:
-        authorized = is_dashboard_session_authorized() or local_token_valid() or verify_github_bearer_token() or check_token()
-    else:
-        has_token = bool(CLUSTER_TOKEN) and check_token()
-        authorized = ('user' in session) or has_token
-    if not authorized:
+    if not _is_request_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
     try:

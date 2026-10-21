@@ -36,6 +36,13 @@ except ImportError:
             DEFAULT_STORAGE_GB = 0.0
 
 
+def _get_with_optional_auth(url, headers=None, **kwargs):
+    """Helper requests.get passing headers only when non-empty, preserving signature for strict mocks."""
+    if headers:
+        kwargs["headers"] = headers
+    return requests.get(url, **kwargs)
+
+
 def get_planner_module_name():
     """Retourne le module du planificateur W1 (src.planner.stage_plan).
 
@@ -440,7 +447,7 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     # Active JIT Network Diagnostic
     try:
         print(f"Connecting to headnode at {headnode_url} (checking connectivity)...")
-        requests.get(f"{headnode_url}/check_space", headers=headers, timeout=3, allow_redirects=False)
+        _get_with_optional_auth(f"{headnode_url}/check_space", headers=headers, timeout=3, allow_redirects=False)
     except requests.exceptions.Timeout:
         print(f"Error: Connection to headnode at {headnode_url} timed out (limit: 3s).")
         print("   Please check that the headnode service is running and accessible.")
@@ -836,12 +843,12 @@ def wait_for_job(headnode_url, job_id, branch=None):
         sys.exit(1)
     print(f"⏳ Waiting for job {job_id} to complete...")
 
+    token = os.environ.get("CLUSTER_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     is_draft_branch = branch and branch.startswith("cluster-draft/")
 
     def signal_handler(sig, frame):
-        token = os.environ.get("CLUSTER_TOKEN")
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-
         # === DRAFT BRANCHES OU INTERRUPT UTILISATEUR (SIGINT / Ctrl+C) : Annulation du job entier ===
         if is_draft_branch or sig == signal.SIGINT:
             worker_url = None
@@ -857,7 +864,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             # 2. Récupérer l'URL du worker si disponible pour notification de repli direct
             try:
-                resp = requests.get(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
+                resp = _get_with_optional_auth(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
                 if resp.status_code == 200:
                     job = resp.json()
                     worker_url = job.get('worker_service_url')
@@ -926,7 +933,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
     while True:
         try:
-            resp = requests.get(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
+            resp = _get_with_optional_auth(f"{headnode_url}/job_status/{job_id}", headers=headers, timeout=10, allow_redirects=False)
             resp.raise_for_status()
             status_retry_tracker.record_success()
             job = resp.json()
@@ -939,7 +946,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                 if now - last_queue_check >= 10:
                     last_queue_check = now
                     try:
-                        status_resp = requests.get(f"{headnode_url}/scheduler_status", headers=headers, timeout=5, allow_redirects=False)
+                        status_resp = _get_with_optional_auth(f"{headnode_url}/scheduler_status", headers=headers, timeout=5, allow_redirects=False)
                         if status_resp.status_code == 200:
                             data = status_resp.json()
                             workers = data.get("workers", [])
@@ -1104,7 +1111,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
             logs_resp = None
             if headnode_url:
                 try:
-                    h_resp = requests.get(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
+                    h_resp = _get_with_optional_auth(f"{headnode_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                     if h_resp.status_code == 200:
                         logs_resp = h_resp
                     elif h_resp.status_code == 404:
@@ -1114,7 +1121,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                                 f"Bascule de repli vers /api/jobs/{job_id}/logs.\n"
                             )
                             fallback_warned = True
-                        h_resp2 = requests.get(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
+                        h_resp2 = _get_with_optional_auth(f"{headnode_url}/api/jobs/{job_id}/logs?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                         if h_resp2.status_code == 200:
                             logs_resp = h_resp2
                 except requests.exceptions.RequestException as e:
@@ -1132,7 +1139,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
 
             if logs_resp is None and worker_url:
                 try:
-                    logs_resp = requests.get(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
+                    logs_resp = _get_with_optional_auth(f"{worker_url}/job_logs/{job_id}?offset={log_offset}", headers=headers, timeout=5, allow_redirects=False)
                 except requests.exceptions.RequestException as e:
                     is_exhausted, err_msg = log_retry_tracker.record_error(
                         error=e,
@@ -1236,7 +1243,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     print(f"\n❌ Job {job_id} failed: Worker restarted while the job was running/assigned. (OOM or System Crash)")
                     if worker_url:
                         try:
-                            crash_resp = requests.get(f"{worker_url}/crash_report", timeout=5, allow_redirects=False)
+                            crash_resp = _get_with_optional_auth(f"{worker_url}/crash_report", headers=headers, timeout=5, allow_redirects=False)
                             if crash_resp.status_code == 200:
                                 dmesg = crash_resp.json().get('dmesg', '').strip()
                                 if dmesg:
