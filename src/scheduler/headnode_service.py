@@ -1610,6 +1610,11 @@ def update_job_status():
         if not job_dict.get('parallel_mode') and not has_nodes:
             caller_runner = data.get('runner_id')
             caller_worker = data.get('worker_id') or data.get('worker')
+            if current_status == 'pending' and (job_dict.get('preempt_count') or 0) > 0:
+                # The stopped executor may finish its log-streamer join after
+                # the cleanup thread has acknowledged and requeued it. No
+                # executor owns a pending job; ignore all late status reports.
+                return jsonify({'status': 'ignored', 'message': 'Classic job awaits a new assignment'}), 200
             if job_dict.get('preempting'):
                 if caller_runner != job_dict.get('runner_id') or caller_worker != job_dict.get('worker_id'):
                     return jsonify({'error': 'Preemption acknowledgement does not match the runner'}), 409

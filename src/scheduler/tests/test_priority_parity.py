@@ -129,10 +129,16 @@ def test_classic_new_assignment_has_fresh_identity_and_stale_ack_is_ignored(clie
     assert preempt(w,monkeypatch)[0]
     ack=dict(job_id='low',status='failed',exit_code=-15,failure_reason='JobPreempted',runner_id='runner-low',worker_id='w')
     assert client.post('/update_job_status',json=ack).status_code==200
+    late_success=dict(ack,status='completed',exit_code=0)
+    late_success.pop('failure_reason')
+    assert client.post('/update_job_status',json=late_success).status_code==200
+    with persistence.get_db_conn() as c:
+        assert c.execute("SELECT status FROM jobs WHERE job_id='low'").fetchone()[0]=='pending'
     with persistence.get_db_conn() as c:c.execute("UPDATE jobs SET status='completed' WHERE job_id='high'");c.commit()
     sched.schedule_iteration()
     with persistence.get_db_conn() as c:before=dict(c.execute("SELECT * FROM jobs WHERE job_id='low'").fetchone())
     assert before['runner_id']!='runner-low' and before['status']=='assigned'
+    assert client.post('/update_job_status',json=late_success).status_code==409
     assert client.post('/update_job_status',json=ack).status_code==200
     with persistence.get_db_conn() as c:after=dict(c.execute("SELECT * FROM jobs WHERE job_id='low'").fetchone())
     assert before==after
