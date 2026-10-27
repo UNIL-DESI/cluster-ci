@@ -712,7 +712,7 @@ docker exec \
         -e IS_LOCAL="$IS_LOCAL" \
         -e DVC_NO_ANALYTICS="${DVC_NO_ANALYTICS:-}" \
         -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
-        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && $1"
+        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:/home/user/.local/share/cluster-ci-tools/bin:\$PATH:/home/user/.local/bin && $1"
 }
 
 log_info "Image used: $DOCKER_IMAGE"
@@ -764,7 +764,9 @@ elif [ "$1" = "sync" ]; then
     exit 0
 else
     # Fallback to real uv — strip shim dir from PATH to avoid infinite recursion
-    if [ -x "/home/user/.local/bin/uv" ]; then
+    if [ -x "/home/user/.local/share/cluster-ci-tools/bin/uv" ]; then
+        exec /home/user/.local/share/cluster-ci-tools/bin/uv "$@"
+    elif [ -x "/home/user/.local/bin/uv" ]; then
         exec /home/user/.local/bin/uv "$@"
     else
         REAL_UV=$(PATH=${PATH#/home/user/shims:} command -v uv 2>/dev/null || true)
@@ -808,13 +810,7 @@ chmod +x $SHIM_DIR/poetry'
 log_info "Installing base dependencies in persistent volume..."
 # Bootstrap commands MUST bypass shims — use a raw docker run without /home/user/shims in PATH.
 # Shims are only for user pipeline execution, not for installing the tools themselves.
-function docker_exec_bootstrap() {
-    docker exec \
-        "${MAIN_CONTAINER_NAME}" bash -c "export PATH=\$PATH:/home/user/.local/bin && $1"
-}
-docker_exec_bootstrap "uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh || python3 -m pip install uv --user --break-system-packages"
-docker_exec_bootstrap "uv tool install --force dvc --with dvc-http"
-docker_exec_bootstrap "uv tool upgrade dvc-viewer || uv tool install git+https://github.com/UNIL-DESI/dvc-viewer.git || true"
+docker exec "${MAIN_CONTAINER_NAME}" bash /cluster-ci/src/runner/bootstrap_runtime_tools.sh
 
 log_info "Reading DVC parameters from .cluster-ci..."
 
@@ -943,7 +939,7 @@ else
         $ENV_FILE_FLAG \
         -e DVC_NO_ANALYTICS="${DVC_NO_ANALYTICS:-}" \
         $DOCKER_IMAGE \
-        bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && dvc-viewer --port $VIEWER_PORT" > "dvc-viewer.log" 2>&1 &
+        bash -c "export PATH=/home/user/shims:/home/user/.local/share/cluster-ci-tools/bin:\$PATH:/home/user/.local/bin && dvc-viewer --port $VIEWER_PORT" > "dvc-viewer.log" 2>&1 &
 fi
 
 log_info "Pre-flight Validation..."
@@ -1040,11 +1036,11 @@ if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
 fi
 
 log_info "DVC-Git-Helper: Syncing metrics and plots to Git..."
-timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && timeout -k 10 120 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
+timeout 130 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:/home/user/.local/share/cluster-ci-tools/bin:\$PATH:/home/user/.local/bin && timeout -k 10 120 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || log_warn "DVC-Git-Helper sync timed out or failed."
 
 if [ "$IS_LOCAL" = "1" ]; then
     log_info "Local mode: returning declared DVC outputs to the headnode..."
-    if ! timeout 610 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && timeout -k 10 600 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync-local-results"; then
+    if ! timeout 610 docker exec "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:/home/user/.local/share/cluster-ci-tools/bin:\$PATH:/home/user/.local/bin && timeout -k 10 600 uv run --no-project --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync-local-results"; then
         log_error "Local result archive synchronization failed."
         if [ "$EXEC_RET" -eq 0 ]; then
             EXEC_RET=74

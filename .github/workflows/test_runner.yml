@@ -9,6 +9,40 @@ on:
       - main
 
 jobs:
+  test_runtime_tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: pip install -e '.[dev]'
+      - name: Test runtime tool isolation and dependency cleanup
+        run: |
+          bash -n src/runner/bootstrap_runtime_tools.sh src/runner/smart_install.sh src/runner/run_research_pipeline.sh
+          python -m pytest -q tests/test_runtime_tools_bootstrap.py tests/test_runtime_image_r1_r5.py tests/test_runtime_env.py
+      - name: Smoke test real tools through dependency cleanup and entrypoint recovery
+        env:
+          CLUSTER_CI_TOOLS_ROOT: ${{ runner.temp }}/runtime-tools-smoke/user-site/share/cluster-ci-tools
+          PYTHONUSERBASE: ${{ runner.temp }}/runtime-tools-smoke/user-site
+          CLUSTER_CI_HASH_FILE: ${{ runner.temp }}/runtime-tools-smoke/dependency-hash
+          CLUSTER_CI_LOCK_FILE: ${{ runner.temp }}/runtime-tools-smoke/dependency-lock
+          UV_PYTHON_DOWNLOADS: never
+        run: |
+          bash src/runner/bootstrap_runtime_tools.sh
+          export PATH="$CLUSTER_CI_TOOLS_ROOT/bin:$PATH"
+          mkdir -p "$RUNNER_TEMP/runtime-tools-smoke/empty-project"
+          cd "$RUNNER_TEMP/runtime-tools-smoke/empty-project"
+          bash "$GITHUB_WORKSPACE/src/runner/smart_install.sh"
+          uv --version
+          dvc --version
+          dvc-viewer --help
+          # Model the cached environment with a missing launcher from prior failures.
+          rm "$CLUSTER_CI_TOOLS_ROOT/bin/dvc-viewer"
+          bash "$GITHUB_WORKSPACE/src/runner/bootstrap_runtime_tools.sh"
+          dvc-viewer --help
+
   test_e2e:
     runs-on: ubuntu-latest
     steps:
