@@ -247,6 +247,11 @@ def init_db():
         'failure_reason TEXT',
         'retry_count INTEGER DEFAULT 0',
         'scheduling_priority TEXT DEFAULT "normal"',
+        'runner_id TEXT',
+        'preempt_count INTEGER DEFAULT 0',
+        'preempted_by TEXT',
+        'preempted_at TIMESTAMP',
+        'preempting INTEGER DEFAULT 0',
     ]:
         col_name = col_def.split()[0]
         try:

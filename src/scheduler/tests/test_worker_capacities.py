@@ -273,7 +273,9 @@ class TestWorkerCapacities(unittest.TestCase):
         env = kwargs.get("env", {})
 
         self.assertNotIn("CLUSTER_CI_PARALLEL_MODE", env)
-        self.assertNotIn("CLUSTER_CI_RUNNER_ID", env)
+        # Classic jobs also need an identity for targeted preemption, while
+        # retaining the single-pipeline execution mode (not a DVC executor).
+        self.assertEqual(env["CLUSTER_CI_RUNNER_ID"], f"classic-{job['job_id']}")
         self.assertEqual(env.get("CLUSTER_CI_MODE"), "executor")
         self.assertEqual(env.get("JOB_ID"), "test-classic-job-456")
 
