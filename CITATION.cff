@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Cluster-CI: A Pull-Based GitOps Orchestrator for Reproducible DVC Research Pipelines on Heterogeneous GPU Clusters"
+authors:
+  - family-names: Jamet
+    given-names: Henri
+    affiliation: "Department of Information Systems (DESI), HEC Lausanne, University of Lausanne"
+version: 3.0.0
+date-released: 2026-10-29
+license: MIT
+repository-code: "https://github.com/UNIL-DESI/cluster-ci"
+keywords:
+  - gitops
+  - dvc
+  - gpu-cluster
+  - reproducibility
+  - distributed-computing

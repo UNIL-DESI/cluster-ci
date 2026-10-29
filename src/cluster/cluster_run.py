@@ -701,9 +701,12 @@ def check_and_redirect_cwd():
         return
 
     # Try to find db.json
+    env_db = os.environ.get("ANTIGRAVITY_DB_PATH", "").strip()
     possible_db_paths = [
-        r"C:\Users\hjamet\Documents\code\antigravity-apk\server\db.json",
-        os.path.expanduser(r"~\Documents\code\antigravity-apk\server\db.json")
+        path for path in [
+            env_db,
+            os.path.expanduser(r"~\Documents\code\antigravity-apk\server\db.json")
+        ] if path
     ]
     for db_path in possible_db_paths:
         if os.path.exists(db_path):

@@ -47,3 +47,10 @@ site/
 # Runtime cluster metadata
 .cluster-ci-commit
 .cluster-ci-viewer-port
+
+# Sensitive files, keys, envs, and scratch
+ssh_cmd.py
+scratch/
+.env.*
+*.pem
+*.key
