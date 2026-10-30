@@ -32,7 +32,7 @@ try:
     )
     from scheduler_loop import (
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
-        get_worker_total_gpus, get_worker_allocated_resources
+        get_worker_total_gpus, get_worker_allocated_resources, classic_job_resources
     )
     from scheduling_order import (
         format_waiting_time, scheduling_node_sort_key, get_user_machine_counts,
@@ -52,7 +52,7 @@ except ImportError:
     )
     from src.scheduler.scheduler_loop import (
         validate_plan, handle_next_node, is_unified_memory, is_worker_admissible_for_node,
-        get_worker_total_gpus, get_worker_allocated_resources
+        get_worker_total_gpus, get_worker_allocated_resources, classic_job_resources
     )
     from src.scheduler.scheduling_order import (
         format_waiting_time, scheduling_node_sort_key, get_user_machine_counts,
@@ -1683,6 +1683,8 @@ def worker_poll(worker_id):
         selected_job = None
         for job_row in jobs:
             job_dict = dict(job_row)
+            if job_dict.get('preempting'):
+                continue
             j_id = job_dict["job_id"]
             is_parallel = (job_dict.get("parallel_mode") == 1)
             if j_id in active_jobs_from_worker:
@@ -1772,7 +1774,7 @@ def update_job_status():
     with get_db_conn() as conn:
         cursor = conn.cursor()
         
-        cursor.execute('SELECT status, worker_id, ram_required_gb, parallel_mode FROM jobs WHERE job_id = ?', (job_id,))
+        cursor.execute('SELECT * FROM jobs WHERE job_id = ?', (job_id,))
         job = cursor.fetchone()
         if not job:
             return jsonify({"error": "Job not found"}), 404
@@ -1781,6 +1783,42 @@ def update_job_status():
         current_status = job_dict['status']
         if current_status in ('failed', 'completed'):
             return jsonify({'status': 'ignored', 'message': 'Job already terminated'}), 200
+
+        has_nodes = cursor.execute('SELECT 1 FROM job_nodes WHERE job_id=? LIMIT 1', (job_id,)).fetchone()
+        if not job_dict.get('parallel_mode') and not has_nodes:
+            caller_runner = data.get('runner_id')
+            caller_worker = data.get('worker_id') or data.get('worker')
+            if current_status == 'pending' and (job_dict.get('preempt_count') or 0) > 0:
+                # The stopped executor may finish its log-streamer join after
+                # the cleanup thread has acknowledged and requeued it. No
+                # executor owns a pending job; ignore all late status reports.
+                return jsonify({'status': 'ignored', 'message': 'Classic job awaits a new assignment'}), 200
+            if job_dict.get('preempting'):
+                if caller_runner != job_dict.get('runner_id') or caller_worker != job_dict.get('worker_id'):
+                    return jsonify({'error': 'Preemption acknowledgement does not match the runner'}), 409
+                if status in ('completed', 'done') and exit_code == 0:
+                    cursor.execute('UPDATE jobs SET preempting=0 WHERE job_id=?', (job_id,))
+                    status = 'completed'  # Natural completion wins a preemption race.
+                elif data.get('failure_reason') == 'JobPreempted' and status == 'failed':
+                    cursor.execute("""
+                        UPDATE jobs SET status='pending', worker_id=NULL, runner_id=NULL,
+                            gpu_ids='[]', preempting=0, preempt_count=COALESCE(preempt_count,0)+1,
+                            exit_code=NULL, finished_at=NULL, error_message=NULL, failure_reason=NULL
+                        WHERE job_id=?
+                    """, (job_id,))
+                    cursor.execute('UPDATE workers SET assigned_job_id=NULL WHERE worker_id=? AND assigned_job_id=?',
+                                   (caller_worker, job_id))
+                    cursor.execute('DELETE FROM runner_heartbeats WHERE job_id=? AND runner_id=?', (job_id, caller_runner))
+                    conn.commit()
+                    return jsonify({'status': 'ok', 'message': 'Classic job preempted and requeued'}), 200
+                else:
+                    return jsonify({'status': 'ignored', 'message': 'Waiting for physical preemption acknowledgement'}), 200
+            elif data.get('failure_reason') == 'JobPreempted':
+                return jsonify({'status': 'ignored', 'message': 'No matching pending preemption'}), 200
+            elif caller_runner and job_dict.get('runner_id') and caller_runner != job_dict['runner_id']:
+                return jsonify({'error': 'Status update belongs to an earlier runner'}), 409
+            if status == 'running' and caller_runner:
+                cursor.execute('UPDATE jobs SET runner_id=COALESCE(runner_id,?) WHERE job_id=?', (caller_runner,job_id))
 
         # Interception explicite et prioritaire des nœuds en état 'preempting' :
         # Doit s'exécuter AVANT toute logique d'annulation sur exit_code négatif (ex: SIGTERM -15 ou SIGKILL -9).
@@ -2885,7 +2923,7 @@ def get_worker_queues(conn=None, target_worker_id=None):
         cursor.execute('''
             SELECT j.job_id, 'job' AS node_name, 'ready' AS status,
                    0.0 AS priority, '[]' AS deps,
-                   j.scheduling_priority, 0 AS preempt_count,
+                   j.scheduling_priority, COALESCE(j.preempt_count, 0) AS preempt_count,
                    j.repo, j.branch, j.created_at, j.parallel_mode, j.is_local, j.username,
                    j.scheduling_priority AS job_scheduling_priority,
                    j.ram_required_gb, j.vram_required_gb, j.worker_id, j.allowed_workers,
@@ -2898,13 +2936,7 @@ def get_worker_queues(conn=None, target_worker_id=None):
         classic_rows = cursor.fetchall()
         for cr in classic_rows:
             cr_dict = dict(cr)
-            res = {
-                "cpus": 4,
-                "ram_gb": cr_dict.get("ram_required_gb") or 10.0,
-                "vram_gb": cr_dict.get("vram_required_gb") or 0.0,
-                "gpus": 1 if (cr_dict.get("vram_required_gb") or 0) > 0 else 0,
-                "priority": cr_dict.get("scheduling_priority") or "normal",
-            }
+            res = classic_job_resources(cr_dict)
             allowed = []
             if cr_dict.get("allowed_workers"):
                 try:

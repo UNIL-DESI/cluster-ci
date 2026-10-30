@@ -981,6 +981,7 @@ def execute_job(job):
     env = os.environ.copy()
     env["CLUSTER_CI_MODE"] = "executor"
     env["JOB_ID"] = job_id
+    env["CLUSTER_CI_RUNNER_ID"] = runner_id
     env["LOGS_DIR"] = LOGS_DIR
     env["IS_LOCAL"] = "1" if job.get("is_local") else "0"
     if job.get('is_local'):
@@ -1667,8 +1668,14 @@ def _stop_runner_and_preserve(runner_id, process_to_kill, grace_period_s=30, exe
                 containers = [c.strip() for c in res_alt.stdout.strip().split("\n") if c.strip()]
 
         if not containers:
+            if executor and not executor.get('is_parallel'):
+                # Older classic workers named containers by job ID, without runner labels.
+                job_name = executor['job_id'].replace('/', '-')
+                filters = [f'name=^/cluster-job-{job_name}$', f'name=^/cluster-viewer-{job_name}$']
+            else:
+                filters = [f'name={runner_id}']
             res_legacy = subprocess.run(
-                ["docker", "ps", "-a", "--filter", f"name={runner_id}", "--format", "{{.Names}}"],
+                ["docker", "ps", "-a"] + [arg for f in filters for arg in ('--filter', f)] + ["--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=5
             )
             if res_legacy.returncode != 0:
@@ -1695,9 +1702,19 @@ def _stop_runner_and_preserve(runner_id, process_to_kill, grace_period_s=30, exe
         raise RuntimeError(f'Container shutdown was not confirmed: {e}') from e
 
     if executor and executor.get('is_local'):
-        from src.runner.local_workspace import private_job_root, runner_record_path, preserve_runner_record
-        source = private_job_root(os.path.join(REPOS_DIR, '_local', executor['repo']), executor['job_id']) / 'source'
-        preserve_runner_record(runner_record_path(source, runner_id), HEADNODE_URL, CLUSTER_TOKEN)
+        if executor.get('is_parallel'):
+            from src.runner.local_workspace import private_job_root, runner_record_path, preserve_runner_record
+            source = private_job_root(os.path.join(REPOS_DIR, '_local', executor['repo']), executor['job_id']) / 'source'
+            preserve_runner_record(runner_record_path(source, runner_id), HEADNODE_URL, CLUSTER_TOKEN)
+        else:
+            # Reuse the classic local-result path: declared outputs to the token-
+            # protected headnode only. Never call Git/DVC remote synchronization.
+            workspace = os.path.join(REPOS_DIR, '_local', executor['repo'])
+            env = dict(os.environ, IS_LOCAL='1', JOB_ID=executor['job_id'],
+                       HEADNODE_URL=HEADNODE_URL, CLUSTER_TOKEN=CLUSTER_TOKEN,
+                       DVC_NO_ANALYTICS='1')
+            subprocess.run([sys.executable, os.path.join(BASE_DIR, 'src', 'runner', 'dvc_git_helper.py'),
+                            'sync-local-results'], cwd=workspace, env=env, check=True, timeout=610)
     logger.info(f"✅ [PREEMPTION] Preemption cleanup complete for runner {runner_id}")
 
 
