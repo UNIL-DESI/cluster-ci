@@ -5,6 +5,11 @@ import shutil
 from pathlib import Path
 import time
 import sys
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip("fcntl and Unix file locking not supported on Windows", allow_module_level=True)
+
 import fcntl
 import multiprocessing
 

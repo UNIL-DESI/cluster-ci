@@ -120,6 +120,8 @@ class TestV3W8Submission(unittest.TestCase):
                 "exposed_port",
                 "custom_web_app",
                 "allowed_workers",
+                "priority",
+                "scheduling_priority",
                 "gh_run_id",
                 "gh_token",
                 "env_vars",

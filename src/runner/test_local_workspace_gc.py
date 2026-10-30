@@ -9,11 +9,19 @@ import pytest
 from src.runner import gc_orchestrator as gc
 
 
+def _resolve_bash():
+    if os.name == "nt":
+        for cand in [r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe"]:
+            if os.path.exists(cand):
+                return cand
+    return "bash"
+
+
 @pytest.mark.parametrize('mode,key,bind', [('', 'lab/project', '0.0.0.0'), ('1', '_local/lab/project', '127.0.0.1')])
 def test_runner_namespace(mode, key, bind):
-    source = Path(__file__).with_name('run_research_pipeline.sh').read_text()
+    source = Path(__file__).with_name('run_research_pipeline.sh').read_text(encoding="utf-8")
     block = source[source.index('WORKSPACE_KEY='):source.index('REPO_WORK_DIR=')]
-    response = subprocess.run(['bash', '-c', block + '\nprintf "%s\\n%s\\n" "$WORKSPACE_KEY" "$VIEWER_BIND_ADDRESS"'], env={**os.environ, 'TARGET_REPO': 'lab/project', 'IS_LOCAL': mode}, text=True, capture_output=True, check=True)
+    response = subprocess.run([_resolve_bash(), '-c', block + '\nprintf "%s\\n%s\\n" "$WORKSPACE_KEY" "$VIEWER_BIND_ADDRESS"'], env={**os.environ, 'TARGET_REPO': 'lab/project', 'IS_LOCAL': mode}, text=True, capture_output=True, check=True)
     assert response.stdout.splitlines() == [key, bind]
 
 
