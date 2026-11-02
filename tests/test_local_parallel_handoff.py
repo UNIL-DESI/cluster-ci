@@ -213,3 +213,79 @@ def test_worker_preserves_force_killed_runner_before_acknowledgement(env, monkey
         ack.assert_called_once()
     finally:
         executor.cleanup_worktree()
+
+
+def test_pending_handoff_blocks_new_worktree_before_copying_inputs(env, monkeypatch):
+    import tempfile
+    import src.runner.local_workspace as local
+    def fail(*args, **kwargs):
+        raise ConnectionError('synthetic headnode upload failure')
+    monkeypatch.setattr(local, 'upload_node_archive', fail)
+    with pytest.raises(ConnectionError):
+        run_node(env, 'blocked-worker', 'checkpoint', fail=True)
+    source = env['tmp'] / 'blocked-worker/_local/lab/test/.cluster-ci-local/jobs' / env['job'] / 'source'
+    pattern = 'cluster-ci-wt-' + env['job'] + '-*'
+    before = set(Path(tempfile.gettempdir()).glob(pattern))
+    assert before
+    for attempt in range(3):
+        with pytest.raises(ConnectionError):
+            branch.BranchExecutor('http://cluster.invalid', env['job'], 'retry-'+str(attempt),
+                                 'w', source, 'lab/test', 'local-draft/test',
+                                 cluster_token=TOKEN, docker=Mock())
+        assert set(Path(tempfile.gettempdir()).glob(pattern)) == before
+    archive = local.node_archive_path(source, 'checkpoint')
+    with zipfile.ZipFile(archive) as saved:
+        assert saved.read('outputs/checkpoint.txt') == b'1'
+    assert archive.with_suffix('.pending').exists()
+
+
+def test_pending_handoff_is_delivered_before_new_worktree_starts(env, monkeypatch):
+    import src.runner.local_workspace as local
+    original = local.upload_node_archive
+    def fail(*args, **kwargs):
+        raise ConnectionError('synthetic headnode upload failure')
+    monkeypatch.setattr(local, 'upload_node_archive', fail)
+    with pytest.raises(ConnectionError):
+        run_node(env, 'recovery-worker', 'checkpoint', fail=True)
+    source = env['tmp'] / 'recovery-worker/_local/lab/test/.cluster-ci-local/jobs' / env['job'] / 'source'
+    monkeypatch.setattr(local, 'upload_node_archive', original)
+    executor = branch.BranchExecutor('http://cluster.invalid', env['job'], 'new-runner',
+                                    'w', source, 'lab/test', 'local-draft/test',
+                                    cluster_token=TOKEN, docker=Mock())
+    try:
+        archive = local.node_archive_path(source, 'checkpoint')
+        assert not archive.with_suffix('.pending').exists()
+        assert not list(source.parent.glob('runner-*.json'))
+        result = env['client'].get(f"/api/jobs/{env['job']}/node_results/checkpoint", headers=AUTH)
+        assert result.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(result.data)) as saved:
+            assert saved.read('outputs/checkpoint.txt') == b'1'
+    finally:
+        executor.cleanup_worktree()
+
+
+def test_pending_archive_without_runner_record_requires_review(tmp_path):
+    from src.runner.local_workspace import preserve_pending_runners
+    source = tmp_path / 'source'
+    source.mkdir()
+    nodes = tmp_path / 'nodes'
+    nodes.mkdir()
+    (nodes / 'checkpoint.pending').write_text('Upload pending\n')
+    with pytest.raises(RuntimeError, match='review required'):
+        preserve_pending_runners(source, 'job', 'http://cluster.invalid', TOKEN)
+    assert (nodes / 'checkpoint.pending').exists()
+
+
+def test_active_runner_without_pending_handoff_is_untouched(tmp_path, monkeypatch):
+    import src.runner.local_workspace as local
+    source = tmp_path / 'source'
+    source.mkdir()
+    record = local.runner_record_path(source, 'active-runner')
+    content = json.dumps(dict(source=str(source), node='checkpoint', job_id='job',
+                              workspace=str(tmp_path / 'active-workspace')))
+    record.write_text(content)
+    upload = Mock(side_effect=AssertionError('Must not upload an active runner'))
+    monkeypatch.setattr(local, 'upload_node_archive', upload)
+    local.preserve_pending_runners(source, 'job', 'http://cluster.invalid', TOKEN)
+    assert record.read_text() == content
+    upload.assert_not_called()

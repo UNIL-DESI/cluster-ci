@@ -370,6 +370,11 @@ class BranchExecutor:
                 from src.runner import dvc_git_helper as helper
             self.start_commit = helper._get_start_commit(self.main_repo_dir)
 
+        if os.environ.get('IS_LOCAL') == '1':
+            from src.runner.local_workspace import preserve_pending_runners
+            preserve_pending_runners(self.main_repo_dir, self.job_id,
+                                     self.headnode_url, self.cluster_token)
+
         # Isolation de l'espace de travail par worktree dédié au runner (Lot H)
         safe_runner = re.sub(r"[^a-zA-Z0-9_.-]+", "-", self.runner_id).strip("-")
         git_dir = os.path.join(self.main_repo_dir, ".git")

@@ -137,15 +137,19 @@ def runner_record_path(source, runner_id):
     return Path(source).parent / ('runner-' + hashlib.sha256(runner_id.encode()).hexdigest() + '.json')
 
 
-def preserve_runner_record(record_path, headnode_url, token):
+def preserve_runner_record(record_path, headnode_url, token, *, pending_only=False):
     """Called after physical stop, including when the executor was SIGKILLed."""
     record_path = Path(record_path)
     if not record_path.exists():
         return
     with file_lock(str(record_path) + '.lock'):
+        if not record_path.exists():
+            return  # Another uploader may have completed while we waited.
         data = json.loads(record_path.read_text())
         archive = node_archive_path(data['source'], data['node'])
-        if Path(data['workspace']).exists():
+        if pending_only and not archive.with_suffix('.pending').exists():
+            return
+        if not pending_only and Path(data['workspace']).exists():
             save_node_archive(data['workspace'], data['node'], archive)
             archive.with_suffix('.pending').write_text('Upload pending\n')
         if not archive.exists():
@@ -153,6 +157,23 @@ def preserve_runner_record(record_path, headnode_url, token):
         upload_node_archive(archive, data['job_id'], data['node'], headnode_url, token)
         archive.with_suffix('.pending').unlink(missing_ok=True)
         record_path.unlink()
+
+
+def preserve_pending_runners(source, job_id, headnode_url, token):
+    """Finish this worker/job's pending handoffs before allocating another copy."""
+    source = Path(source).resolve()
+    for record in sorted(source.parent.glob('runner-*.json')):
+        if record.is_symlink():
+            raise ValueError('Symlinked local runner record')
+        try:
+            data = json.loads(record.read_text())
+        except FileNotFoundError:
+            continue
+        if data['job_id'] != job_id or Path(data['source']).resolve() != source:
+            raise ValueError('Local runner record belongs to another submission')
+        preserve_runner_record(record, headnode_url, token, pending_only=True)
+    if any((source.parent / 'nodes').glob('*.pending')):
+        raise RuntimeError('Pending local checkpoint has no recoverable runner record; review required')
 
 
 @contextmanager
