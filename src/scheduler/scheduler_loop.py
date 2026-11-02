@@ -1327,6 +1327,24 @@ def check_resource_impossibility(resources, workers, item_name="job", is_classic
     if not workers:
         return False, ""
 
+    allowed = resources.get("workers")
+    if allowed:
+        workers = [w for w in workers
+                   if w.get("worker_id") in allowed or w.get("hostname") in allowed]
+        if not workers:
+            # A pinned worker can register or come back online later.
+            return False, ""
+
+    # Empty-machine feasibility must not use transient free disk space. Actual
+    # placement still checks live disk_free_gb in is_worker_admissible_for_node.
+    # If total capacity is unknown, lack of free space cannot prove impossibility.
+    req_storage = float(resources.get("storage_gb")
+                        if resources.get("storage_gb") is not None else DEFAULT_STORAGE_GB)
+    if req_storage > 0:
+        workers = [dict(w, disk_free_gb=(w.get("total_storage_gb")
+                                       if w.get("total_storage_gb") is not None
+                                       else req_storage)) for w in workers]
+
     # Test d'admissibilité universelle à vide
     if any(is_worker_admissible_for_node(w, resources, allocated=None) for w in workers):
         return False, ""
