@@ -1765,3 +1765,55 @@ def test_late_worker_updates_cannot_revive_cancelled_dag(client, reported_status
     with persistence.get_db_conn() as conn:
         assert conn.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,)).fetchone()[0] == 'failed'
         assert conn.execute('SELECT status FROM job_nodes WHERE job_id = ?', (job_id,)).fetchone()[0] == 'blocked'
+
+
+def _transient_capacity_gb10(free_disk=59.0, total_disk=3666.0):
+    return dict(worker_id='GB10_1', hostname='HEC45801', arch='aarch64',
+                unified_memory=1, gpu_count=1, cpus=20, total_ram_gb=119.63,
+                total_vram_gb=119.63, vram_per_gpu=[119.63],
+                disk_free_gb=free_disk, available_storage_gb=free_disk,
+                total_storage_gb=total_disk)
+
+
+def _transient_capacity_request():
+    return dict(workers=['HEC45801'], cpus=8, ram_gb=10.0,
+                vram_gb=100.0, gpus=1, storage_gb=60.0)
+
+
+@pytest.mark.parametrize('classic', [False, True])
+def test_feasibility_waits_for_pinned_worker(classic):
+    worker = dict(_transient_capacity_gb10(), worker_id='GB10_3', hostname='HEC45803')
+    impossible, _ = scheduler_loop.check_resource_impossibility(
+        _transient_capacity_request(), [worker], is_classic=classic)
+    assert not impossible, 'An absent allowed worker is not proof of permanent infeasibility'
+
+
+@pytest.mark.parametrize('total_disk', [3666.0, None])
+@pytest.mark.parametrize('classic', [False, True])
+def test_feasibility_waits_for_free_disk_without_weakening_admission(total_disk, classic):
+    worker = _transient_capacity_gb10(total_disk=total_disk)
+    original = dict(worker)
+    request = _transient_capacity_request()
+    assert not scheduler_loop.is_worker_admissible_for_node(worker, request)
+    impossible, _ = scheduler_loop.check_resource_impossibility(request, [worker], is_classic=classic)
+    assert not impossible
+    assert worker == original, 'Feasibility must not overwrite live free-space telemetry'
+    assert not scheduler_loop.is_worker_admissible_for_node(worker, request)
+    available = dict(worker, disk_free_gb=80.0, available_storage_gb=80.0)
+    assert scheduler_loop.is_worker_admissible_for_node(available, request)
+
+
+def test_feasibility_rejects_request_larger_than_physical_disk():
+    worker = _transient_capacity_gb10(free_disk=40.0, total_disk=50.0)
+    assert scheduler_loop.check_resource_impossibility(_transient_capacity_request(), [worker])[0]
+
+
+def test_transient_disk_pressure_does_not_mark_parallel_job_failed(client):
+    plan = dict(version='3.0', nodes=[dict(name='run_gemma26', deps=[], resources=_transient_capacity_request())])
+    job = client.post('/submit_job', json=dict(repo='synthetic/transient-capacity', branch='main', plan=plan)).get_json()['job_id']
+    with persistence.get_db_conn() as conn:
+        assert not scheduler_loop.check_job_impossible_nodes(job, conn, [_transient_capacity_gb10()])
+        state = conn.execute('SELECT status FROM jobs WHERE job_id=?', (job,)).fetchone()[0]
+        node = conn.execute('SELECT status FROM job_nodes WHERE job_id=?', (job,)).fetchone()[0]
+        assert state == 'pending'
+        assert node == 'ready'

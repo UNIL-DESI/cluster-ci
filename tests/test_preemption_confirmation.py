@@ -135,3 +135,38 @@ def test_docker_failure_or_running_container_prevents_ack(env, monkeypatch, runn
     with patch.object(worker, 'update_job_status') as ack:
         worker._async_runner_preempt_cleanup('r', None, 0, {'job_id':'low','is_local':False})
     ack.assert_not_called()
+
+
+def test_classic_local_preemption_uses_only_private_result_sync(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(worker, 'REPOS_DIR', str(tmp_path))
+    calls=[]
+    def run(cmd, **kwargs):
+        calls.append((cmd,kwargs))
+        return Mock(returncode=0,stdout='',stderr='')
+    monkeypatch.setattr(worker.subprocess,'run',run)
+    executor=dict(job_id='local-classic',repo='lab/test',is_local=True,is_parallel=False)
+    worker._stop_runner_and_preserve('classic-local-classic',None,0,executor)
+    sync=[(cmd,kw) for cmd,kw in calls if 'sync-local-results' in cmd]
+    assert len(sync)==1
+    cmd,kw=sync[0]
+    assert kw['cwd']==str(tmp_path/'_local/lab/test')
+    assert kw['env']['IS_LOCAL']=='1' and kw['env']['JOB_ID']=='local-classic'
+    assert kw['env']['HEADNODE_URL']==worker.HEADNODE_URL
+    assert kw['env']['CLUSTER_TOKEN']==TOKEN
+    assert not any('push' in cmd or 'sync' in cmd for cmd,kw in calls)
+    filters=[cmd for cmd,kw in calls if 'name=^/cluster-job-local-classic$' in cmd]
+    assert len(filters)==1 and 'name=^/cluster-viewer-local-classic$' in filters[0]
+
+
+def test_classic_local_preservation_failure_retains_reservation(env, monkeypatch):
+    def run(cmd, **kwargs):
+        if 'sync-local-results' in cmd:
+            raise subprocess.CalledProcessError(1,cmd)
+        return Mock(returncode=0,stdout='',stderr='')
+    monkeypatch.setattr(worker.subprocess,'run',run)
+    executor=dict(job_id='low',repo='lab/test',is_local=True,is_parallel=False)
+    worker.preemption_executors['r']=executor
+    with patch.object(worker,'update_job_status') as ack:
+        worker._async_runner_preempt_cleanup('r',None,0,executor)
+    ack.assert_not_called()
+    assert worker.preemption_executors['r']==executor
