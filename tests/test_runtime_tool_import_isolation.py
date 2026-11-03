@@ -51,3 +51,34 @@ def test_only_research_sites_enter_stage_imports(tmp_path, project_provides_depe
 
 def test_empty_user_site_has_no_research_import_paths(tmp_path):
     assert research_site_packages(str(tmp_path / 'absent')) == []
+
+
+def test_package_verifier_ignores_isolated_tool_dependencies(tmp_path, monkeypatch):
+    from src.runner.verify_packages import discover_project_paths, verify_packages
+    base = tmp_path / 'user-site'
+    research = base / 'lib/python3.12/site-packages'
+    tool = base / 'share/cluster-ci-tools/venvs/viewer/lib/python3.12/site-packages'
+    for path, name in [(research, 'synthetic_research_check'), (tool, 'synthetic_platform_only')]:
+        metadata = path / (name + '-1.0.dist-info')
+        metadata.mkdir(parents=True)
+        (metadata / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n')
+        (metadata / 'top_level.txt').write_text(name + '\n')
+        (path / (name + '.py')).write_text('__version__ = "1.0"\n')
+    monkeypatch.syspath_prepend(str(research))
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    assert verify_packages(pythonpath='', base_dir=str(base), workspace_dir=str(tmp_path),
+                           check_subprocesses=False) == 0
+    assert discover_project_paths(str(base)) == [str(research)]
+
+
+def test_verifier_script_entrypoint_excludes_nested_tool_environment(tmp_path):
+    tool = tmp_path / 'user/share/cluster-ci-tools/venvs/viewer/lib/python3.12/site-packages'
+    metadata = tool / 'synthetic_platform_only-1.0.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata / 'METADATA').write_text('Metadata-Version: 2.1\nName: synthetic_platform_only\nVersion: 1.0\n')
+    result = subprocess.run([sys.executable, str(ROOT / 'src/runner/verify_packages.py'),
+                             '--base-dir', str(tmp_path / 'user'), '--workspace', str(tmp_path),
+                             '--no-subprocesses', '--no-import-modules'],
+                            cwd=tmp_path, env=dict(os.environ, PYTHONPATH=''),
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr

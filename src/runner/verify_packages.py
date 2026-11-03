@@ -97,21 +97,12 @@ def get_importable_modules(dist: Optional[importlib.metadata.Distribution], pkg_
 
 
 def discover_project_paths(base_dir: str = "/home/user/.local") -> List[str]:
-    """Find site-packages and dist-packages directories under base_dir (excluding uv tools)."""
-    paths: List[str] = []
-    if not os.path.exists(base_dir):
-        return paths
-
-    for root, dirs, _ in os.walk(base_dir):
-        if "share/uv" in root:
-            continue
-        for d in dirs:
-            if d in ("site-packages", "dist-packages"):
-                full_p = os.path.join(root, d)
-                if full_p not in paths:
-                    paths.append(full_p)
-    paths.sort()
-    return paths
+    """Audit the same research user sites used by stage execution."""
+    if __package__:
+        from .runtime_env import research_site_packages
+    else:  # Direct invocation inside runtime containers.
+        from runtime_env import research_site_packages
+    return research_site_packages(base_dir)
 
 
 def _run_subprocess_check(
