@@ -987,16 +987,7 @@ class BranchExecutor:
             raise RuntimeError(f"Root initialization failed for {container_name} (code {init_code}):\n{init_out}")
 
         # 2. Outils de base (uv, dvc via uv tool, dvc-viewer) avec set -euo pipefail
-        bootstrap_cmd = (
-            "set -euo pipefail\n"
-            "export PATH=$PATH:/home/user/.local/bin\n"
-            "if ! command -v uv >/dev/null 2>&1; then\n"
-            "    python3 -m pip install uv --user --break-system-packages >/dev/null 2>&1 || (curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1)\n"
-            "fi\n"
-            "uv tool install --force dvc --with dvc-http\n"
-            "uv tool upgrade dvc-viewer || uv tool install git+https://github.com/UNIL-DESI/dvc-viewer.git || true\n"
-            "dvc --version\n"
-        )
+        bootstrap_cmd = "bash /cluster-ci/src/runner/bootstrap_runtime_tools.sh"
         boot_code, boot_out = self.docker.exec_in_container(self.current_container, bootstrap_cmd)
         if boot_code != 0:
             raise RuntimeError(
@@ -1005,7 +996,7 @@ class BranchExecutor:
 
         # 3. smart_install avec clé de cache par image (dans son volume dédié)
         if os.path.exists(os.path.join(self.repo_dir, "pyproject.toml")):
-            smart_cmd = "export PATH=$PATH:/home/user/.local/bin && bash /cluster-ci/src/runner/smart_install.sh"
+            smart_cmd = "bash /cluster-ci/src/runner/smart_install.sh"
             smart_code, smart_out = self.docker.exec_in_container(
                 self.current_container,
                 smart_cmd,
@@ -1030,17 +1021,12 @@ class BranchExecutor:
 
     def discover_project_pythonpath(self) -> str:
         """
-        Découvre les dossiers site-packages et dist-packages installés sous
-        /home/user/.local (en excluant les outils uv isolés) et les retourne
-        sous forme de chaîne PYTHONPATH.
+        Return only direct research user sites, excluding all nested tool/venv
+        environments regardless of their configured installation prefix.
         """
         if not self.current_container:
             return ""
-        find_cmd = (
-            'if [ -d /home/user/.local ]; then '
-            'find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u; '
-            'fi'
-        )
+        find_cmd = "python3 /cluster-ci/src/runner/runtime_env.py --research-pythonpath /home/user/.local"
         code, out = self.docker.exec_in_container(self.current_container, find_cmd)
         if code != 0 or not out.strip():
             return ""
@@ -1074,7 +1060,8 @@ class BranchExecutor:
             self.current_pythonpath = self.discover_project_pythonpath()
 
         stream_prefix = f"[{node}@{self.worker_id}]"
-        cmd = "export PATH=/home/user/shims:$PATH:/home/user/.local/bin"
+        cmd = ("source /cluster-ci/src/runner/runtime_tools_env.sh"
+               " && export PATH=/home/user/shims:$PATH:/home/user/.local/bin")
         if self.current_pythonpath:
             cmd += f" && export PYTHONPATH=\"{self.current_pythonpath}:$PYTHONPATH\""
         cmd += f" && dvc repro -s {node}"
