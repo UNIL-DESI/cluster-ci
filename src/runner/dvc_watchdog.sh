@@ -40,7 +40,7 @@ while true; do
                     -e HEADNODE_URL="$HEADNODE_URL" \
                     -e CLUSTER_CI_MODE=executor \
                     -e CLUSTER_CI_GPU_REQUIRED="$CLUSTER_CI_GPU_REQUIRED" \
-                    "${MAIN_CONTAINER_NAME}" bash -c "export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || echo "[Watchdog] Warning: sync failed, will retry next modification."
+                    "${MAIN_CONTAINER_NAME}" bash -c "source /cluster-ci/src/runner/runtime_tools_env.sh && export PATH=/home/user/shims:\$PATH:/home/user/.local/bin && uv run --with ruamel.yaml python3 /cluster-ci/src/runner/dvc_git_helper.py sync" || echo "[Watchdog] Warning: sync failed, will retry next modification."
                 
                 # Re-fetch CURRENT_MOD in case the sync itself modified dvc.lock or took a long time
                 CURRENT_MOD=$(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo "$CURRENT_MOD")

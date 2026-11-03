@@ -20,7 +20,9 @@ jobs:
         run: pip install -e '.[dev]'
       - name: Test runtime tool isolation and dependency cleanup
         run: |
-          bash -n src/runner/bootstrap_runtime_tools.sh src/runner/smart_install.sh src/runner/run_research_pipeline.sh
+          for script in src/runner/runtime_tools_env.sh src/runner/bootstrap_runtime_tools.sh src/runner/smart_install.sh src/runner/run_research_pipeline.sh src/runner/dvc_watchdog.sh; do
+            bash -n "$script"
+          done
           python -m pytest -q tests/test_runtime_tools_bootstrap.py tests/test_runtime_image_r1_r5.py tests/test_runtime_env.py
       - name: Smoke test real tools through dependency cleanup and entrypoint recovery
         env:

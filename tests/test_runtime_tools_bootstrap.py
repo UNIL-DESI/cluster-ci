@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "src/runner/bootstrap_runtime_tools.sh"
 INSTALLER = ROOT / "src/runner/smart_install.sh"
+ENV_SCRIPT = ROOT / "src/runner/runtime_tools_env.sh"
 
 
 def executable(path, body):
@@ -145,3 +147,86 @@ def test_bootstrap_propagates_tool_install_failure(tools_environment, failed_too
     work, base, tools, calls, env = tools_environment
     result = run(BOOTSTRAP, work, {**env, "TEST_FAIL_TOOL": failed_tool}, check=False)
     assert result.returncode == 42
+
+
+def test_custom_prefix_resolves_all_tools_after_cleanup(tools_environment):
+    work, base, tools, calls, env = tools_environment
+    run(BOOTSTRAP, work, env)
+    run(INSTALLER, work, env)
+    result = subprocess.run(
+        ['bash', '-c', f'source {shlex.quote(str(ENV_SCRIPT))}; command -v uv; command -v dvc; command -v dvc-viewer'],
+        cwd=work, env=env, capture_output=True, text=True, check=True)
+    assert result.stdout.splitlines() == [str(tools / 'bin' / n) for n in ('uv', 'dvc', 'dvc-viewer')]
+
+
+def test_generated_uv_shim_uses_configured_prefix(tools_environment):
+    work, base, tools, calls, env = tools_environment
+    run(BOOTSTRAP, work, env)
+    source = (ROOT / 'src/runner/run_research_pipeline.sh').read_text()
+    body = re.search(r"# UV Shim\n[^\n]*\n(.*?)\nSHIMEOF", source, re.S)
+    assert body, 'Runner uv shim was not found'
+    shim = executable(work / 'shim/uv', body[1].removeprefix('#!/bin/bash\n').replace(
+        '/cluster-ci/src/runner/runtime_tools_env.sh', str(ENV_SCRIPT)))
+    # This is a bash shim; the shared executable helper otherwise writes /bin/sh.
+    shim.write_text('#!/bin/bash\n' + shim.read_text().split('\n', 1)[1])
+    result = subprocess.run([str(shim), '--version'], cwd=work, env=env,
+                            capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == 'uv test'
+
+
+def test_parallel_images_use_durable_tools_and_preserve_local_mode(tools_environment, monkeypatch):
+    from types import SimpleNamespace
+    from src.runner import branch_executor as branch
+    work, base, tools, calls, env = tools_environment
+    monkeypatch.setenv('IS_LOCAL', '1')
+    monkeypatch.delenv('CLUSTER_CI_SECRETS_FILE', raising=False)
+    monkeypatch.setattr(branch, 'subprocess', SimpleNamespace(Popen=lambda *a, **k: None))
+    # Legacy bootstrap must never accidentally invoke a real network installer.
+    shutil.copy2(tools / 'bin/uv', work / 'fake-bin/uv')
+    project = work / 'project'; project.mkdir()
+    second_base = work / 'second-image-site'
+    second_tools = second_base / 'share/cluster-ci-tools'
+    (second_tools / 'bin').mkdir(parents=True)
+    shutil.copy2(tools / 'bin/uv', second_tools / 'bin/uv')
+
+    class LocalShellDocker:
+        """Real unprivileged bootstrap/cleanup; synthetic Docker and tool binaries."""
+        def __init__(self):self.envs = {}; self.commands = []
+        def create_volume(self, name):return 0
+        def run_container(self, **kwargs):
+            second = kwargs['image'] == 'synthetic:second'
+            user_base, prefix = (second_base, second_tools) if second else (base, tools)
+            self.envs[kwargs['container_name']] = dict(env, PYTHONUSERBASE=str(user_base),
+                CLUSTER_CI_TOOLS_ROOT=str(prefix), CLUSTER_CI_HASH_FILE=str(user_base / 'hash'),
+                CLUSTER_CI_LOCK_FILE=str(user_base / 'lock'), IS_LOCAL=kwargs['env']['IS_LOCAL'])
+            return 0
+        def exec_in_container(self, container_name, command, env=None, user=None, **kwargs):
+            if user == 'root':return 0, 'Synthetic Docker: host root initialization is not executed'
+            effective = dict(self.envs[container_name], **(env or {}))
+            command = command.replace('/cluster-ci', str(ROOT)).replace('/home/user/.local', effective['PYTHONUSERBASE'])
+            self.commands.append((command, effective))
+            result = subprocess.run(['bash', '-c', command], cwd=project, env=effective,
+                                    capture_output=True, text=True, timeout=60)
+            return result.returncode, result.stdout + result.stderr
+        def stop_container(self, *a):pass
+        def remove_container(self, *a):pass
+
+    docker = LocalShellDocker()
+    executor = branch.BranchExecutor.__new__(branch.BranchExecutor)
+    executor.__dict__.update(target_repo='lab/review', runner_id='runner-review', safe_job_id='review',
+        job_id='review', worker_id='worker-review', headnode_url='http://head.invalid', cluster_token='synthetic',
+        container_prefix='synthetic-', repo_dir=str(project), main_repo_dir=str(project), base_dir=str(ROOT),
+        worktree_dir=None, ram_limit=1, vram_limit=0, user_id=os.getuid(), group_id=os.getgid(),
+        current_container=None, current_image=None, current_pythonpath='', total_containers_started=0, docker=docker)
+    executor.compute_docker_resource_args = lambda resources: ['--memory', '1g']
+    for image, prefix in [('synthetic:first', tools), ('synthetic:second', second_tools)]:
+        executor.start_container_for_image(image)
+        code, output = docker.exec_in_container(executor.current_container, 'bash /cluster-ci/src/runner/smart_install.sh')
+        assert code == 0, output
+        code, output = executor.execute_node_in_container('review', env_vars={'IS_LOCAL': '0', 'HEADNODE_URL': 'https://external.invalid'})
+        assert code == 0 and 'dvc test' in output, output
+        assert docker.commands[-1][1]['IS_LOCAL'] == '1'
+        assert docker.commands[-1][1]['HEADNODE_URL'] == 'http://head.invalid'
+        for name in ('uv', 'dvc', 'dvc-viewer'):assert (prefix / 'bin' / name).exists()
+        executor.stop_current_container()
+    assert executor.total_containers_started == 2

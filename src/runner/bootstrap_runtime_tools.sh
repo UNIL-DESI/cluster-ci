@@ -2,7 +2,8 @@
 # Keep orchestration tools outside the user-site directories smart_install purges.
 set -euo pipefail
 
-TOOLS_ROOT="${CLUSTER_CI_TOOLS_ROOT:-${HOME:-/home/user}/.local/share/cluster-ci-tools}"
+source "$(dirname "${BASH_SOURCE[0]}")/runtime_tools_env.sh"
+TOOLS_ROOT="$CLUSTER_CI_TOOLS_ROOT"
 TOOLS_BIN="$TOOLS_ROOT/bin"
 mkdir -p "$TOOLS_BIN"
 

@@ -12,6 +12,7 @@ SMART_INSTALL_VERSION="v3-runtime-r1r5-v1"
 USER_BASE="${PYTHONUSERBASE:-/home/user/.local}"
 export PYTHONUSERBASE="$USER_BASE"
 export PATH="$USER_BASE/bin:$PATH"
+source "$(dirname "${BASH_SOURCE[0]}")/runtime_tools_env.sh"
 
 HOME_DIR="${HOME:-/home/user}"
 HASH_FILE="${CLUSTER_CI_HASH_FILE:-$HOME_DIR/.cluster-ci-deps-hash}"
