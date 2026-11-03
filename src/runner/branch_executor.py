@@ -1021,17 +1021,12 @@ class BranchExecutor:
 
     def discover_project_pythonpath(self) -> str:
         """
-        Découvre les dossiers site-packages et dist-packages installés sous
-        /home/user/.local (en excluant les outils uv isolés) et les retourne
-        sous forme de chaîne PYTHONPATH.
+        Return only direct research user sites, excluding all nested tool/venv
+        environments regardless of their configured installation prefix.
         """
         if not self.current_container:
             return ""
-        find_cmd = (
-            'if [ -d /home/user/.local ]; then '
-            'find /home/user/.local -path "*/share/uv*" -prune -o \\( -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" \\) -print | sort -u; '
-            'fi'
-        )
+        find_cmd = "python3 /cluster-ci/src/runner/runtime_env.py --research-pythonpath /home/user/.local"
         code, out = self.docker.exec_in_container(self.current_container, find_cmd)
         if code != 0 or not out.strip():
             return ""

@@ -655,7 +655,7 @@ chown -R "$1" /home/user
 [ -d /opt/venv ] && chmod -R a+rX /opt/venv 2>/dev/null || true
 SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
 if [ -n "$SITE" ]; then
-    find /home/user -path "*/lib/python3.*/site-packages" -o -path "*/lib/python3.*/dist-packages" 2>/dev/null > "$SITE/cluster-ci-prefix.pth"
+    python3 /cluster-ci/src/runner/runtime_env.py --research-pythonpath /home/user/.local > "$SITE/cluster-ci-prefix.pth"
 fi
 # Fix NVSHMEM symbol errors on single-GPU systems.
 # libtorch_nvshmem.so expects nvshmem symbols to already be in the process

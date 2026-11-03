@@ -6,8 +6,19 @@ or host system, avoiding silent fallbacks when running in headless daemon enviro
 """
 
 import os
+import glob
 import shutil
 import sys
+
+
+def research_site_packages(user_base: str) -> list:
+    """Only direct research user sites; never nested tool/virtual environments."""
+    paths = []
+    for prefix in ('lib', os.path.join('local', 'lib')):
+        for kind in ('site-packages', 'dist-packages'):
+            pattern = os.path.join(user_base, prefix, 'python3.*', kind)
+            paths.extend(path for path in glob.glob(pattern) if os.path.isdir(path))
+    return sorted(set(paths))
 
 
 def resolve_venv_executable(name: str) -> str:
@@ -54,3 +65,11 @@ def resolve_venv_executable(name: str) -> str:
         f"Executable '{name}' not found. Searched active venv directory ('{venv_dir}'), "
         f"user local bin ('{user_local_bin}'), and system PATH ('{path_env}')."
     )
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Discover research Python package paths inside a runtime container')
+    parser.add_argument('--research-pythonpath', metavar='USER_BASE', required=True)
+    for path in research_site_packages(parser.parse_args().research_pythonpath):
+        print(path)
