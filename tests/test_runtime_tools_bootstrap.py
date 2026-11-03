@@ -230,3 +230,35 @@ def test_parallel_images_use_durable_tools_and_preserve_local_mode(tools_environ
         for name in ('uv', 'dvc', 'dvc-viewer'):assert (prefix / 'bin' / name).exists()
         executor.stop_current_container()
     assert executor.total_containers_started == 2
+
+
+def test_separate_viewer_can_source_helper_through_read_only_mount(tmp_path):
+    source = (ROOT / 'src/runner/run_research_pipeline.sh').read_text()
+    section = source[source.index('log_info "Launching live dvc-viewer server'):]
+    command = section[section.index('    docker run --rm'):section.index('\nfi')]
+    command = command.replace(' > "dvc-viewer.log" 2>&1 &', '')
+    tools = tmp_path / 'tools'
+    executable(tools / 'bin/dvc-viewer', 'echo VIEWER_OK\n')
+    driver = tmp_path / 'docker.py'
+    driver.write_text('''import os, shlex, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+mounts = [args[i+1].split(':') for i, v in enumerate(args[:-1]) if v == '-v']
+helper = '/cluster-ci/src/runner/runtime_tools_env.sh'
+mount = next((m for m in mounts if m[1:] == [helper, 'ro']), None)
+assert mount is not None, 'Viewer cannot source the unmounted runtime helper'
+assert Path(mount[0]).is_file()
+assert args[args.index('-p')+1] == '127.0.0.1:12345:12345'
+command = args[-1].replace(helper, shlex.quote(mount[0]))
+sys.exit(subprocess.run(['bash', '-c', command], env=os.environ).returncode)
+''')
+    executable(tmp_path / 'bin/docker',
+               f'exec {shlex.quote(sys.executable)} {shlex.quote(str(driver))} "$@"\n')
+    env = dict(os.environ, BASE_DIR=str(ROOT), MAIN_CONTAINER_NAME='synthetic-main',
+               VIEWER_CONTAINER_NAME='synthetic-viewer', HOME_CACHE_VOLUME='synthetic-home',
+               VIEWER_BIND_ADDRESS='127.0.0.1', VIEWER_PORT='12345', DOCKER_IMAGE='synthetic:image',
+               CLUSTER_CI_TOOLS_ROOT=str(tools), PATH=str(tmp_path / 'bin') + os.pathsep + os.environ['PATH'])
+    result = subprocess.run(['bash', '-c', command], cwd=tmp_path, env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert 'VIEWER_OK' in result.stdout

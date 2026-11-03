@@ -929,6 +929,7 @@ else
         $COMMON_LABELS \
         --pid=container:${MAIN_CONTAINER_NAME} \
         --entrypoint "" \
+        -v "$BASE_DIR/src/runner/runtime_tools_env.sh:/cluster-ci/src/runner/runtime_tools_env.sh:ro" \
         -v "$(pwd):/workspace" -w /workspace \
         -v "$HOME_CACHE_VOLUME:/home/user" \
         -p "$VIEWER_BIND_ADDRESS:$VIEWER_PORT:$VIEWER_PORT" \
