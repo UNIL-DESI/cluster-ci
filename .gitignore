@@ -47,3 +47,6 @@ site/
 # Runtime cluster metadata
 .cluster-ci-commit
 .cluster-ci-viewer-port
+
+# Scratch files
+scratch/

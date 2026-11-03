@@ -599,7 +599,10 @@ def register_worker():
     hostname = data.get('hostname')
     service_url = data.get('service_url')
     if service_url:
-        service_url = service_url.replace("1300.223.169.200", "130.223.169.200")
+        host_alias = os.environ.get("CLUSTER_HEADNODE_HOST_ALIAS")
+        headnode_ip = os.environ.get("CLUSTER_HEADNODE_IP")
+        if host_alias and headnode_ip:
+            service_url = service_url.replace(host_alias, headnode_ip)
     total_ram_gb = data.get('total_ram_gb')
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')

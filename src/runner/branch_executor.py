@@ -802,8 +802,10 @@ class BranchExecutor:
                             norm_s = str(s_url)
                         if norm_s not in all_workers:
                             all_workers.append(norm_s)
-                        if "isipol09" in norm_s:
-                            alt_url = norm_s.replace("isipol09", "130.223.73.209")
+                        host_alias = os.environ.get("CLUSTER_HEADNODE_HOST_ALIAS")
+                        headnode_ip = os.environ.get("CLUSTER_HEADNODE_IP")
+                        if host_alias and headnode_ip and host_alias in norm_s:
+                            alt_url = norm_s.replace(host_alias, headnode_ip)
                             if alt_url not in all_workers:
                                 all_workers.append(alt_url)
 

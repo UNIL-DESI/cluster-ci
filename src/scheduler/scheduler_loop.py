@@ -2111,7 +2111,11 @@ def schedule_iteration():
             if winner_score < len(required_hashes) and len(worker_scores) > 1:
                 peers = [ws for ws in worker_scores if ws[0]['worker_id'] != assigned_worker['worker_id']]
                 if peers and peers[0][1] > 0 and peers[0][0].get('service_url'):
-                    p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact".replace("1300.223.169.200", "130.223.169.200")
+                    p2p_url = f"{peers[0][0]['service_url']}/fetch_artifact"
+                    host_alias = os.environ.get("CLUSTER_HEADNODE_HOST_ALIAS")
+                    headnode_ip = os.environ.get("CLUSTER_HEADNODE_IP")
+                    if host_alias and headnode_ip:
+                        p2p_url = p2p_url.replace(host_alias, headnode_ip)
 
             c_gpu_ids = allocate_gpus(
                 assigned_worker, c_res,

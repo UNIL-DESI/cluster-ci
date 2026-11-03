@@ -619,7 +619,7 @@ docker run -d \
     --entrypoint "tail" \
     -v "$(pwd):/workspace" \
     -v "$HOME_CACHE_VOLUME:/home/user" \
-    -v /home/henri/ollama_poc:/home/user/.ollama \
+    -v "${OLLAMA_CACHE_DIR:-$HOME/.ollama_cache}:/home/user/.ollama" \
     -v "$BASE_DIR:/cluster-ci:ro" \
     -v /etc/passwd:/etc/passwd:ro \
     -v /etc/group:/etc/group:ro \
