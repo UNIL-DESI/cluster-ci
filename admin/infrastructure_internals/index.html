@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -890,22 +890,22 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#just-in-time-jit-tiered-lru-garbage-collection" class="md-nav__link">
+  <a href="#tiered-lru-garbage-collection-architecture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Just-In-Time (JIT) Tiered LRU Garbage Collection
+        Tiered LRU Garbage Collection Architecture
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Just-In-Time (JIT) Tiered LRU Garbage Collection">
+    <nav class="md-nav" aria-label="Tiered LRU Garbage Collection Architecture">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#progressive-cleanup-levels" class="md-nav__link">
+  <a href="#strict-5-tier-eviction-hierarchy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Progressive Cleanup Levels
+        Strict 5-Tier Eviction Hierarchy
       
     </span>
   </a>
@@ -914,28 +914,6 @@
         
       </ul>
     </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#emergency-garbage-collection-50-gb-threshold" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Emergency Garbage Collection (50 GB Threshold)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lazy-workspace-transfer-sync_status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lazy Workspace Transfer (sync_status)
-      
-    </span>
-  </a>
   
 </li>
         
@@ -1025,6 +1003,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Double-Threshold GPU Memory Guard &amp; Host Watchdog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#forensic-exit-code-137-diagnosis-host_guard_killedmarker-vs-oomkilled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forensic Exit Code 137 Diagnosis (host_guard_killed.marker vs OOMKilled)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -1387,22 +1382,22 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#just-in-time-jit-tiered-lru-garbage-collection" class="md-nav__link">
+  <a href="#tiered-lru-garbage-collection-architecture" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Just-In-Time (JIT) Tiered LRU Garbage Collection
+        Tiered LRU Garbage Collection Architecture
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Just-In-Time (JIT) Tiered LRU Garbage Collection">
+    <nav class="md-nav" aria-label="Tiered LRU Garbage Collection Architecture">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#progressive-cleanup-levels" class="md-nav__link">
+  <a href="#strict-5-tier-eviction-hierarchy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Progressive Cleanup Levels
+        Strict 5-Tier Eviction Hierarchy
       
     </span>
   </a>
@@ -1411,28 +1406,6 @@
         
       </ul>
     </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#emergency-garbage-collection-50-gb-threshold" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Emergency Garbage Collection (50 GB Threshold)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lazy-workspace-transfer-sync_status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lazy Workspace Transfer (sync_status)
-      
-    </span>
-  </a>
   
 </li>
         
@@ -1523,6 +1496,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Double-Threshold GPU Memory Guard &amp; Host Watchdog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#forensic-exit-code-137-diagnosis-host_guard_killedmarker-vs-oomkilled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forensic Exit Code 137 Diagnosis (host_guard_killed.marker vs OOMKilled)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1588,75 +1578,60 @@
 <p><img alt="Cluster Architecture" src="../../assets/images/cluster_architecture.png" /></p>
 <hr />
 <h2 id="1-garbage-collection">1. Garbage Collection</h2>
-<p>The cluster implements a multi-tiered garbage collection system to manage disk space on worker nodes. The primary orchestrator is <code>src/runner/gc_orchestrator.py</code>.</p>
-<h3 id="just-in-time-jit-tiered-lru-garbage-collection">Just-In-Time (JIT) Tiered LRU Garbage Collection</h3>
-<p>To prevent worker hard drives from filling up, the runner executes a JIT cleanup routine managed by <code>gc_orchestrator.py</code> before and after each job run.</p>
+<p>The cluster implements a multi-tiered, Least Recently Used (LRU) garbage collection system to manage disk space on worker nodes (<code>src/runner/gc_orchestrator.py</code>).</p>
+<h3 id="tiered-lru-garbage-collection-architecture">Tiered LRU Garbage Collection Architecture</h3>
+<p>To prevent worker hard drives from filling up, the runner executes a JIT cleanup routine before and after each job run:</p>
 <ul>
-<li><strong>Safety Threshold</strong>: The safety threshold is set to <strong>100 GB</strong> (configured via <code>GC_FREE_SPACE_THRESHOLD_GB</code> on the worker host).</li>
-<li><strong>LRU Registry</strong>: The system maintains a metadata registry (<code>repositories/registry.json</code>) tracking project usage (active/idle status, last execution timestamp, and disk size).</li>
-<li><strong>Trigger</strong>: If the free space on the partition drops below 100 GB when starting a job, the GC selects the oldest <code>idle</code> repositories and applies a <strong>5-level progressive purge</strong> (Least Recently Used first) until the threshold is restored.</li>
+<li><strong>Standard Eviction Threshold</strong>: Triggered when partition free space drops below <strong>100 GB</strong> (<code>FREE_SPACE_THRESHOLD_GB = 100</code>).</li>
+<li><strong>Panic Threshold</strong>: Escalates if free space drops below <strong>50 GB</strong> (<code>PANIC_THRESHOLD_GB = 50</code>), running aggressive pruning.</li>
+<li><strong>Active Job Protection Window</strong>: Any workspace with an active container or whose execution finished within the last <strong>6 hours</strong> (<code>GC_PROTECT_HOURS = 6.0</code>) is strictly protected against eviction.</li>
+<li><strong>Project Metadata Registry</strong>: Maintains <code>repositories/registry.json</code> tracking project usage (<code>status: "idle"|"running"</code>, <code>last_execution</code> timestamp, and disk footprint).</li>
 </ul>
-<h4 id="progressive-cleanup-levels">Progressive Cleanup Levels</h4>
-<p>The garbage collector frees space in five progressive steps:</p>
+<h4 id="strict-5-tier-eviction-hierarchy">Strict 5-Tier Eviction Hierarchy</h4>
+<p>When free disk space is below threshold, <code>gc_orchestrator.py</code> sequentially iterates through 5 hierarchical cleanup tiers, stopping immediately once free space exceeds the target threshold:</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: left;">Level</th>
-<th style="text-align: left;">Target</th>
-<th style="text-align: left;">Action &amp; Recovery</th>
+<th style="text-align: left;">Tier</th>
+<th style="text-align: left;">Category</th>
+<th style="text-align: left;">Targets &amp; Actions</th>
+<th style="text-align: left;">Safety Guarantees</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;"><strong>Level 1</strong></td>
-<td style="text-align: left;"><strong>DVC History Purge</strong></td>
-<td style="text-align: left;">Purges historical DVC files in the local cache, preserving only the <strong>last 2 commits</strong> of the repository.</td>
+<td style="text-align: left;"><strong>Tier 1</strong></td>
+<td style="text-align: left;"><strong>Regenerable Caches</strong></td>
+<td style="text-align: left;">- <code>docker system prune -f</code><br>- <code>dvc gc --workspace --rev HEAD</code><br>- Caches under <code>.cache/uv</code>, <code>.cache/pip</code>, <code>.cache/huggingface</code>, <code>.cache/torch</code>, and <code>__pycache__</code></td>
+<td style="text-align: left;"><strong>Zero loss</strong>: Never deletes <code>.venv</code> directories, Git history, or tracked repository files.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Level 2</strong></td>
-<td style="text-align: left;"><strong>Large Untracked Files</strong></td>
-<td style="text-align: left;">Force-deletes any untracked or ignored files in the workspace that are <strong>larger than 500 MB</strong>.</td>
+<td style="text-align: left;"><strong>Tier 2</strong></td>
+<td style="text-align: left;"><strong>Inactive Docker Volumes</strong></td>
+<td style="text-align: left;">Deletes idle named Docker home volumes (<code>cluster-ci-home-*</code>) belonging to inactive projects.</td>
+<td style="text-align: left;">Cached wheels are cleared; packages will be re-installed from locks on next run.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Level 3</strong></td>
-<td style="text-align: left;"><strong>Docker Dependency Volume</strong></td>
-<td style="text-align: left;">Deletes the project-specific Docker volume (<code>cluster-ci-home-&lt;owner-repo&gt;</code>), clearing cached <code>uv</code> and <code>pip</code> installations. They will be re-downloaded/reinstalled during the next run.</td>
+<td style="text-align: left;"><strong>Tier 3</strong></td>
+<td style="text-align: left;"><strong>Stale DVC Cache Entries</strong></td>
+<td style="text-align: left;">Cleans shared and local DVC cache files for the oldest idle repositories according to the LRU registry.</td>
+<td style="text-align: left;">Only unreferenced DVC hashes are removed; remote backups remain intact.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Level 4</strong></td>
-<td style="text-align: left;"><strong>Local DVC Cache Wipe</strong></td>
-<td style="text-align: left;">Wipes the entire local <code>.dvc/cache</code> directory. Before wiping, the GC pushes dirty/idle caches to the central backup (Google Drive). The next run will pull them back over the LAN or GDrive.</td>
+<td style="text-align: left;"><strong>Tier 4</strong></td>
+<td style="text-align: left;"><strong>Unused Docker Images</strong></td>
+<td style="text-align: left;">Prunes dangling and unused Docker images in LRU order (<code>docker image rm</code>).</td>
+<td style="text-align: left;">Images currently referenced by active or stopped containers are strictly preserved.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Level 5</strong></td>
-<td style="text-align: left;"><strong>Full Repository Wipe</strong></td>
-<td style="text-align: left;">Deletes the entire repository directory (<code>repositories/&lt;owner-repo&gt;</code>) from the worker.</td>
+<td style="text-align: left;"><strong>Tier 5</strong></td>
+<td style="text-align: left;"><strong>Full Inactive Workspaces</strong></td>
+<td style="text-align: left;">Deletes complete workspace directories under <code>repositories/</code> for the least recently used idle projects.</td>
+<td style="text-align: left;"><strong>Last Resort</strong>: Executed only after Tiers 1–4 are exhausted and disk space remains critical.</td>
 </tr>
 </tbody>
 </table>
-<p>Active repositories currently running jobs are <strong>never</strong> targeted by the GC.</p>
-<h3 id="emergency-garbage-collection-50-gb-threshold">Emergency Garbage Collection (50 GB Threshold)</h3>
-<p>The worker node implements an automatic, destructive <strong>Emergency Garbage Collection</strong> loop within <code>src/runner/gc_orchestrator.py</code> designed to prevent disk space exhaustion.</p>
-<ol>
-<li><strong>Triggering and Panic Threshold</strong>: The emergency GC is launched via <code>run_gc()</code>. It checks the free space of the storage partition where repositories reside (derived using <code>shutil.disk_usage</code>). The panic threshold is set to a hardcoded limit of <strong>50 GB</strong> (<code>PANIC_THRESHOLD_GB = 50</code>).</li>
-<li><strong>Resource Pruning</strong>: Before deleting workspace directories, the script executes a general Docker system cleanup by calling <code>docker system prune -f</code> to reclaim space from dangling images, unused networks, and stopped containers.</li>
-<li><strong>Workspace Eviction Strategy (FIFO/LRU)</strong>: If the storage space remains below 50 GB after the Docker prune, the script parses the <code>registry.json</code> database. It filters out all projects marked as <code>status: "idle"</code>. It then sorts these idle projects chronologically by their <code>last_execution</code> timestamp, placing the least recently used (LRU) project at the front.</li>
-<li><strong>Destructive Cleanup</strong>: For each candidate project, the GC invokes <code>cleanup_level_5(project_path, project_name)</code>, which executes a recursive directory deletion via <code>shutil.rmtree(project_path)</code>. No remote backups or DVC pushes are executed during this emergency routine.</li>
-<li><strong>Termination Condition</strong>: The deletion loop stops immediately once the available disk space climbs back above the 50 GB limit. The database <code>registry.json</code> is updated, writing <code>status: "deleted"</code> and <code>size_bytes: 0</code> for all evicted projects.</li>
-</ol>
-<h3 id="lazy-workspace-transfer-sync_status">Lazy Workspace Transfer (<code>sync_status</code>)</h3>
-<p>For standard maintenance, <code>src/runner/gc_orchestrator.py</code> implements a <strong>Lazy Workspace Transfer</strong> routine through <code>run_transfer_gc()</code> to offload older workspace folders.</p>
-<ol>
-<li><strong>Threshold and Scan</strong>: Triggered when the worker's free disk space drops below <code>FREE_SPACE_THRESHOLD_GB</code> (defaults to 100 GB, configurable via the <code>GC_FREE_SPACE_THRESHOLD_GB</code> environment variable). The orchestrator identifies candidate projects marked as <code>"idle"</code>.</li>
-<li><strong>DVC Remote Verification</strong>: The worker inspects the workspace configuration at <code>.dvc/config</code>. If a remote is configured (determined by searching for the <code>remote =</code> string), the project cannot be deleted without pushing its data.</li>
-<li><strong>Headnode Query &amp; Push</strong>: The worker queries the central headnode API endpoint (<code>HEADNODE_URL/check_space</code>) to check if the remote repository has sufficient storage capacity. If the headnode is available and has enough space, the worker executes a local <code>dvc push</code> inside the project path.</li>
-<li><strong>Eviction &amp; Sync Status Update</strong>:<ul>
-<li>If the <code>dvc push</code> succeeds, the project is evicted from the worker via <code>cleanup_level_5</code> (workspace directory deleted). The project status in <code>registry.json</code> is set to <code>"deleted"</code>, its size is set to <code>0</code>, and its <code>sync_status</code> is updated to <code>"done"</code>.</li>
-<li>If the headnode is unreachable, full, or if the <code>dvc push</code> fails, the local workspace deletion is deferred. The project's <code>sync_status</code> is set to <code>"pending"</code> in the registry, ensuring it is kept locally until the next maintenance pass.</li>
-<li>If the workspace has no DVC remote configured, it is directly evicted and marked as <code>status: "deleted"</code> and <code>sync_status: "done"</code>.</li>
-</ul>
-</li>
-</ol>
+<p>Active repositories currently running jobs are <strong>never</strong> targeted by any tier of the GC.</p>
 <hr />
 <h2 id="2-historical-dvc-visualizer">2. Historical DVC Visualizer</h2>
 <p>The historical visualizer allows researchers to view pipeline DAGs, metrics, and plots for older revisions without interfering with the active workspace. It utilizes isolated Git worktrees and cached symlinks.</p>
@@ -1705,19 +1680,31 @@
 <h2 id="4-runtime-watchdogs">4. Runtime Watchdogs</h2>
 <p>The cluster employs several watchdog processes to ensure job stability and prevent resource exhaustion.</p>
 <h3 id="double-threshold-gpu-memory-guard-host-watchdog">Double-Threshold GPU Memory Guard &amp; Host Watchdog</h3>
-<p>To prevent jobs from freezing the operating system or starving other tasks on unified memory platforms, <code>cluster-ci</code> implements a double-threshold memory protection system.</p>
+<p>To prevent jobs from freezing the operating system or starving other tasks on unified memory platforms (such as NVIDIA Grace Blackwell GB10), <code>cluster-ci</code> implements a double-threshold memory protection system.</p>
 <ol>
 <li><strong>Process-Level CUDA Hard-Cap</strong>: The script <code>src/runner/gpu_memory_guard.py</code> is injected into the container's <code>PYTHONSTARTUP</code> environment variable. Before user code executes, it checks <code>CLUSTER_CI_VRAM_LIMIT_GB</code>. If set, it calculates the VRAM fraction and hard-caps PyTorch's memory allocation via:
     <code>torch.cuda.set_per_process_memory_fraction(fraction, device=0)</code></li>
-<li><strong>Unified Memory (Grace Blackwell) Fallback</strong>: On unified systems (e.g. Grace Blackwell GB10), standard CUDA device queries for total memory return <code>0</code> or <code>[N/A]</code>. The guard detects this and falls back to reading system RAM from <code>/proc/meminfo</code> (<code>MemTotal:</code>), which serves as the shared CPU-GPU pool.</li>
+<li><strong>Unified Memory (Grace Blackwell GB10) Architecture</strong>: On unified memory systems, CPU and GPU share a single physical NVLink-C2C memory pool (128 GB). Standard CUDA device queries for total memory return <code>0</code> or <code>[N/A]</code>. The guard detects this architecture and falls back to reading system RAM from <code>/proc/meminfo</code> (<code>MemTotal:</code>), dynamically enforcing limits against the shared pool.</li>
 <li><strong>Host-Level Dual Threshold Watchdog</strong>: The host script <code>src/runner/gpu_watchdog.sh</code> monitors the running container every 2 seconds:<ul>
 <li><strong>Discrete GPU Mode</strong>: Queries <code>nvidia-smi --query-gpu=memory.used</code>.</li>
 <li><strong>Unified Memory Mode</strong>: Fallback to <code>/proc/meminfo</code> (<code>MemTotal - MemAvailable</code>).</li>
 <li><strong>Soft VRAM Threshold (User-declared)</strong>: If memory exceeds this limit, it flags a violation. If the violation persists for <code>SOFT_THRESHOLD = 2</code> consecutive checks (4 seconds grace period), the watchdog kills the container (<code>docker kill</code>).</li>
-<li><strong>Hard RAM Threshold (90% System RAM)</strong>: If memory usage exceeds 90% of total system RAM, the watchdog immediately kills the container on the very first check to protect the host OS from kernel panic/OOM lockups.</li>
+<li><strong>Hard Host Guard Threshold</strong>: If host free memory drops to <code>MemAvailable &lt; 12 GiB</code> or total system RAM usage exceeds <strong>90%</strong>, the watchdog immediately kills the container on the very first check to protect the host OS from kernel panics, freeze, or unrecoverable lockups.</li>
 </ul>
 </li>
 </ol>
+<h4 id="forensic-exit-code-137-diagnosis-host_guard_killedmarker-vs-oomkilled">Forensic Exit Code 137 Diagnosis (<code>host_guard_killed.marker</code> vs <code>OOMKilled</code>)</h4>
+<p>When a stage terminates abruptly with exit code <code>137</code> (SIGKILL), the execution runner performs an automated forensic check to distinguish host-level emergency eviction from container-level quota exhaustion:</p>
+<ul>
+<li><strong>Host Guard Emergency Termination (<code>host_guard_killed.marker</code>)</strong>:
+    When <code>gpu_watchdog.sh</code> kills a runaway container to protect the server (<code>MemAvailable &lt; 12 GiB</code> or RAM &gt; 90%), it drops a marker file <code>host_guard_killed.marker</code> in the job directory. The runner catches this file and reports:
+    <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>HostMemoryPressureExceeded: Stage '&lt;stage&gt;' was terminated by the host memory watchdog.
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Cause: Available system memory fell below 12 GiB (or exceeded 90% capacity).
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>Remedy: Decrease concurrency, reduce DataLoader workers, or schedule on a worker with larger capacity.
+</span></code></pre></div></li>
+<li><strong>Container Quota OOM Killer (<code>OOMKilled</code>)</strong>:
+    If no marker file exists, the runner inspects container metadata via <code>docker inspect --format '{{.State.OOMKilled}}'</code>. If <code>true</code>, the container was terminated by the Linux cgroup OOM Killer for exceeding its own declared memory envelope (<code>meta.cluster.ram_gb</code> or <code>vram_gb</code> on GB10). The runner prompts the researcher to increase <code>ram_gb</code> in <code>dvc.yaml</code>.</li>
+</ul>
 <h3 id="zombie-gc-multi-dimensional-inactivity">Zombie GC (Multi-dimensional Inactivity)</h3>
 <p>To prevent orphaned or stuck container processes from indefinitely consuming cluster resources, <code>src/runner/gc_orchestrator.py</code> runs a <strong>Zombie Garbage Collection</strong> daemon via <code>run_zombie_gc()</code>.</p>
 <ol>
@@ -1801,10 +1788,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

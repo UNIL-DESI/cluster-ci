@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -912,6 +912,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#architecture-of-the-4-real-systemd-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture of the 4 Real Systemd Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#systemd-service-hardening-10-headnode-guardconf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd Service Hardening (10-headnode-guard.conf)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cgroup-host-memory-isolation-cluster-jobs-cgroupservice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cgroup Host Memory Isolation (cluster-jobs-cgroup.service)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#systemd-hardware-recovery-watchdog" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1000,22 +1033,61 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-google-drive-authorization-for-dvc-storage" class="md-nav__link">
+  <a href="#6-cluster-maintenance-upgrades-cluster-update" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Google Drive Authorization for DVC Storage
+        6. Cluster Maintenance &amp; Upgrades: cluster-update
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="6. Google Drive Authorization for DVC Storage">
+    <nav class="md-nav" aria-label="6. Cluster Maintenance &amp; Upgrades: cluster-update">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#standard-headless-authorization-process" class="md-nav__link">
+  <a href="#execution-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Standard Headless Authorization Process:
+        Execution Modes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Execution Modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#managed-drain-mode-queue-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed Drain Mode (--queue, Default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emergency-direct-mode-force" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emergency Direct Mode (--force)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-options-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Options Reference
       
     </span>
   </a>
@@ -1554,6 +1626,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#architecture-of-the-4-real-systemd-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture of the 4 Real Systemd Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#systemd-service-hardening-10-headnode-guardconf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd Service Hardening (10-headnode-guard.conf)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cgroup-host-memory-isolation-cluster-jobs-cgroupservice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cgroup Host Memory Isolation (cluster-jobs-cgroup.service)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#systemd-hardware-recovery-watchdog" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1642,22 +1747,61 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-google-drive-authorization-for-dvc-storage" class="md-nav__link">
+  <a href="#6-cluster-maintenance-upgrades-cluster-update" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Google Drive Authorization for DVC Storage
+        6. Cluster Maintenance &amp; Upgrades: cluster-update
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="6. Google Drive Authorization for DVC Storage">
+    <nav class="md-nav" aria-label="6. Cluster Maintenance &amp; Upgrades: cluster-update">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#standard-headless-authorization-process" class="md-nav__link">
+  <a href="#execution-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Standard Headless Authorization Process:
+        Execution Modes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Execution Modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#managed-drain-mode-queue-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed Drain Mode (--queue, Default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#emergency-direct-mode-force" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Emergency Direct Mode (--force)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-options-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Options Reference
       
     </span>
   </a>
@@ -1836,10 +1980,33 @@
 <h2 id="2-system-prerequisites-and-hardware-watchdog">2. System Prerequisites and Hardware Watchdog</h2>
 <p>For worker nodes to run reliably under heavy GPU training workloads on Grace Blackwell (GB10) architectures, low-level OS configurations must be properly set.</p>
 <h3 id="passwordless-sudoers-policy">Passwordless Sudoers Policy</h3>
-<p>The system relies on a dedicated sudoers drop-in configuration at <code>/etc/sudoers.d/cluster-ci</code>:
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-worker-agent, /usr/bin/dmesg, /usr/bin/journalctl
+<p>The system relies on a dedicated sudoers drop-in configuration at <code>/etc/sudoers.d/cluster-ci</code> (<code>src/cluster/setup_runner.sh:144</code>):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Defaults:$USER !requiretty
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>$USER ALL=(ALL) NOPASSWD: /bin/systemctl restart cluster-runner-manager, /bin/systemctl restart cluster-scheduler, /bin/systemctl restart cluster-scheduler-loop, /bin/systemctl restart cluster-worker, /usr/bin/systemctl restart cluster-runner-manager, /usr/bin/systemctl restart cluster-scheduler, /usr/bin/systemctl restart cluster-scheduler-loop, /usr/bin/systemctl restart cluster-worker, /usr/bin/dmesg, /bin/dmesg, /usr/bin/journalctl, /bin/journalctl
 </span></code></pre></div>
-This enables the unprivileged cluster agent user to restart systemd services and read system telemetry logs without interactive password prompts.</p>
+<p>This enables the unprivileged cluster agent user to restart the 4 core services and query system telemetry without interactive password prompts.</p>
+<h3 id="architecture-of-the-4-real-systemd-services">Architecture of the 4 Real Systemd Services</h3>
+<p>Cluster-CI infrastructure is decoupled into 4 dedicated systemd units:</p>
+<ol>
+<li><strong><code>cluster-scheduler.service</code></strong>: Hosts the Flask/FastAPI REST API on the Headnode (<code>src/scheduler/headnode_service.py</code>), handling job submissions, health checks, log queries, and the Web Dashboard.</li>
+<li><strong><code>cluster-scheduler-loop.service</code></strong>: Runs the decoupled, autonomous scheduling and preemption evaluation engine (<code>src/scheduler/scheduler_loop.py</code>), ranking jobs every 5 seconds.</li>
+<li><strong><code>cluster-runner-manager.service</code></strong>: Manages ephemeral GitHub Actions self-hosted runners (<code>src/scheduler/runner_manager.py</code>), auto-healing hung or cancelled slots.</li>
+<li><strong><code>cluster-worker.service</code></strong>: The worker execution daemon (<code>src/scheduler/worker_agent.py</code>), deployed on dedicated compute nodes (<code>HEC45801</code>, <code>HEC45803</code>) and in dual-mode on the Headnode (<code>isipol09</code>).</li>
+</ol>
+<h3 id="systemd-service-hardening-10-headnode-guardconf">Systemd Service Hardening (<code>10-headnode-guard.conf</code>)</h3>
+<p>To safeguard critical scheduler daemons from eviction during severe memory pressure, a systemd drop-in configuration <code>10-headnode-guard.conf</code> is installed on all core services (<code>/etc/systemd/system/*.service.d/10-headnode-guard.conf</code>):</p>
+<ul>
+<li><strong><code>OOMScoreAdjust=-900</code></strong>: Immunizes the service against the Linux kernel OOM Killer, ensuring the kernel terminates user compute containers before ever touching the scheduler or worker agent.</li>
+<li><strong><code>MemoryLow=2G</code> &amp; <code>MemoryMin=512M</code></strong>: Reserves memory protection guarantees from kernel page reclaim.</li>
+<li><strong><code>CPUWeight=1000</code> &amp; <code>CPUShares=2048</code></strong>: Guarantees maximum CPU scheduling priority for cluster daemons over batch workloads.</li>
+</ul>
+<h3 id="cgroup-host-memory-isolation-cluster-jobs-cgroupservice">Cgroup Host Memory Isolation (<code>cluster-jobs-cgroup.service</code>)</h3>
+<p>To ensure Docker execution containers cannot starve the operating system, <code>setup_runner.sh:248-283</code> installs a persistent boot service <code>cluster-jobs-cgroup.service</code>:</p>
+<ul>
+<li>Creates <code>/sys/fs/cgroup/cluster-jobs</code> (supporting both cgroup v1 and v2).</li>
+<li>Sets a hard aggregate memory ceiling: <code>memory.max = MemTotal - 16.0 GB</code> (or <code>memory.limit_in_bytes</code>).</li>
+<li>Sanctuaries <strong>16 GB of physical RAM</strong> exclusively for the Linux OS, SSH access, and Headnode daemons. All user containers are executed under <code>--cgroup-parent=/cluster-jobs</code>.</li>
+</ul>
 <h3 id="systemd-hardware-recovery-watchdog">Systemd Hardware Recovery Watchdog</h3>
 <p>NVIDIA Grace Blackwell architectures can suffer from kernel panics or physical freezes when CUDA drivers crash under extreme memory allocation conditions. To prevent physical server hangs, systemd's hardware watchdog interface is configured in <code>/etc/systemd/system.conf</code>:
 * <code>RuntimeWatchdogSec=30</code>: Directs systemd to ping the hardware watchdog device (e.g., <code>/dev/watchdog</code>) every 30 seconds. If the kernel freezes and systemd fails to "pet" the watchdog, the motherboard's hardware controller triggers a hard reboot of the machine.
@@ -1890,21 +2057,83 @@ This enables the unprivileged cluster agent user to restart systemd services and
 </span></code></pre></div></li>
 </ul>
 <hr />
-<h2 id="6-google-drive-authorization-for-dvc-storage">6. Google Drive Authorization for DVC Storage</h2>
-<p>Cluster-CI uses Google Drive as a centralized remote storage for long-term DVC artifact caching. The credentials must be pre-authorized on each worker host so that headless Docker containers can pull/push artifacts without interactive OAuth prompts.</p>
-<h3 id="standard-headless-authorization-process">Standard Headless Authorization Process:</h3>
-<ol>
-<li><strong>Generate Credentials Locally</strong>:
-    On a machine with a web browser, initialize the Google Drive authentication flow:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>dvc<span class="w"> </span>remote<span class="w"> </span>modify<span class="w"> </span>my_gdrive_remote<span class="w"> </span>auth<span class="w"> </span>gdrive
-</span></code></pre></div></li>
-<li><strong>Perform OAuth Authentication</strong>:
-    DVC will display a link. Open this URL in your web browser, log in with your authorized institutional Google account, and grant the required permissions.</li>
-<li><strong>Retrieve Token</strong>:
-    Copy the authorization code from the browser and paste it back into the terminal. This creates a local token cache file containing the refresh token.</li>
-<li><strong>Deploy Credentials on Workers</strong>:
-    The resulting token must be deployed on each worker host via the <code>.env</code> / <code>.env.secrets</code> configuration files. The worker agents automatically mount these credentials at runtime, ensuring DVC commands (<code>dvc pull</code>, <code>dvc push</code>) run with full permissions inside containers.</li>
-</ol>
+<h2 id="6-cluster-maintenance-upgrades-cluster-update">6. Cluster Maintenance &amp; Upgrades: <code>cluster-update</code></h2>
+<p>The <code>cluster-update</code> CLI tool is installed into <code>$HOME/.local/bin/</code> (with a <code>.cmd</code> wrapper on Windows) to orchestrate software updates and maintenance operations across all cluster machines.</p>
+<h3 id="execution-modes">Execution Modes</h3>
+<h4 id="managed-drain-mode-queue-default">Managed Drain Mode (<code>--queue</code>, Default)</h4>
+<p>The recommended, safe method for rolling out updates across workers:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cluster-update<span class="w"> </span>--queue
+</span></code></pre></div>
+*   <strong>Draining Barrier</strong>: Calls <code>POST /api/maintenance/submit</code> on the Headnode.
+*   <strong>Non-Disruptive</strong>: Waits for currently running user computation jobs to complete naturally while blocking new jobs from starting.
+*   <strong>Rolling Upgrade</strong>: Updates worker daemons, pulls fresh runtime container images, and restarts systemd services (<code>cluster-scheduler-loop</code>, <code>cluster-worker</code>, <code>cluster-runner-manager</code>).
+*   <strong>Interactive Monitoring</strong>: Streams live maintenance progress to your terminal with automatic recovery if network connections drop temporarily.</p>
+<h4 id="emergency-direct-mode-force">Emergency Direct Mode (<code>--force</code>)</h4>
+<p>When the scheduler API is unresponsive or urgent hotfixes are required:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cluster-update<span class="w"> </span>--force
+</span></code></pre></div>
+*   Bypasses the queue and Headnode API entirely.
+*   Directly connects via SSH across all physical nodes (<code>isipol09</code>, <code>HEC45801</code>, <code>HEC45803</code>).
+*   Applies code updates and restarts cluster services immediately.</p>
+<h3 id="cli-options-reference">CLI Options Reference</h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cluster-update [--queue | --force] [--branch BRANCH] [--target-repo REPO] [--headnode-url URL] [--token TOKEN] [--description DESC] [--no-wait] [--add-worker HOST]
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Flag</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>--queue</code></td>
+<td style="text-align: left;"><em>(default)</em></td>
+<td style="text-align: left;">Submit a queued maintenance job with worker draining.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--force</code></td>
+<td style="text-align: left;"><code>false</code></td>
+<td style="text-align: left;">Bypass queue and execute direct SSH update across all machines.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--branch</code></td>
+<td style="text-align: left;"><code>main</code></td>
+<td style="text-align: left;">Target Git branch of Cluster-CI to deploy.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--target-repo</code></td>
+<td style="text-align: left;"><code>UNIL-DESI/cluster-ci</code></td>
+<td style="text-align: left;">Target Git repository for the update.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--headnode-url</code></td>
+<td style="text-align: left;"><code>http://130.223.73.209:5000</code></td>
+<td style="text-align: left;">Headnode API base endpoint.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--token</code></td>
+<td style="text-align: left;"><code>$CLUSTER_CI_TOKEN</code></td>
+<td style="text-align: left;">Cluster authentication token.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--description</code></td>
+<td style="text-align: left;"><code>"Cluster upgrade"</code></td>
+<td style="text-align: left;">Audit note attached to the maintenance event.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--no-wait</code></td>
+<td style="text-align: left;"><code>false</code></td>
+<td style="text-align: left;">Submit the queued update job and exit immediately without streaming progress.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--add-worker</code></td>
+<td style="text-align: left;"><code>null</code></td>
+<td style="text-align: left;">Register and provision a new physical worker node into the cluster.</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="7-scheduling-queue-and-job-dispatch-flow">7. Scheduling Queue and Job Dispatch Flow</h2>
 <p>Below is the schema outlining how jobs enter the execution queue, how placement constraints are evaluated by the scheduler, and how workers are allocated to execution slots.</p>
@@ -1916,12 +2145,12 @@ This enables the unprivileged cluster agent user to restart systemd services and
 <p>To integrate a new physical worker into the cluster:</p>
 <ol>
 <li>Run the worker one-liner installation script:
-   <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s1">'Cache-Control: no-cache, no-store'</span><span class="w"> </span>-sSL<span class="w"> </span><span class="s2">"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=</span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>worker
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s1">'Cache-Control: no-cache, no-store'</span><span class="w"> </span>-sSL<span class="w"> </span><span class="s2">"https://raw.githubusercontent.com/UNIL-DESI/cluster-ci/main/install.sh?v=</span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>bash<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>worker
 </span></code></pre></div></li>
 <li>Provide the <code>HEADNODE_URL</code> and <code>CLUSTER_TOKEN</code> when prompted.</li>
 <li>Distribute the inter-worker SSH public key (<code>~/.ssh/id_rsa.pub</code>) to enable peer-to-peer artifact transfers.</li>
 </ol>
-<p>Once the <code>cluster-worker-agent</code> service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.</p>
+<p>Once the <code>cluster-worker</code> service starts, the node automatically registers with the headnode and starts heartbeating every 10 seconds.</p>
 <h3 id="automatic-capability-discovery">Automatic Capability Discovery</h3>
 <p>During the registration handshake (<code>POST /register_worker</code>), the worker agent scans its local hardware and reports:</p>
 <ul>
@@ -1934,16 +2163,16 @@ This enables the unprivileged cluster agent user to restart systemd services and
 </ul>
 <h3 id="scheduler-admission-logic">Scheduler Admission Logic</h3>
 <p>The headnode scheduler uses these reported telemetry fields to make admission decisions:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Unified memory architecture (Grace Blackwell GB10)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">if</span> <span class="n">worker</span><span class="p">[</span><span class="s2">"unified_memory"</span><span class="p">]:</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">is_admissible</span> <span class="o">=</span> <span class="p">(</span><span class="n">stage</span><span class="p">[</span><span class="s2">"ram_gb"</span><span class="p">]</span> <span class="o">+</span> <span class="n">stage</span><span class="p">[</span><span class="s2">"vram_gb"</span><span class="p">])</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">worker</span><span class="p">[</span><span class="s2">"total_ram_gb"</span><span class="p">]</span> <span class="o">-</span> <span class="mf">8.0</span><span class="p">)</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># Discrete architecture (e.g. RTX 3090, AMD/Intel CPUs)</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="k">else</span><span class="p">:</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">is_admissible</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>        <span class="n">stage</span><span class="p">[</span><span class="s2">"ram_gb"</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">worker</span><span class="p">[</span><span class="s2">"available_ram_gb"</span><span class="p">]</span> <span class="o">-</span> <span class="mf">8.0</span><span class="p">)</span> <span class="ow">and</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="n">stage</span><span class="p">[</span><span class="s2">"vram_gb"</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">sum_available_vram</span><span class="p">(</span><span class="n">worker</span><span class="p">)</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Unified memory architecture (Grace Blackwell GB10)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">if</span> <span class="n">worker</span><span class="p">[</span><span class="s2">"unified_memory"</span><span class="p">]:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">is_admissible</span> <span class="o">=</span> <span class="p">(</span><span class="n">stage</span><span class="p">[</span><span class="s2">"ram_gb"</span><span class="p">]</span> <span class="o">+</span> <span class="n">stage</span><span class="p">[</span><span class="s2">"vram_gb"</span><span class="p">])</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">worker</span><span class="p">[</span><span class="s2">"total_ram_gb"</span><span class="p">]</span> <span class="o">-</span> <span class="mf">8.0</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># Discrete architecture (e.g. RTX 3090, AMD/Intel CPUs)</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="k">else</span><span class="p">:</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">is_admissible</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>        <span class="n">stage</span><span class="p">[</span><span class="s2">"ram_gb"</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">worker</span><span class="p">[</span><span class="s2">"available_ram_gb"</span><span class="p">]</span> <span class="o">-</span> <span class="mf">8.0</span><span class="p">)</span> <span class="ow">and</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>        <span class="n">stage</span><span class="p">[</span><span class="s2">"vram_gb"</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">sum_available_vram</span><span class="p">(</span><span class="n">worker</span><span class="p">)</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="p">)</span>
 </span></code></pre></div>
 <p>For stages scheduled on discrete multi-GPU machines, the scheduler dynamically assigns specific GPU indices and injects <code>CUDA_VISIBLE_DEVICES</code> into the container environment.</p>
 <hr />
@@ -2060,10 +2289,10 @@ This enables the unprivileged cluster agent user to restart systemd services and
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

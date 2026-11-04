@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1479,6 +1479,11 @@
 </thead>
 <tbody>
 <tr>
+<td style="text-align: left;"><code>PRIORITY</code><br><em>(alias <code>DEFAULT_PRIORITY</code>)</em></td>
+<td style="text-align: left;"><code>normal</code></td>
+<td style="text-align: left;">Global scheduling priority for the job: <code>high</code>, <code>normal</code>, or <code>low</code>. Can be overridden via <code>cluster-run --priority</code> or per-stage via <code>meta.cluster.priority</code>.</td>
+</tr>
+<tr>
 <td style="text-align: left;"><code>PARALLEL_STAGES</code></td>
 <td style="text-align: left;"><code>false</code></td>
 <td style="text-align: left;">When set to <code>true</code>, enables <strong>Parallel DAG execution</strong> across multiple cluster workers. Independent branches of your <code>dvc.yaml</code> pipeline run concurrently on available nodes. See <a href="../parallel_execution/">Parallel DAG Execution</a>.</td>
@@ -1505,7 +1510,8 @@
 * <code>meta.cluster.ram_gb</code> overrides <code>REQUIRED_RAM</code> / <code>--ram</code> (default: 10.0)
 * <code>meta.cluster.vram_gb</code> overrides <code>REQUIRED_VRAM</code> (default: 0.0)
 * <code>meta.cluster.storage_gb</code> overrides <code>REQUIRED_STORAGE</code> / <code>REQUIRED_DISK</code> (default: 0.0)
-* <code>meta.cluster.workers</code> overrides <code>ALLOWED_WORKERS</code></p>
+* <code>meta.cluster.workers</code> overrides <code>ALLOWED_WORKERS</code>
+* <code>meta.cluster.priority</code> overrides <code>PRIORITY</code> / <code>DEFAULT_PRIORITY</code> (default: <code>"normal"</code>)</p>
 <p>For complete syntax and examples, see the <a href="../stage_resources/">Per-Stage Resources Guide</a>.</p>
 <hr />
 <h2 id="web-application-support">Web Application Support</h2>
@@ -1580,25 +1586,26 @@
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">24GB</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">12</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># ── Parallel Execution ──</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="c1"># ── Execution Control ──</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="c1"># ── Docker (optional) ──</span>
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/my-org/my-custom-image:latest</span>
-</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
-</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
-</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1"># ── Web Application (optional) ──</span>
-</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="c1"># EXPOSED_PORT=7860</span>
-</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="c1"># CUSTOM_WEB_APP=true</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="na">PRIORITY</span><span class="o">=</span><span class="s">normal</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># ── Parallel Execution ──</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># ── Execution Control ──</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="na">ALLOWED_WORKERS</span><span class="o">=</span><span class="s">gb10-node1,gb10-node2</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1"># ── Docker (optional) ──</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="na">DOCKER_IMAGE</span><span class="o">=</span><span class="s">ghcr.io/my-org/my-custom-image:latest</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="na">DOCKER_FLAGS</span><span class="o">=</span><span class="s">--env-file=custom.env</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="c1"># ── Web Application (optional) ──</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="c1"># EXPOSED_PORT=7860</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="c1"># CUSTOM_WEB_APP=true</span>
 </span></code></pre></div>
 <hr />
 <h2 id="default-template">Default Template</h2>
 <p>When you run the install script, the following minimal template is created:</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">10GB</span>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">0GB</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">1</span>
 </span></code></pre></div>
@@ -1658,10 +1665,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

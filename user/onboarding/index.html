@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -533,26 +533,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-google-drive-no-configuration-needed" class="md-nav__link">
+  <a href="#4-configure-your-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Google Drive — No Configuration Needed
+        4. Configure Your Project
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-configure-your-project" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Configure Your Project
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Configure Your Project">
+    <nav class="md-nav" aria-label="4. Configure Your Project">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -571,6 +560,45 @@
     <span class="md-ellipsis">
       
         dvc.yaml — Experiment Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-two-execution-modes-for-researchers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Two Execution Modes for Researchers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Two Execution Modes for Researchers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mode-1-interactive-execution-with-cluster-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode 1: Interactive Execution with cluster-run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mode-2-disconnected-background-execution-via-git-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode 2: Disconnected Background Execution via Git Tag
       
     </span>
   </a>
@@ -1336,26 +1364,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-google-drive-no-configuration-needed" class="md-nav__link">
+  <a href="#4-configure-your-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Google Drive — No Configuration Needed
+        4. Configure Your Project
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-configure-your-project" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Configure Your Project
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Configure Your Project">
+    <nav class="md-nav" aria-label="4. Configure Your Project">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1374,6 +1391,45 @@
     <span class="md-ellipsis">
       
         dvc.yaml — Experiment Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-two-execution-modes-for-researchers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Two Execution Modes for Researchers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Two Execution Modes for Researchers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mode-1-interactive-execution-with-cluster-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode 1: Interactive Execution with cluster-run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mode-2-disconnected-background-execution-via-git-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode 2: Disconnected Background Execution via Git Tag
       
     </span>
   </a>
@@ -1404,6 +1460,11 @@
 
 <h1 id="researcher-onboarding-guide">Researcher Onboarding Guide</h1>
 <p>Welcome to the Cluster-CI platform. This guide walks you through the step-by-step onboarding process to set up your credentials, install the CLI client, and configure your repository for running experiments on the cluster.</p>
+<p><strong>Web Dashboard</strong>: <a href="http://130.223.73.209:5000/">http://130.223.73.209:5000/</a></p>
+<div class="admonition warning">
+<p class="admonition-title">VPN Required</p>
+<p>The Web Dashboard is hosted on the cluster headnode and is accessible exclusively from the UNIL campus network or when connected to the UNIL VPN (Pulse Secure / Cisco AnyConnect). If the dashboard does not load, ensure your VPN connection is active.</p>
+</div>
 <hr />
 <h2 id="1-joining-the-github-organization-creating-your-research-repository">1. Joining the GitHub Organization &amp; Creating Your Research Repository</h2>
 <p>Cluster-CI leverages GitHub for authentication, access control, and GitOps job scheduling.</p>
@@ -1426,7 +1487,7 @@
 </div>
 </div>
 </div>
-<p>This script injects the GitHub Actions workflow (<code>.github/workflows/cluster-ci.yml</code>), the <code>.cluster-ci</code> configuration file, the pre-commit hook, and the <code>cluster-run</code> CLI into your repository.</p>
+<p>This script injects the GitHub Actions workflow (<code>.github/workflows/cluster-ci.yml</code>), the <code>.cluster-ci</code> configuration file, the pre-commit hook, and the <code>cluster-run</code> CLI into your repository. Note that researchers only use <code>cluster-run</code> for their day-to-day workflow (<code>cluster-update</code> is reserved for platform administrators).</p>
 </li>
 </ol>
 <hr />
@@ -1455,34 +1516,59 @@
 </span></code></pre></div>
 <p>The injected workflow (<code>cluster-ci.yml</code>) passes all secrets to the cluster using <code>ALL_GITHUB_SECRETS: ${{ toJSON(secrets) }}</code>, and the orchestrator (<code>submit_job.py</code>) parses and injects each secret as an environment variable in the execution container. The only secret excluded from injection is <code>GITHUB_TOKEN</code>, which is automatically managed by GitHub.</p>
 <hr />
-<h2 id="4-google-drive-no-configuration-needed">4. Google Drive — No Configuration Needed</h2>
-<p>Google Drive authentication is managed automatically and silently by the cluster workers. No configuration is required on your part — the workers have pre-authorized credentials that handle all DVC push/pull operations to Google Drive transparently.</p>
-<hr />
-<h2 id="5-configure-your-project">5. Configure Your Project</h2>
+<h2 id="4-configure-your-project">4. Configure Your Project</h2>
 <p>Before running your first job, you need to set up two files at the root of your repository:</p>
 <h3 id="cluster-ci-hardware-runtime-settings"><code>.cluster-ci</code> — Hardware &amp; Runtime Settings</h3>
-<p>This file was created automatically by the install script. It controls how much RAM, VRAM, and time your job can use. Open it and adjust the values to match your needs:</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">10GB</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">4</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Optional: PARALLEL_STAGES=true</span>
+<p>This file is created automatically at the root of your repository by the installation script with minimal lightweight defaults:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Default template generated by install.sh</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">2GB</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">0GB</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">1</span>
+</span></code></pre></div>
+<p>For GPU-accelerated workloads and deep learning pipelines, edit the file to declare the appropriate hardware allocations:</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Example configuration for deep learning training</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="na">REQUIRED_RAM</span><span class="o">=</span><span class="s">16GB</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="na">REQUIRED_VRAM</span><span class="o">=</span><span class="s">24GB</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="na">MAX_RUNTIME_HOURS</span><span class="o">=</span><span class="s">4</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># Optional: PARALLEL_STAGES=true</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="c1"># Optional: PRIORITY=normal</span>
 </span></code></pre></div>
 <p>→ See the <strong><a href="../configuration/">Configuration Reference</a></strong> and <strong><a href="../stage_resources/">Per-Stage Resources Guide</a></strong> for complete details on resource settings.</p>
 <h3 id="dvcyaml-experiment-pipeline"><code>dvc.yaml</code> — Experiment Pipeline</h3>
 <p>Define the steps of your experiment in a <code>dvc.yaml</code> file. The cluster executes these steps automatically:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">stages</span><span class="p">:</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">train</span><span class="p">:</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --epochs 10</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">deps</span><span class="p">:</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/train.py</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">outs</span><span class="p">:</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">models/model.pt</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/eval.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">plots</span><span class="p">:</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/loss.png</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">stages</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">train</span><span class="p">:</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python3 src/train.py --epochs 10</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">deps</span><span class="p">:</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/train.py</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="nt">outs</span><span class="p">:</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">models/model.pt</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/eval.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">    </span><span class="nt">plots</span><span class="p">:</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">reports/loss.png</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">cache</span><span class="p">:</span><span class="w"> </span><span class="nv">false</span><span class="p p-Indicator">}</span>
 </span></code></pre></div>
 <p>→ See the <strong><a href="../dvc/">DVC &amp; Storage Guide</a></strong> for detailed instructions.</p>
+<hr />
+<h2 id="5-two-execution-modes-for-researchers">5. Two Execution Modes for Researchers</h2>
+<p>Researchers only use <code>cluster-run</code> in their day-to-day workflow. There are two primary execution modes available depending on your task:</p>
+<h3 id="mode-1-interactive-execution-with-cluster-run">Mode 1: Interactive Execution with <code>cluster-run</code></h3>
+<p>Submit jobs directly from your local terminal with real-time feedback:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run
+</span></code></pre></div>
+*   <strong>Live Log Streaming</strong>: Directly streams stdout and stderr from the executing worker container to your terminal.
+*   <strong>Graceful Interruption</strong>: Pressing <code>Ctrl+C</code> sends a clean cancellation signal (<code>POST /api/jobs/{id}/stop</code>) to the cluster, stopping active containers cleanly.
+*   <strong>Automatic Results Sync</strong>: Metrics and plots generated by your stages are automatically pulled back into your local workspace upon completion.</p>
+<h3 id="mode-2-disconnected-background-execution-via-git-tag">Mode 2: Disconnected Background Execution via Git Tag</h3>
+<p>For long-running training jobs that take hours or days, trigger the cluster via a Git tag without keeping a local terminal open:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>git<span class="w"> </span>tag<span class="w"> </span>-f<span class="w"> </span>cluster-run<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>&lt;branch&gt;<span class="w"> </span>--tags
+</span></code></pre></div>
+<em>(Or use <code>git tag -f cluster-run-skip-code &amp;&amp; git push origin &lt;branch&gt; --tags</code> to skip invalidating cached DVC stages for code-only modifications).</em></p>
+<ul>
+<li><strong>Fire and Forget</strong>: You can safely close your terminal, disconnect your laptop, or turn off your computer. The calculation continues running uninterrupted on the cluster.</li>
+<li><strong>Dashboard Monitoring</strong>: Follow progress, stage status, GPU telemetry, and live logs anytime on the <strong><a href="http://130.223.73.209:5000/">Web Dashboard</a></strong> (VPN required).</li>
+<li><strong>Retrieve Results Later</strong>: When the experiment completes, retrieve your metrics and models using <code>git pull --rebase origin &lt;branch&gt;</code> and <code>cluster-run sync</code>.</li>
+</ul>
 <hr />
 <p>Once you have completed this onboarding, you are ready to run your first job. Proceed to the <strong><a href="../client/">Command-Line Client Guide</a></strong>.</p>
 <blockquote>
@@ -1544,10 +1630,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1318,7 +1318,7 @@
 <h3 id="platform-administration-for-system-administrators">⚙️ Platform Administration (For System Administrators)</h3>
 <p>If you are a system administrator responsible for maintaining the cluster infrastructure:</p>
 <ul>
-<li><strong><a href="admin/administration/">System Administration</a></strong>: RunnerManager slots, prerequisites, Maintenance Mode, SSH configuration, and Google Drive authorization.</li>
+<li><strong><a href="admin/administration/">System Administration</a></strong>: RunnerManager slots, prerequisites, Maintenance Mode, SSH configuration, and cluster updates.</li>
 <li><strong><a href="admin/infrastructure_internals/">Infrastructure Internals</a></strong>: Garbage collection, container hardening, data locality scoring, P2P transfers, and runtime watchdogs.</li>
 </ul>
 <h3 id="developer-docs-for-platform-maintainers">🛠️ Developer Docs (For Platform Maintainers)</h3>
@@ -1339,8 +1339,12 @@
 </span></code></pre></div></li>
 <li>Configure your hardware requirements in <a href="user/configuration/"><code>.cluster-ci</code></a> and define your pipeline in <a href="user/dvc/"><code>dvc.yaml</code></a>.</li>
 <li>Run <code>cluster-run</code> to start your first GPU-accelerated job!</li>
-<li>Monitor your job on the <strong><a href="user/dashboard/">Dashboard</a></strong> (requires <a href="user/dashboard/#accessing-the-dashboard">VPN UNIL</a>).</li>
+<li>Monitor your job live on the <strong><a href="http://130.223.73.209:5000/">Web Dashboard</a></strong> (see the <strong><a href="user/dashboard/">Dashboard Guide</a></strong>).</li>
 </ol>
+<div class="admonition warning">
+<p class="admonition-title">VPN Required</p>
+<p>The Web Dashboard (<a href="http://130.223.73.209:5000/">http://130.223.73.209:5000/</a>) is hosted on the Headnode and is accessible exclusively from the UNIL campus network or via the UNIL VPN (Pulse Secure / Cisco AnyConnect).</p>
+</div>
 
 
 
@@ -1396,10 +1400,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

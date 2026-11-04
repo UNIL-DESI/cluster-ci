@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -640,10 +640,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#large-outputs-dvc-cache-on-demand" class="md-nav__link">
+  <a href="#large-outputs-dvc-cache-worker-local-peer-to-peer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Large Outputs → DVC Cache (on-demand)
+        Large Outputs → DVC Cache (Worker Local &amp; Peer-to-Peer)
       
     </span>
   </a>
@@ -1359,10 +1359,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#large-outputs-dvc-cache-on-demand" class="md-nav__link">
+  <a href="#large-outputs-dvc-cache-worker-local-peer-to-peer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Large Outputs → DVC Cache (on-demand)
+        Large Outputs → DVC Cache (Worker Local &amp; Peer-to-Peer)
       
     </span>
   </a>
@@ -1513,9 +1513,9 @@
 <p>You can retrieve them locally with:
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>pull<span class="w"> </span>--rebase<span class="w"> </span>origin<span class="w"> </span>&lt;your-branch-name&gt;
 </span></code></pre></div></p>
-<h3 id="large-outputs-dvc-cache-on-demand">Large Outputs → DVC Cache (on-demand)</h3>
-<p>Files declared as <code>outs:</code> (models, datasets) are stored in the DVC cache on the worker that ran your job. They are <strong>not</strong> pushed to Git.</p>
-<p>To retrieve them locally (after Google Drive backup or when connected to the cluster network):
+<h3 id="large-outputs-dvc-cache-worker-local-peer-to-peer">Large Outputs → DVC Cache (Worker Local &amp; Peer-to-Peer)</h3>
+<p>Files declared as <code>outs:</code> (models, datasets) are stored in the local DVC cache on the worker that ran your job. They are <strong>not</strong> pushed to Git. Large files are stored in the worker's local storage and transferred automatically peer-to-peer (P2P) between workers across the local cluster network whenever downstream stages require them.</p>
+<p>To retrieve them locally (when connected to the cluster network or Headnode):
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dvc<span class="w"> </span>pull
 </span></code></pre></div></p>
 <hr />
@@ -1542,7 +1542,7 @@
 </ol>
 <details class="note">
 <summary>How does data move between workers?</summary>
-<p>When a job is scheduled, the cluster checks which worker already has your data cached locally and prioritizes that worker. If the data is on a different worker, it transfers files directly over the internal network (peer-to-peer) instead of downloading from Google Drive. This is automatic and requires no configuration on your part. For technical details, see <a href="../../admin/infrastructure_internals/">Infrastructure Internals</a>.</p>
+<p>When a job is scheduled, the cluster checks which worker already has your data cached locally and prioritizes that worker. If the data is on a different worker, it transfers files directly over the internal cluster network (peer-to-peer) between worker local caches. This is automatic and requires no configuration on your part. For technical details, see <a href="../../admin/infrastructure_internals/">Infrastructure Internals</a>.</p>
 </details>
 
 
@@ -1599,10 +1599,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

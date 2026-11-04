@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -1433,18 +1433,30 @@
 *   <strong>Active Allocation</strong>: Shows which job and pipeline node is currently assigned to the worker.</p>
 <h3 id="b-active-executions">B. Active Executions</h3>
 <p>Tracks jobs currently running on the cluster:
-*   <strong>Job Metadata</strong>: Displays the user, repository, active branch, elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated <strong>Home Worker</strong>).
-*   <strong>Stage DAG Status</strong>: For parallel jobs (<code>PARALLEL_STAGES=true</code>), displays the execution graph state per stage (<code>pending</code>, <code>ready</code>, <code>running</code>, <code>done</code>, <code>failed</code>, <code>blocked</code>, <code>skipped</code>).
+*   <strong>Job Metadata</strong>: Displays the researcher <code>username</code>, target repository (<code>repo @branch</code>), elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated <strong>Home Worker</strong>).
+*   <strong>Stage DAG Status &amp; UI Badges</strong>: For parallel jobs (<code>PARALLEL_STAGES=true</code>), displays the execution graph state per stage:
+    - <strong>Status Badges</strong>: <code>ready</code> (green badge) vs <code>pending</code> (yellow badge), alongside <code>running</code>, <code>done</code>, <code>failed</code>, <code>blocked</code>, and <code>skipped</code>.
+    - <strong>Priority Badges</strong>: Distinct visual badges for job and stage priority:
+        * <code>high</code>: Red badge with priority arrow icon (<code>bi-arrow-up-circle-fill</code>).
+        * <code>normal</code>: Standard muted grey badge.
+        * <code>low</code>: Subtle outlined light badge.
+    - <strong>Preemption Telemetry</strong>: If a stage was evicted to yield resources to a higher-priority job, a prominent yellow badge <code>⚡ Preempted: N</code> appears (<code>templates/dashboard.html:623</code>), tracking the exact number of times the stage was gracefully requeued.
+*   <strong>Stage Card User Attribution</strong>: Each stage card prominently identifies the owner's <code>username</code> alongside <code>repo @branch</code> (<code>dashboard.html:649</code>), ensuring transparency across multi-tenant cluster activity.
 *   <strong>Control Actions</strong>:
     - <strong>Stop</strong>: Issues a cancellation request to terminate execution across all active workers.
     - <strong>Logs</strong>: Opens the live logging window streaming unified tagged logs (<code>[node@hostname]</code>).
     - <strong>DVC-Viewer</strong>: Opens the live web monitor for the running pipeline's metrics.</p>
 <h3 id="c-queue-panel-diagnosis">C. Queue Panel &amp; Diagnosis</h3>
-<p>Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled immediately, the panel displays a <strong>wait reason</strong> calculated by the scheduler:
-*   <code>branch_exclusivity</code>: Blocked because another job is already running on the same repository and branch.
-*   <code>no_free_workers</code>: All workers satisfying the job's or node's resource constraints are occupied.
-*   <code>insufficient_ram</code>: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
-*   <code>scheduling</code>: The scheduler is actively evaluating placement scores.</p>
+<p>Lists queued jobs evaluated under the unified multi-level scheduling order.
+*   <strong>Wait Diagnosis</strong>: If a job cannot be scheduled immediately, the panel displays a <strong>wait reason</strong> calculated by the scheduler:
+    - <code>branch_exclusivity</code>: Blocked because another job is already running on the same repository and branch.
+    - <code>no_free_workers</code>: All workers satisfying the job's or node's resource constraints are occupied.
+    - <code>insufficient_ram</code>: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
+    - <code>scheduling</code>: The scheduler is actively evaluating placement scores.
+*   <strong>Foldable Per-Machine Waiting Queue</strong>: To keep the dashboard concise when numerous jobs are queued, each worker card displays the <strong>Top 3</strong> pending jobs directly. Any additional queued stages beyond the Top 3 are cleanly folded into an interactive accordion:
+    <div class="language-html highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">&lt;</span><span class="nt">details</span><span class="p">&gt;&lt;</span><span class="nt">summary</span><span class="p">&gt;</span>Voir les N autres jobs en attente...<span class="p">&lt;/</span><span class="nt">summary</span><span class="p">&gt;&lt;/</span><span class="nt">details</span><span class="p">&gt;</span>
+</span></code></pre></div>
+    Expanding this accordion reveals all queued stages with their respective priority and preemption badges (<code>dashboard.html:678</code>).</p>
 <hr />
 <h2 id="2-segmented-live-logs-error-highlighting">2. Segmented Live Logs &amp; Error Highlighting</h2>
 <p>Clicking the <strong>Logs</strong> button opens an interactive modal:</p>
@@ -1464,15 +1476,15 @@
 <hr />
 <h2 id="4-unique-version-selector-md5-clustering">4. Unique Version Selector (MD5 Clustering)</h2>
 <p>Clicking a file in the artifact tree opens the file viewer, which contains a version control interface:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Selected Artifact: reports/loss.png]
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>      |
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>      v
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>[MD5 Clustering Engine] ---&gt; Groups duplicate runs with identical hashes
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>      |
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>      v
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>[Timeline Slider] ---------&gt; Browse physical changes chronologically:
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                             Version 1: MD5: a1b2... Size: 15KB (Commit 3b5f)
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                             Version 2: MD5: e9f8... Size: 18KB (Commit f9a2)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[Selected Artifact: reports/loss.png]
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>      |
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>      v
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>[MD5 Clustering Engine] ---&gt; Groups duplicate runs with identical hashes
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      |
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>      v
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>[Timeline Slider] ---------&gt; Browse physical changes chronologically:
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>                             Version 1: MD5: a1b2... Size: 15KB (Commit 3b5f)
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>                             Version 2: MD5: e9f8... Size: 18KB (Commit f9a2)
 </span></code></pre></div>
 <ul>
 <li><strong>MD5 Clustering</strong>: If you run multiple experiments that produce the exact same file (matching MD5 hash), the selector groups those runs together. This removes duplicates, letting you focus only on runs that physically changed the output.</li>
@@ -1548,10 +1560,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

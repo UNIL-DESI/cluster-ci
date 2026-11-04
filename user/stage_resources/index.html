@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -663,21 +663,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-6-core-resource-fields" class="md-nav__link">
+  <a href="#the-10-metacluster-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The 6 Core Resource Fields
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#architecture-placement-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architecture &amp; Placement Extensions
+        The 10 meta.cluster Fields
       
     </span>
   </a>
@@ -1270,21 +1259,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-6-core-resource-fields" class="md-nav__link">
+  <a href="#the-10-metacluster-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The 6 Core Resource Fields
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#architecture-placement-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architecture &amp; Placement Extensions
+        The 10 meta.cluster Fields
       
     </span>
   </a>
@@ -1381,7 +1359,7 @@
 </span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">HEC45803</span>
 </span></code></pre></div>
 <p>All fields under <code>meta.cluster</code> are <strong>optional</strong>. If a field is omitted, Cluster-CI falls back to repository-level configuration or cluster defaults.</p>
-<h3 id="the-6-core-resource-fields">The 6 Core Resource Fields</h3>
+<h3 id="the-10-metacluster-fields">The 10 <code>meta.cluster</code> Fields</h3>
 <table>
 <thead>
 <tr>
@@ -1399,6 +1377,18 @@
 <td style="text-align: left;">Default Docker base image for the stage.</td>
 </tr>
 <tr>
+<td style="text-align: left;"><code>image_arm64</code></td>
+<td style="text-align: left;"><code>string</code></td>
+<td style="text-align: left;"><code>null</code></td>
+<td style="text-align: left;">Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to <code>image</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>image_amd64</code></td>
+<td style="text-align: left;"><code>string</code></td>
+<td style="text-align: left;"><code>null</code></td>
+<td style="text-align: left;">Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to <code>image</code>.</td>
+</tr>
+<tr>
 <td style="text-align: left;"><code>cpus</code></td>
 <td style="text-align: left;"><code>integer</code></td>
 <td style="text-align: left;"><code>2</code></td>
@@ -1412,46 +1402,21 @@
 </tr>
 <tr>
 <td style="text-align: left;"><code>ram_gb</code></td>
-<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;"><code>float/int</code></td>
 <td style="text-align: left;"><code>10.0</code></td>
 <td style="text-align: left;">Minimum physical host RAM in GB required (<code>&gt;= 0.0</code>).</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>vram_gb</code></td>
-<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;"><code>float/int</code></td>
 <td style="text-align: left;"><code>0.0</code></td>
 <td style="text-align: left;">Minimum GPU VRAM in GB required (<code>&gt;= 0.0</code>). When <code>0.0</code>, stage runs on CPU-only nodes.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>storage_gb</code></td>
-<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;"><code>float/int</code></td>
 <td style="text-align: left;"><code>0.0</code></td>
 <td style="text-align: left;">Minimum free disk space in GB required on worker (<code>&gt;= 0.0</code>). Set <code>0.0</code> to disable disk check.</td>
-</tr>
-</tbody>
-</table>
-<h3 id="architecture-placement-extensions">Architecture &amp; Placement Extensions</h3>
-<table>
-<thead>
-<tr>
-<th style="text-align: left;">Field</th>
-<th style="text-align: left;">Type</th>
-<th style="text-align: left;">Default</th>
-<th style="text-align: left;">Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: left;"><code>image_arm64</code></td>
-<td style="text-align: left;"><code>string</code></td>
-<td style="text-align: left;"><code>null</code></td>
-<td style="text-align: left;">Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to <code>image</code>.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>image_amd64</code></td>
-<td style="text-align: left;"><code>string</code></td>
-<td style="text-align: left;"><code>null</code></td>
-<td style="text-align: left;">Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to <code>image</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>workers</code></td>
@@ -1459,17 +1424,23 @@
 <td style="text-align: left;"><code>null</code> (All workers)</td>
 <td style="text-align: left;">Whitelist of worker hostnames eligible to execute this stage (e.g. <code>['HEC45801']</code>).</td>
 </tr>
+<tr>
+<td style="text-align: left;"><code>priority</code></td>
+<td style="text-align: left;"><code>string</code></td>
+<td style="text-align: left;"><code>"normal"</code></td>
+<td style="text-align: left;">Scheduling priority for this specific stage: <code>"high"</code>, <code>"normal"</code>, or <code>"low"</code>. Overrides job priority.</td>
+</tr>
 </tbody>
 </table>
 <div class="admonition danger">
 <p class="admonition-title">Strict Validation &amp; Consistency Rules (Fail-Fast)</p>
 <ul>
-<li><strong>Schema Validation</strong>: Any unrecognized key under <code>meta.cluster</code> causes <strong>immediate job rejection</strong> at submission time (HTTP 400). Valid allowed keys are: <code>image</code>, <code>image_arm64</code>, <code>image_amd64</code>, <code>cpus</code>, <code>gpus</code>, <code>ram_gb</code>, <code>vram_gb</code>, <code>storage_gb</code>, <code>workers</code>.</li>
-<li><strong>Type Validation</strong>: Types are strictly enforced: <code>cpus</code> must be an integer <code>&gt;= 1</code>, <code>gpus</code> an integer <code>&gt;= 0</code>, <code>ram_gb</code>/<code>vram_gb</code>/<code>storage_gb</code> numbers <code>&gt;= 0</code>, and <code>workers</code> a list of strings.</li>
-<li><strong>GPU Consistency Rule (A16/A17)</strong>: Declaring <code>vram_gb &gt; 0</code> strictly requires <code>gpus &gt;= 1</code>. If <code>vram_gb &gt; 0</code> while <code>gpus == 0</code>, Cluster-CI raises an immediate actionable error:
-  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>File dvc.yaml, stage '&lt;stage&gt;': resource inconsistency between 'meta.cluster.vram_gb' (X GB) and 'meta.cluster.gpus' (0).
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Cause: vram_gb requires gpus &gt;= 1 (video memory cannot be allocated without a GPU).
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Remedy: declare 'gpus: 1' (or more) under meta.cluster in dvc.yaml (or REQUIRED_GPUS in .cluster-ci), or set vram_gb to 0.
+<li><strong>Schema Validation</strong>: Any unrecognized key under <code>meta.cluster</code> causes <strong>immediate job rejection</strong> at submission time (HTTP 400). Valid allowed keys are strictly: <code>image</code>, <code>image_arm64</code>, <code>image_amd64</code>, <code>cpus</code>, <code>gpus</code>, <code>ram_gb</code>, <code>vram_gb</code>, <code>storage_gb</code>, <code>workers</code>, <code>priority</code>.</li>
+<li><strong>Type Validation</strong>: Types are strictly enforced: <code>cpus</code> must be an integer <code>&gt;= 1</code>, <code>gpus</code> an integer <code>&gt;= 0</code>, <code>ram_gb</code>/<code>vram_gb</code>/<code>storage_gb</code> numbers <code>&gt;= 0</code>, <code>workers</code> a list of strings, and <code>priority</code> one of <code>"high"</code>, <code>"normal"</code>, <code>"low"</code>.</li>
+<li><strong>GPU Consistency Rule (Fail-Fast)</strong>: Declaring <code>vram_gb &gt; 0</code> strictly requires <code>gpus &gt;= 1</code>. If <code>vram_gb &gt; 0</code> while <code>gpus == 0</code>, Cluster-CI raises an immediate actionable error at submission:
+  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Fichier dvc.yaml, stage '&lt;stage&gt;' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Cause : vram_gb exige gpus &gt;= 1 (la mémoire vidéo ne peut être allouée sans GPU).
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
 </span></code></pre></div></li>
 </ul>
 </div>
@@ -1538,6 +1509,10 @@
 <tr>
 <td style="text-align: left;"><strong>Workers</strong></td>
 <td style="text-align: left;"><code>meta.cluster.workers</code> &gt; <code>ALLOWED_WORKERS</code> (<code>.cluster-ci</code>) &gt; All admissible workers</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Priority</strong></td>
+<td style="text-align: left;"><code>meta.cluster.priority</code> &gt; <code>cluster-run --priority</code> &gt; <code>PRIORITY</code> / <code>DEFAULT_PRIORITY</code> (<code>.cluster-ci</code>) &gt; Default (<code>"normal"</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -1666,10 +1641,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
