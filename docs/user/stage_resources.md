@@ -45,33 +45,29 @@ stages:
 
 All fields under `meta.cluster` are **optional**. If a field is omitted, Cluster-CI falls back to repository-level configuration or cluster defaults.
 
-### The 6 Core Resource Fields
+### The 10 `meta.cluster` Fields
 
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `image` | `string` | `nvcr.io/nvidia/pytorch:26.05-py3` | Default Docker base image for the stage. |
-| `cpus` | `integer` | `2` | Number of CPU cores allocated for the stage (`>= 1`). |
-| `gpus` | `integer` | `0` | Number of physical GPUs allocated for the stage (`>= 0`). |
-| `ram_gb` | `float` | `10.0` | Minimum physical host RAM in GB required (`>= 0.0`). |
-| `vram_gb` | `float` | `0.0` | Minimum GPU VRAM in GB required (`>= 0.0`). When `0.0`, stage runs on CPU-only nodes. |
-| `storage_gb` | `float` | `0.0` | Minimum free disk space in GB required on worker (`>= 0.0`). Set `0.0` to disable disk check. |
-
-### Architecture & Placement Extensions
-
-| Field | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
 | `image_arm64` | `string` | `null` | Architecture override for ARM64 workers (e.g. NVIDIA Grace Blackwell GB10). If omitted, falls back to `image`. |
 | `image_amd64` | `string` | `null` | Architecture override for x86_64 / AMD64 workers (e.g. dual-mode Headnode). If omitted, falls back to `image`. |
+| `cpus` | `integer` | `2` | Number of CPU cores allocated for the stage (`>= 1`). |
+| `gpus` | `integer` | `0` | Number of physical GPUs allocated for the stage (`>= 0`). |
+| `ram_gb` | `float/int` | `10.0` | Minimum physical host RAM in GB required (`>= 0.0`). |
+| `vram_gb` | `float/int` | `0.0` | Minimum GPU VRAM in GB required (`>= 0.0`). When `0.0`, stage runs on CPU-only nodes. |
+| `storage_gb` | `float/int` | `0.0` | Minimum free disk space in GB required on worker (`>= 0.0`). Set `0.0` to disable disk check. |
 | `workers` | `list[string]` | `null` (All workers) | Whitelist of worker hostnames eligible to execute this stage (e.g. `['HEC45801']`). |
+| `priority` | `string` | `"normal"` | Scheduling priority for this specific stage: `"high"`, `"normal"`, or `"low"`. Overrides job priority. |
 
 !!! danger "Strict Validation & Consistency Rules (Fail-Fast)"
-    * **Schema Validation**: Any unrecognized key under `meta.cluster` causes **immediate job rejection** at submission time (HTTP 400). Valid allowed keys are: `image`, `image_arm64`, `image_amd64`, `cpus`, `gpus`, `ram_gb`, `vram_gb`, `storage_gb`, `workers`.
-    * **Type Validation**: Types are strictly enforced: `cpus` must be an integer `>= 1`, `gpus` an integer `>= 0`, `ram_gb`/`vram_gb`/`storage_gb` numbers `>= 0`, and `workers` a list of strings.
-    * **GPU Consistency Rule (A16/A17)**: Declaring `vram_gb > 0` strictly requires `gpus >= 1`. If `vram_gb > 0` while `gpus == 0`, Cluster-CI raises an immediate actionable error:
+    * **Schema Validation**: Any unrecognized key under `meta.cluster` causes **immediate job rejection** at submission time (HTTP 400). Valid allowed keys are strictly: `image`, `image_arm64`, `image_amd64`, `cpus`, `gpus`, `ram_gb`, `vram_gb`, `storage_gb`, `workers`, `priority`.
+    * **Type Validation**: Types are strictly enforced: `cpus` must be an integer `>= 1`, `gpus` an integer `>= 0`, `ram_gb`/`vram_gb`/`storage_gb` numbers `>= 0`, `workers` a list of strings, and `priority` one of `"high"`, `"normal"`, `"low"`.
+    * **GPU Consistency Rule (Fail-Fast)**: Declaring `vram_gb > 0` strictly requires `gpus >= 1`. If `vram_gb > 0` while `gpus == 0`, Cluster-CI raises an immediate actionable error at submission:
       ```text
-      File dvc.yaml, stage '<stage>': resource inconsistency between 'meta.cluster.vram_gb' (X GB) and 'meta.cluster.gpus' (0).
-      Cause: vram_gb requires gpus >= 1 (video memory cannot be allocated without a GPU).
-      Remedy: declare 'gpus: 1' (or more) under meta.cluster in dvc.yaml (or REQUIRED_GPUS in .cluster-ci), or set vram_gb to 0.
+      Fichier dvc.yaml, stage '<stage>' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
+      Cause : vram_gb exige gpus >= 1 (la mémoire vidéo ne peut être allouée sans GPU).
+      Remède : déclarez 'gpus: 1' (ou plus) sous meta.cluster dans dvc.yaml (ou REQUIRED_GPUS dans .cluster-ci), ou fixez vram_gb à 0.
       ```
 
 ---
@@ -100,6 +96,7 @@ When both stage-level `meta.cluster` in `dvc.yaml` and repository-level paramete
 | **VRAM** | `meta.cluster.vram_gb` > `REQUIRED_VRAM` (`.cluster-ci`) > Default (`0.0` GB) |
 | **Storage** | `meta.cluster.storage_gb` > `REQUIRED_STORAGE` or `REQUIRED_DISK` (`.cluster-ci`) > Default (`0.0` GB) |
 | **Workers** | `meta.cluster.workers` > `ALLOWED_WORKERS` (`.cluster-ci`) > All admissible workers |
+| **Priority** | `meta.cluster.priority` > `cluster-run --priority` > `PRIORITY` / `DEFAULT_PRIORITY` (`.cluster-ci`) > Default (`"normal"`) |
 
 !!! info "Automatic GPU Defaulting from `.cluster-ci`"
     If you specify `REQUIRED_VRAM > 0` in `.cluster-ci` without setting `REQUIRED_GPUS`, Cluster-CI automatically defaults `gpus` to `1` so the GPU consistency check passes seamlessly.

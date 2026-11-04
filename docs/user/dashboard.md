@@ -29,19 +29,32 @@ Shows the current status of all physical workers in the cluster:
 
 ### B. Active Executions
 Tracks jobs currently running on the cluster:
-*   **Job Metadata**: Displays the user, repository, active branch, elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated **Home Worker**).
-*   **Stage DAG Status**: For parallel jobs (`PARALLEL_STAGES=true`), displays the execution graph state per stage (`pending`, `ready`, `running`, `done`, `failed`, `blocked`, `skipped`).
+*   **Job Metadata**: Displays the researcher `username`, target repository (`repo @branch`), elapsed time, and list of assigned workers (in parallel mode, a job can span multiple workers with a designated **Home Worker**).
+*   **Stage DAG Status & UI Badges**: For parallel jobs (`PARALLEL_STAGES=true`), displays the execution graph state per stage:
+    - **Status Badges**: `ready` (green badge) vs `pending` (yellow badge), alongside `running`, `done`, `failed`, `blocked`, and `skipped`.
+    - **Priority Badges**: Distinct visual badges for job and stage priority:
+        * `high`: Red badge with priority arrow icon (`bi-arrow-up-circle-fill`).
+        * `normal`: Standard muted grey badge.
+        * `low`: Subtle outlined light badge.
+    - **Preemption Telemetry**: If a stage was evicted to yield resources to a higher-priority job, a prominent yellow badge `⚡ Preempted: N` appears (`templates/dashboard.html:623`), tracking the exact number of times the stage was gracefully requeued.
+*   **Stage Card User Attribution**: Each stage card prominently identifies the owner's `username` alongside `repo @branch` (`dashboard.html:649`), ensuring transparency across multi-tenant cluster activity.
 *   **Control Actions**:
     - **Stop**: Issues a cancellation request to terminate execution across all active workers.
     - **Logs**: Opens the live logging window streaming unified tagged logs (`[node@hostname]`).
     - **DVC-Viewer**: Opens the live web monitor for the running pipeline's metrics.
 
 ### C. Queue Panel & Diagnosis
-Lists pending jobs in order of submission (FIFO). If a job cannot be scheduled immediately, the panel displays a **wait reason** calculated by the scheduler:
-*   `branch_exclusivity`: Blocked because another job is already running on the same repository and branch.
-*   `no_free_workers`: All workers satisfying the job's or node's resource constraints are occupied.
-*   `insufficient_ram`: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
-*   `scheduling`: The scheduler is actively evaluating placement scores.
+Lists queued jobs evaluated under the unified multi-level scheduling order.
+*   **Wait Diagnosis**: If a job cannot be scheduled immediately, the panel displays a **wait reason** calculated by the scheduler:
+    - `branch_exclusivity`: Blocked because another job is already running on the same repository and branch.
+    - `no_free_workers`: All workers satisfying the job's or node's resource constraints are occupied.
+    - `insufficient_ram`: No free worker has enough physical RAM available to satisfy the RAM constraint (10 GB default, accounting for the 8 GB OS reserve).
+    - `scheduling`: The scheduler is actively evaluating placement scores.
+*   **Foldable Per-Machine Waiting Queue**: To keep the dashboard concise when numerous jobs are queued, each worker card displays the **Top 3** pending jobs directly. Any additional queued stages beyond the Top 3 are cleanly folded into an interactive accordion:
+    ```html
+    <details><summary>Voir les N autres jobs en attente...</summary></details>
+    ```
+    Expanding this accordion reveals all queued stages with their respective priority and preemption badges (`dashboard.html:678`).
 
 ---
 

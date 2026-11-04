@@ -97,10 +97,10 @@ You can retrieve them locally with:
 git pull --rebase origin <your-branch-name>
 ```
 
-### Large Outputs → DVC Cache (on-demand)
-Files declared as `outs:` (models, datasets) are stored in the DVC cache on the worker that ran your job. They are **not** pushed to Git.
+### Large Outputs → DVC Cache (Worker Local & Peer-to-Peer)
+Files declared as `outs:` (models, datasets) are stored in the local DVC cache on the worker that ran your job. They are **not** pushed to Git. Large files are stored in the worker's local storage and transferred automatically peer-to-peer (P2P) between workers across the local cluster network whenever downstream stages require them.
 
-To retrieve them locally (after Google Drive backup or when connected to the cluster network):
+To retrieve them locally (when connected to the cluster network or Headnode):
 ```bash
 dvc pull
 ```
@@ -129,5 +129,5 @@ After a cluster run completes:
     ```
 
 ??? note "How does data move between workers?"
-    When a job is scheduled, the cluster checks which worker already has your data cached locally and prioritizes that worker. If the data is on a different worker, it transfers files directly over the internal network (peer-to-peer) instead of downloading from Google Drive. This is automatic and requires no configuration on your part. For technical details, see [Infrastructure Internals](../admin/infrastructure_internals.md).
+    When a job is scheduled, the cluster checks which worker already has your data cached locally and prioritizes that worker. If the data is on a different worker, it transfers files directly over the internal cluster network (peer-to-peer) between worker local caches. This is automatic and requires no configuration on your part. For technical details, see [Infrastructure Internals](../admin/infrastructure_internals.md).
 

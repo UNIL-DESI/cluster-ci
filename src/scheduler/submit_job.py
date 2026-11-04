@@ -444,20 +444,21 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
         print(f"Error: Could not connect to headnode at {headnode_url}: {e}")
         print("   Please verify the URL and network configuration.")
         sys.exit(1)
-    if not commit_hash:
-        commit_hash = os.environ.get("CALLER_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
-        if not commit_hash:
-            try:
-                import subprocess
-                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-            except Exception:
-                commit_hash = "local-head"
-
     # Strategy: Fetch .cluster-ci content first to parse all requirements
     content = None
     target_repo_dir = repo_dir or (local_repo_path if (is_local and local_repo_path) else None)
     if not target_repo_dir and os.environ.get("GITHUB_WORKSPACE"):
         target_repo_dir = os.environ.get("GITHUB_WORKSPACE")
+
+    if not commit_hash:
+        commit_hash = os.environ.get("CALLER_COMMIT_SHA") or os.environ.get("GITHUB_SHA")
+        if not commit_hash:
+            try:
+                import subprocess
+                cmd_cwd = target_repo_dir if (target_repo_dir and os.path.exists(target_repo_dir)) else None
+                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cmd_cwd, text=True).strip()
+            except Exception:
+                commit_hash = "local-head"
 
     if target_repo_dir:
         ci_file = os.path.join(target_repo_dir, ".cluster-ci")

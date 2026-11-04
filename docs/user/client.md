@@ -31,18 +31,55 @@ Open your terminal at the root of your local repository and run:
 1.  **Validation**: Verifies your local Git repository and detects a working Python interpreter.
 2.  **Dependencies Setup**: Ensures `gh` and `uv` are available.
 3.  **Workflow Injection**: Injects `.github/workflows/cluster-ci.yml` for remote execution.
-4.  **Repository Settings**: Creates the [`.cluster-ci` configuration file](configuration.md) and updates `.gitignore`.
+4.  **Repository Settings**: Creates the [`.cluster-ci` configuration file](configuration.md) and updates `AGENTS.md` with Cluster-CI instructions.
 5.  **Pre-flight Scanner Hook**: Installs a Git pre-commit hook that validates your `pyproject.toml` before each commit.
 6.  **CLI Installation**:
-    - Installs `cluster-run` to `$HOME/.local/bin/`.
-    - **Windows**: Creates `cluster-run.cmd` so you can invoke `cluster-run` from PowerShell or CMD.
+    - Installs both `cluster-run` and `cluster-update` to `$HOME/.local/bin/`.
+    - **Windows**: Creates `cluster-run.cmd` and `cluster-update.cmd` so you can invoke them directly from PowerShell or CMD.
     - Appends the binary path to your shell configuration (`.bashrc` / `.zshrc`) or Windows environment variables.
 
 *After installing, restart your terminal or run `source ~/.bashrc` (or equivalent) to reload your PATH.*
 
 ---
 
-## 2. How `cluster-run` Works
+## 2. Two Execution Modes: Interactive CLI vs. Disconnected Background Runs
+
+Researchers can launch cluster workloads using two primary execution modes depending on task duration and workflow needs:
+
+### Mode 1: Interactive CLI Execution (`cluster-run`)
+The standard workflow for iterative development, prototyping, and rapid feedback:
+
+```bash
+cluster-run
+```
+
+*   **Shadow Commits**: Packages all modified and untracked files into a temporary shadow commit without touching your local branch or Git history.
+*   **Real-Time Log Streaming**: Streams stdout/stderr from worker containers directly to your terminal.
+*   **Graceful Interruption (`Ctrl+C`)**: Pressing `Ctrl+C` sends a clean cancellation request (`POST /api/jobs/{id}/stop`) to the Headnode, safely stopping remote containers and freeing allocated resources.
+*   **Automatic Result Synchronization**: Automatically pulls back updated metrics (`metrics:`), evaluation plots (`plots:`), and lock files directly into your workspace upon completion.
+
+### Mode 2: Disconnected Background Execution via Git Tag
+Ideal for long-running training pipelines that take several hours or days:
+
+```bash
+# Push tag to trigger execution on current branch
+git tag -f cluster-run && git push origin <branch> --tags
+
+# Or skip invalidating unchanged stages for code-only modifications
+git tag -f cluster-run-skip-code && git push origin <branch> --tags
+```
+
+*   **Fire-and-Forget**: Once the tag is pushed to GitHub, you can safely disconnect your computer, close the terminal, or shut down your machine. Computation continues uninterrupted on the cluster workers.
+*   **Web Dashboard Monitoring**: Track execution progress, stage DAG status, worker GPU/RAM utilization, and real-time logs via the **[Web Dashboard](http://130.223.73.209:5000/)** (accessible via UNIL campus network or VPN).
+*   **Offline Result Retrieval**: When the run finishes, synchronize artifacts back to your local environment using:
+    ```bash
+    git pull --rebase origin <branch>
+    cluster-run sync
+    ```
+
+---
+
+## 3. How `cluster-run` Works
 
 When you run `cluster-run`, the CLI:
 
@@ -55,7 +92,7 @@ Your local working tree and branch status remain **completely untouched** throug
 
 ---
 
-## 3. Real-Time Log Streaming & Multi-Machine Multiplexing
+## 4. Real-Time Log Streaming & Multi-Machine Multiplexing
 
 Cluster-CI streams logs from the executing container back to your terminal in real-time.
 
@@ -75,19 +112,21 @@ Cluster-CI streams logs from the executing container back to your terminal in re
 
 ---
 
-## 4. Command Reference & CLI Syntax
+## 5. Command Reference & CLI Syntax
 
 The `cluster-run` CLI accepts the following arguments according to its command-line specification:
 
 ```text
-cluster-run [command] [run_id] [--local]
+cluster-run [command] [run_id] [--local] [--priority {high,normal,low}] [--skip-code-invalidation]
 ```
 
 | Argument / Flag | Type / Values | Description |
 | :--- | :--- | :--- |
-| `command` | `list`, `view`, `cancel`, `sync` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
-| `run_id` | `string` *(optional)* | Target GitHub Actions run ID or local job ID for `view` or `cancel`. |
+| `command` | `list`, `view`, `cancel`, `sync`, `attach` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
+| `run_id` | `string` *(optional)* | Target GitHub Actions run ID or local job ID for `view`, `cancel`, or `attach`. |
 | `--local` | flag | Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits. |
+| `--priority {high,normal,low}` | `high`, `normal`, `low` | Overrides the scheduling priority of the run (default: `normal`). Injects `[priority=<val>]` in the shadow commit. |
+| `--skip-code-invalidation`<br>*(alias `--skip-code`)* | flag | Realigns `dvc.lock` for code-only modifications without recomputing stages if data inputs are unchanged. |
 
 ### `cluster-run` (Default Execution)
 Triggers a shadow run of your workspace via GitHub Actions.
@@ -97,6 +136,31 @@ cluster-run
 *   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster draft branch.
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.
+
+### `cluster-run --priority {high,normal,low}`
+Defines the queue priority level for the entire run.
+```bash
+cluster-run --priority high
+```
+*   Marks the job with `high` scheduling rank in the Headnode queue.
+*   Allows the job to activate the targeted preemption engine if cluster resources are fully occupied by `low` priority runs.
+*   Supported values: `high`, `normal` (default), `low`.
+
+### `cluster-run --skip-code-invalidation` (or `--skip-code`)
+Allows code modifications (comments, docstrings, non-algorithmic edits) without triggering full DAG recomputation when data dependencies are identical.
+```bash
+cluster-run --skip-code-invalidation
+```
+*   Pushes the `cluster-run-skip-code` Git tag and sets `SKIP_CODE_INVALIDATION=1`.
+*   Forces DVC to accept existing cached outputs without invalidating dependent stages.
+
+### `cluster-run attach <job_id>`
+Attaches to a running local job on the Headnode to stream real-time logs.
+```bash
+cluster-run attach <job_id>
+```
+*   Connects directly to the live output log stream of the specified active job.
+*   **Safe Detach**: Pressing `Ctrl+C` inside `attach` simply detaches the local terminal; it **never** stops or interrupts the job executing on the cluster.
 
 ### `cluster-run --local` (Direct Headnode Execution for Sensitive Data)
 Triggers a direct local run on the Headnode without pushing to GitHub or creating shadow commits.
@@ -114,7 +178,7 @@ List recent runs.
 ```bash
 cluster-run list
 ```
-*   Displays the run ID, status (Completed, In-Progress, Queued), and completion time.
+*   Displays the run ID, status (Completed, In-Progress, Queued), priority, and completion time.
 
 ### `cluster-run view`
 View logs for a run.
@@ -144,7 +208,7 @@ When running `cluster-run` (or `cluster-run --local`), pressing `Ctrl+C` sends a
 
 ---
 
-## 5. Safety Features
+## 6. Safety Features
 
 ### Orphaned Run Recovery
 If your terminal crashes or you force-kill `cluster-run`, the active job continues on the cluster. The next time you run any `cluster-run` command, the CLI detects the orphaned run and automatically sends a termination request, freeing cluster resources.
@@ -165,3 +229,4 @@ The installation injects a Git pre-commit hook that validates your `pyproject.to
 *   **Python version**: Ensures `requires-python` accepts Python 3.12 (the cluster's runtime version).
 *   **PyTorch pinning**: Blocks strict version pins (`torch==2.1.2`) that conflict with the cluster's pre-installed CUDA-optimized PyTorch. Use `torch>=2.0` or leave unpinned.
 *   **ARM64 compatibility**: Simulates dependency resolution for the cluster's ARM64 architecture to catch build failures early.
+
