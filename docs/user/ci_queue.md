@@ -122,7 +122,7 @@ To guarantee urgent turnaround for critical experiments without cluster starvati
 * **Target Victim Selection**:
     1. **Strict Priority Inversion**: The running stage must have priority strictly equal to `low` (`normal` and `high` running jobs are completely immune to preemption).
     2. **Cross-User Isolation**: Preemption operates strictly across different researchers: $U_{\text{requester}} \neq U_{\text{victim}}$. A user's high-priority run never preempts their own running low-priority stages.
-    3. **Anti-Starvation Bound**: The candidate stage must have been preempted fewer than 3 times ($N_{\text{preempt}} < 3$). Once a stage reaches 3 preemptions, it gains absolute immunity against further evictions.
+    3. **Anti-Starvation Bound**: The candidate stage must have been preempted fewer than 5 times ($N_{\text{preempt}} < 5$). Once a stage reaches 5 preemptions, it gains absolute immunity against further evictions.
     4. **Minimizing Lost Compute**: Among eligible candidates, the scheduler picks the most recently started job (`started_at DESC`), preserving long-running computation.
     5. **Hardware Admissibility**: The physical machine released by the victim must satisfy the hardware requirements of the requesting `high` priority node.
 * **Graceful Eviction Protocol**:
