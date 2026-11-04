@@ -1738,7 +1738,7 @@
 <li><strong>Target Victim Selection</strong>:<ol>
 <li><strong>Strict Priority Inversion</strong>: The running stage must have priority strictly equal to <code>low</code> (<code>normal</code> and <code>high</code> running jobs are completely immune to preemption).</li>
 <li><strong>Cross-User Isolation</strong>: Preemption operates strictly across different researchers: $U_{\text{requester}} \neq U_{\text{victim}}$. A user's high-priority run never preempts their own running low-priority stages.</li>
-<li><strong>Anti-Starvation Bound</strong>: The candidate stage must have been preempted fewer than 3 times ($N_{\text{preempt}} &lt; 3$). Once a stage reaches 3 preemptions, it gains absolute immunity against further evictions.</li>
+<li><strong>Anti-Starvation Bound</strong>: The candidate stage must have been preempted fewer than 5 times ($N_{\text{preempt}} &lt; 5$). Once a stage reaches 5 preemptions, it gains absolute immunity against further evictions.</li>
 <li><strong>Minimizing Lost Compute</strong>: Among eligible candidates, the scheduler picks the most recently started job (<code>started_at DESC</code>), preserving long-running computation.</li>
 <li><strong>Hardware Admissibility</strong>: The physical machine released by the victim must satisfy the hardware requirements of the requesting <code>high</code> priority node.</li>
 </ol>
