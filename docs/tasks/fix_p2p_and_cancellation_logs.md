@@ -13,7 +13,7 @@
 - `src/scheduler/worker_agent.py` : Écriture de la ligne de log d'information au début de la tâche si `CLUSTER_CANCELLED_RUNS` est présente, et correction robuste de la variable d'environnement locale `SERVICE_URL`.
 
 ## 3. Objectifs (Definition of Done)
-- [ ] **Correction de l'IP P2P** : Toute URL contenant `1300.223.169.200` est automatiquement nettoyée et remplacée par `130.223.169.200` de manière dynamique. Aucun log n'affiche plus l'IP incorrecte.
+- [x] **Correction de l'IP P2P** *(révisé le 2026-11-09, fail-fast)* : plus aucune réécriture silencieuse d'IP. `src/scheduler/service_url.py::validate_service_url` fait crasher `worker_agent.py` au démarrage si `SERVICE_URL` est malformée (ex. octet `1300`) et `/register_worker` répond `400` à toute `service_url` invalide. La coquille doit être corrigée dans la variable `SERVICE_URL` du worker concerné.
 - [ ] **Notification de logs d'annulation** : Lorsqu'un run est écrasé/annulé par une nouvelle soumission, le fichier de log de la nouvelle tâche commence immédiatement par une ou plusieurs lignes formatées de la façon suivante :
   `[YYYY-MM-DD HH:MM:SS] ℹ️  Previous active run [RUN_ID] has been cancelled by this new submission.`
 - [ ] **Intégrité de la base de données** : SQLite ne subit aucun lock concurrent et la persistance des données reste parfaitement intègre.

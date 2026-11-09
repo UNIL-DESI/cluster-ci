@@ -30,8 +30,10 @@ import datetime
 from flask import abort, Flask, jsonify, send_from_directory, send_file, request, Response
 try:
     from redaction import redact_secrets
+    from service_url import validate_service_url
 except ImportError:
     from src.scheduler.redaction import redact_secrets
+    from src.scheduler.service_url import validate_service_url
 try:
     from runner.runtime_env import resolve_venv_executable
 except ImportError:
@@ -313,7 +315,7 @@ else:
 
 HOSTNAME = socket.gethostname()
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 6000))
-SERVICE_URL = os.environ.get("SERVICE_URL", f"http://{HOSTNAME}:{AGENT_PORT}")
+SERVICE_URL = validate_service_url(os.environ.get("SERVICE_URL", f"http://{HOSTNAME}:{AGENT_PORT}"))
 
 # Role detection (A14: no hardcoded hostnames or IPs; role comes from environment or config file)
 ROLE = os.environ.get("CLUSTER_CI_ROLE")

@@ -60,8 +60,10 @@ except ImportError:
     )
 try:
     from redaction import redact_secrets
+    from service_url import validate_service_url
 except ImportError:
     from src.scheduler.redaction import redact_secrets
+    from src.scheduler.service_url import validate_service_url
 try:
     from runner.host_guard import (
         DEFAULT_PLACEMENT_PRIORITY, HEADNODE_PLACEMENT_PRIORITY
@@ -599,10 +601,11 @@ def register_worker():
     hostname = data.get('hostname')
     service_url = data.get('service_url')
     if service_url:
-        host_alias = os.environ.get("CLUSTER_HEADNODE_HOST_ALIAS")
-        headnode_ip = os.environ.get("CLUSTER_HEADNODE_IP")
-        if host_alias and headnode_ip:
-            service_url = service_url.replace(host_alias, headnode_ip)
+        try:
+            validate_service_url(service_url)
+        except ValueError as e:
+            app.logger.error(f"Rejected worker registration {worker_id!r}: {e}")
+            return jsonify({"error": f"Invalid service_url: {e}"}), 400
     total_ram_gb = data.get('total_ram_gb')
     total_storage_gb = data.get('total_storage_gb')
     available_storage_gb = data.get('available_storage_gb')
