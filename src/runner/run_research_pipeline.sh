@@ -607,6 +607,15 @@ elif [ "${CLUSTER_CI_GPU_REQUIRED:-0}" = "1" ] || [ "${VRAM_LIMIT:-0}" != "0" ];
     DOCKER_GPU_FLAG=(--gpus '"device=0"')
 fi
 
+ollama_cache="${OLLAMA_CACHE_DIR:-}"
+if [ -z "$ollama_cache" ]; then
+    if [ -d "/home/henri/ollama_poc" ]; then
+        ollama_cache="/home/henri/ollama_poc"
+    else
+        ollama_cache="$HOME/.ollama_cache"
+    fi
+fi
+
 docker run -d \
     --init \
     $PLATFORM_FLAG \
@@ -619,7 +628,7 @@ docker run -d \
     --entrypoint "tail" \
     -v "$(pwd):/workspace" \
     -v "$HOME_CACHE_VOLUME:/home/user" \
-    -v "${OLLAMA_CACHE_DIR:-$HOME/.ollama_cache}:/home/user/.ollama" \
+    -v "${ollama_cache}:/home/user/.ollama" \
     -v "$BASE_DIR:/cluster-ci:ro" \
     -v /etc/passwd:/etc/passwd:ro \
     -v /etc/group:/etc/group:ro \
