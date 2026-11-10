@@ -308,6 +308,10 @@ def update_running(project_name):
                 sys.exit(1)
 
             registry[project_name] = registry.get(project_name, {})
+            job_id = os.environ.get('JOB_ID')
+            if job_id:
+                ids = registry[project_name].get('job_ids', [])
+                registry[project_name]['job_ids'] = sorted(set(ids + [job_id]))
             registry[project_name].update({
                 "last_execution": time.time(),
                 "status": "running"
@@ -338,13 +342,16 @@ def update_idle(project_name, project_path):
             if project_name not in registry:
                 registry[project_name] = {}
 
+            # A runner finishing does not prove that the entire project has no
+            # queued or sibling work. Recorded jobs require headnode confirmation.
+            status = "running" if registry[project_name].get('job_ids') else "idle"
             registry[project_name].update({
-                "status": "idle",
+                "status": status,
                 "size_bytes": size,
                 "last_execution": time.time()
             })
             save_registry(f, registry)
-            print(f"Project {project_name} marked as idle. Size: {size} bytes.")
+            print(f"Project {project_name} marked as {status}. Size: {size} bytes.")
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
 
@@ -926,6 +933,24 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                 sys.exit(1)
 
             now = time.time()
+
+            # SIGKILL/host shutdown can bypass the runner's EXIT trap. Docker
+            # absence alone is insufficient: queued and preempted jobs matter.
+            from src.runner.registry_recovery import recover_running
+            def lookup_registry_job(job_id):
+                url = os.environ.get('HEADNODE_URL', '').rstrip('/')
+                token = os.environ.get('CLUSTER_TOKEN')
+                if not url or not token:
+                    raise RuntimeError('No authenticated headnode configuration')
+                response = requests.get(url + '/job_status/' + job_id,
+                    headers={'Authorization': 'Bearer ' + token}, timeout=5,
+                    allow_redirects=False)
+                response.raise_for_status()
+                return response.json()
+            recovered = recover_running(registry, lookup_registry_job,
+                lambda name: is_project_active_in_docker(name, active_docker_info)[0], now)
+            if recovered and not dry_run:
+                save_registry(f, registry)
 
             # If dry_run with current_project, simulate running in memory
             if dry_run and current_project:

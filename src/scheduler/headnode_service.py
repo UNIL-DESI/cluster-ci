@@ -1202,6 +1202,9 @@ def job_status(job_id):
             return jsonify({"error": "Job not found"}), 404
 
         job_dict = dict(job)
+        from src.runner.registry_recovery import project_has_active_jobs
+        job_dict['project_has_active_jobs'] = project_has_active_jobs(
+            conn, job_dict['repo'], bool(job_dict.get('is_local')))
         cursor.execute('SELECT COUNT(*) AS cnt FROM job_nodes WHERE job_id = ?', (job_id,))
         count_row = cursor.fetchone()
         has_dag_nodes = bool(count_row and count_row["cnt"] > 0)
