@@ -19,11 +19,14 @@ from pathlib import Path
 
 try:
     from src.runner.runtime_env import resolve_venv_executable
+    from src.runner.registry_recovery import recover_running
 except ImportError:
     try:
         from runner.runtime_env import resolve_venv_executable
+        from runner.registry_recovery import recover_running
     except ImportError:
         from runtime_env import resolve_venv_executable
+        from registry_recovery import recover_running
 
 class RegistryCorruptedError(Exception):
     """Raised when registry.json is unparseable or corrupted."""
@@ -936,7 +939,6 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
 
             # SIGKILL/host shutdown can bypass the runner's EXIT trap. Docker
             # absence alone is insufficient: queued and preempted jobs matter.
-            from src.runner.registry_recovery import recover_running
             def lookup_registry_job(job_id):
                 url = os.environ.get('HEADNODE_URL', '').rstrip('/')
                 token = os.environ.get('CLUSTER_TOKEN')
