@@ -169,6 +169,29 @@ def prune_all_git_worktrees(protected_job_id=None):
     except Exception as e:
         logger.error(f"Error while scanning repositories for worktree pruning: {e}")
 
+def process_belongs_to_live_executor(proc, job_id=None):
+    """Recheck ownership immediately before killing an apparent orphan.
+
+    A runner can spawn a child after the initial process-tree snapshot. Inspect
+    current ancestry and job identity; an unreadable process is not safe to kill.
+    """
+    try:
+        with job_lock:
+            roots = {
+                ex["process"].pid for ex in active_executors.values()
+                if ex.get("process") is not None
+            }
+            jobs = {ex.get("job_id") for ex in active_executors.values() if ex.get("job_id")}
+        if job_id:
+            jobs.add(job_id)
+        if proc.pid in roots or any(parent.pid in roots for parent in proc.parents()):
+            return True
+        env = proc.environ()
+        return bool({env.get("CLUSTER_CI_JOB_ID"), env.get("JOB_ID")} & jobs)
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return True
+
+
 def purge_orphan_runners_and_containers(job_id=None):
     """Performs JIT (Just-In-Time) purge of orphan docker containers and runner processes.
     
@@ -264,7 +287,7 @@ def purge_orphan_runners_and_containers(job_id=None):
                     p_job_id = environ.get("CLUSTER_CI_JOB_ID") or environ.get("JOB_ID")
                     with job_lock:
                         active_jids = {ex.get("job_id") for ex in active_executors.values() if ex.get("job_id")}
-                    if job_id_context and p_job_id == job_id_context:
+                    if job_id and p_job_id == job_id:
                         continue
                     if p_job_id and p_job_id in active_jids:
                         continue
@@ -299,6 +322,8 @@ def purge_orphan_runners_and_containers(job_id=None):
                     is_orphan_runner = True
             
             if is_orphan_runner:
+                if process_belongs_to_live_executor(proc, job_id):
+                    continue
                 logger.warning(f"🔥 JIT Purge: Killing host orphan process (PID: {pid}, name: {name}, cmd: {cmdline})")
                 proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -1148,8 +1173,10 @@ def execute_job(job):
             except Exception as e:
                 logger.warning(f"Could not remove stale port file {port_file}: {e}")
 
-        process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        # Publish the process atomically with creation so another startup's
+        # orphan scan cannot observe an unregistered, already-running process.
         with job_lock:
+            process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             if runner_id in active_executors:
                 active_executors[runner_id]["process"] = process
             current_process = process
