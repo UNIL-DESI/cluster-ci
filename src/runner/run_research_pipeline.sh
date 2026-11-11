@@ -1029,8 +1029,8 @@ fi
 if [ -n "$GPU_WATCHDOG_PID" ]; then
     log_info "Stopping GPU Watchdog..."
     _kill_with_timeout "$GPU_WATCHDOG_PID" 5
-    # Scope pkill strictly to this container's watchdog so packed sibling jobs are never affected
-    timeout 5 pkill -9 -f "gpu_watchdog.sh ${MAIN_CONTAINER_NAME}" 2>/dev/null || true
+    # Scope pkill strictly to this container's watchdog so packed sibling jobs (and timeout itself) are never matched
+    timeout 5 pkill -9 -f "[g]pu_watchdog.sh ${MAIN_CONTAINER_NAME}" 2>/dev/null || true
 fi
 
 if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then
