@@ -1248,7 +1248,12 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
 
     # 1. Race condition mitigation: mark current project as running before any inspection or purge
     if not current_project:
-        current_project = os.environ.get("WORKSPACE_KEY") or os.environ.get("TARGET_REPO")
+        env_ws = os.environ.get("WORKSPACE_KEY")
+        env_repo = os.environ.get("TARGET_REPO")
+        if env_ws:
+            current_project = env_ws
+        elif env_repo and "/" in env_repo:
+            current_project = env_repo
     if current_project:
         validate_project_name(current_project)
         if dry_run:

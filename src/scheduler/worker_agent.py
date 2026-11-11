@@ -2649,6 +2649,8 @@ def periodic_worker_gc_loop():
             continue
         try:
             gc_env = os.environ.copy()
+            gc_env.pop("TARGET_REPO", None)
+            gc_env.pop("WORKSPACE_KEY", None)
             gc_env["HEADNODE_URL"] = HEADNODE_URL
             gc_env["CLUSTER_TOKEN"] = CLUSTER_TOKEN or ""
             proc = subprocess.Popen(

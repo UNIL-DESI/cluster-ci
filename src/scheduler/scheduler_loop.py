@@ -2331,6 +2331,8 @@ def schedule_jobs():
             ):
                 last_headnode_gc_ts = now_mono
                 gc_env = os.environ.copy()
+                gc_env.pop("TARGET_REPO", None)
+                gc_env.pop("WORKSPACE_KEY", None)
                 gc_env.setdefault("HEADNODE_URL", os.environ.get("HEADNODE_URL", "http://127.0.0.1:5000"))
                 headnode_gc_proc = subprocess.Popen(
                     [sys.executable, gc_script, "run-transfer-gc"],
