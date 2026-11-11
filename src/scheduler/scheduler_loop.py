@@ -2300,7 +2300,7 @@ def schedule_iteration():
                 conn.commit()
             available_extra_workers.remove(w)
 
-def schedule_jobs():
+def schedule_jobs(stop_event=None):
     """Boucle continue d'ordonnancement cadencée toutes les 5 secondes."""
     last_retention_ts = 0.0
     last_headnode_gc_ts = time.monotonic()
@@ -2308,7 +2308,7 @@ def schedule_jobs():
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     gc_script = os.path.join(repo_root, "src", "runner", "gc_orchestrator.py")
 
-    while True:
+    while not (stop_event is not None and stop_event.is_set()):
         try:
             schedule_iteration()
         except Exception as e:
@@ -2342,7 +2342,11 @@ def schedule_jobs():
                 )
         except Exception as e:
             logger.error(f"Error launching periodic headnode GC: {e}")
-        time.sleep(5)
+        if stop_event is not None:
+            if stop_event.wait(5):
+                break
+        else:
+            time.sleep(5)
 
 if __name__ == '__main__':
     init_db()

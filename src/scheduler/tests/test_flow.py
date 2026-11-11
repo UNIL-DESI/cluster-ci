@@ -45,7 +45,8 @@ class TestScheduler(unittest.TestCase):
             cls.api_thread.start()
 
             # Start Scheduler Loop in a thread
-            cls.loop_thread = threading.Thread(target=schedule_jobs)
+            cls.stop_event = threading.Event()
+            cls.loop_thread = threading.Thread(target=schedule_jobs, args=(cls.stop_event,))
             cls.loop_thread.daemon = True
             cls.loop_thread.start()
 
@@ -153,6 +154,8 @@ class TestScheduler(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         if not cls.is_e2e:
+            cls.stop_event.set()
+            cls.loop_thread.join(timeout=5)
             cls.server.shutdown()
             cls.api_thread.join(timeout=5)
             try:
