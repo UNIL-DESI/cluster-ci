@@ -300,7 +300,7 @@ function cleanup_job_resources() {
     [ -n "$GPU_WATCHDOG_PID" ] && kill -9 "$GPU_WATCHDOG_PID" 2>/dev/null || true
     python3 "$BASE_DIR/src/runner/gc_orchestrator.py" update-idle "$WORKSPACE_KEY" "$BASE_DIR/$REPO_WORK_DIR"
     log_info "Running post-flight Maintenance GC (Lazy Transfer)..."
-    python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
+    env -u WORKSPACE_KEY -u TARGET_REPO -u JOB_ID python3 "$BASE_DIR/src/runner/gc_orchestrator.py" run-transfer-gc
 }
 # Trap EXIT, SIGINT, and SIGTERM to ensure cleanup
 trap cleanup_job_resources EXIT SIGINT SIGTERM
@@ -343,9 +343,11 @@ if [ "$IS_LOCAL" = "1" ]; then
     # Initialize minimal git repo for DVC compatibility
     if [ ! -d ".git" ]; then
         log_info "[LOCAL MODE] Initializing temporary Git repository for DVC compatibility..."
-        git init
+        git init -q
+        git config core.hooksPath /dev/null
+        git config commit.gpgSign false
         git add -A
-        git commit -m "Local snapshot" --allow-empty
+        git -c user.name="cluster-ci-local" -c user.email="local@cluster.invalid" commit -q -m "Local snapshot" --allow-empty
     fi
 
     # Write a pseudo commit hash for traceability
