@@ -253,6 +253,7 @@ echo "===STAGE:setup:BEGIN==="
 
 # 1. Creation / switch to repositories/
 log_info "[Step 1/3] Initializing local cache..."
+export GIT_CEILING_DIRECTORIES="$BASE_DIR/repositories"
 mkdir -p "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
 cd "$BASE_DIR/repositories/$(dirname "$TARGET_REPO")"
 
@@ -353,6 +354,10 @@ if [ "$IS_LOCAL" = "1" ]; then
     log_success "[LOCAL MODE] Source code extracted and local Git initialized."
 else
     if [ ! -d "$REPO_BASENAME/.git" ]; then
+        if [ -d "$REPO_BASENAME" ]; then
+            log_warn "[Step 2.1/3] Removing incomplete repository directory '$REPO_BASENAME' lacking .git before cloning..."
+            rm -rf "$REPO_BASENAME"
+        fi
         log_info "[Step 2.1/3] First repository fetch. Cloning in progress..."
         git clone "$REPO_URL" "$REPO_BASENAME"
     else
@@ -360,6 +365,10 @@ else
     fi
 
     cd "$REPO_BASENAME"
+    if [ ! -d ".git" ]; then
+        log_error "Fatal: '$(pwd)' does not contain a .git directory! Refusing to mutate parent Git metadata."
+        exit 1
+    fi
 
     # Force remote URL in case it changed (ephemeral token)
     git remote set-url origin "$REPO_URL"

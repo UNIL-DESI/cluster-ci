@@ -2051,6 +2051,7 @@ def check_space():
     })
 
 REPOS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "repositories")
+os.environ.setdefault("GIT_CEILING_DIRECTORIES", REPOS_DIR)
 
 def find_local_repo(repo_slug, auto_clone=True):
     """Find the local clone of a repo, handling owner name mismatches.
