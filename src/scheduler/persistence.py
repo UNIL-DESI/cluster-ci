@@ -308,6 +308,14 @@ def init_db():
         )
     ''')
 
+    # Reconcile any residual non-terminal job_nodes belonging to already terminated jobs
+    cursor.execute('''
+        UPDATE job_nodes
+        SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+        WHERE status IN ('ready', 'pending', 'running', 'preempting')
+        AND job_id IN (SELECT job_id FROM jobs WHERE status IN ('failed', 'completed'))
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -664,10 +672,10 @@ def check_runner_heartbeat_timeouts(timeout_s=RUNNER_HEARTBEAT_TIMEOUT_S):
         cursor.execute('''
             SELECT n.job_id, n.node_name, n.runner_id, n.worker_id,
                    h.last_seen,
-                   (strftime('%s', 'now') - strftime('%s', COALESCE(h.last_seen, n.started_at))) as elapsed_s
+                   (strftime('%s', 'now') - strftime('%s', COALESCE(h.last_seen, n.preempted_at, n.started_at))) as elapsed_s
             FROM job_nodes n
             LEFT JOIN runner_heartbeats h ON n.job_id = h.job_id AND n.runner_id = h.runner_id
-            WHERE n.status = 'running'
+            WHERE n.status IN ('running', 'preempting')
         ''')
         running_nodes = [dict(row) for row in cursor.fetchall()]
 
@@ -769,6 +777,18 @@ def is_non_retryable_failure(
         or "FAIL-FAST:" in err_str
     ):
         return True, "PackageVerificationFailed"
+    if any(
+        exc_tok in err_str
+        for exc_tok in (
+            "SyntaxError:",
+            "IndentationError:",
+            "TabError:",
+            "ModuleNotFoundError:",
+            "ImportError:",
+            "NameError:",
+        )
+    ):
+        return True, "DeterministicCodeError"
     return False, None
 
 

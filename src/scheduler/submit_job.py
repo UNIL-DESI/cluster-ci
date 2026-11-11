@@ -927,7 +927,7 @@ def wait_for_job(headnode_url, job_id, branch=None):
             worker_url = job.get('worker_service_url')
             ram_required = job.get('ram_required_gb', DEFAULT_RAM_GB)
 
-            if status == 'pending':
+            if status == 'pending' or job.get('waiting_for_worker'):
                 now = time.time()
                 if now - last_queue_check >= 10:
                     last_queue_check = now
@@ -958,6 +958,9 @@ def wait_for_job(headnode_url, job_id, branch=None):
                             diag_lines.append(f"⏳ FILE D'ATTENTE CLUSTER-CI (Job: {job_id[:8]})")
                             if own_position != -1:
                                 diag_lines.append(f"   👉 Queue position: {own_position} / {len(queue)}")
+                            elif job.get('waiting_for_worker'):
+                                target_hw = job.get('home_worker') or job.get('worker_id') or 'worker'
+                                diag_lines.append(f"   👉 Status: Assigned to {target_hw} — waiting for worker runner pickup / free stage resources...")
                             else:
                                 diag_lines.append(f"   👉 Queue position: Analyzing by scheduler...")
                             
@@ -1260,7 +1263,8 @@ def wait_for_job(headnode_url, job_id, branch=None):
                     else:
                         print(f"\n❌ Error: Job exceeded allocated REQUIRED_RAM limit ({ram_required} GB) and was killed by system (OOM Killer). Please increase this limit in .cluster-ci")
                 elif exit_code == 255:
-                    print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
+                    if not has_node_failure and not job_error:
+                        print(f"\n❌ Critical Failure: Job {job_id} execution process aborted unexpectedly (Exit code 255).")
                 elif exit_code < 0:
                     sig = -exit_code
                     sig_desc = "SIGKILL (forcefully killed / external stop)" if sig == 9 else ("SIGTERM (interrupted / cancellation requested)" if sig == 15 else f"signal {sig}")

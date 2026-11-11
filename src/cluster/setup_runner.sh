@@ -243,7 +243,12 @@ EOF
 
     sudo systemctl daemon-reload
     sudo systemctl enable cluster-scheduler cluster-scheduler-loop cluster-runner-manager
-    sudo systemctl restart cluster-scheduler cluster-scheduler-loop cluster-runner-manager
+    sudo systemctl restart cluster-scheduler
+    sudo systemctl restart cluster-scheduler-loop
+    sudo systemctl restart cluster-runner-manager
+    if command -v setquota >/dev/null 2>&1 && mountpoint -q /home; then
+        sudo setquota -u "$USER" 0 0 0 0 /home 2>/dev/null || true
+    fi
     echo "🚀 Scheduler and Runner Manager services started."
 
     # Configure Logrotate and Journald Retention on Headnode

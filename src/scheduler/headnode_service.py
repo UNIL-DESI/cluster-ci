@@ -318,6 +318,26 @@ def _cleanup_stale_local_transfers():
             continue
 
 
+def _cleanup_stale_local_uploads():
+    root = os.path.join(REPOS_DIR, "_local_uploads")
+    if not os.path.isdir(root):
+        return
+    cutoff = time.time() - LOCAL_TRANSFER_MAX_AGE_SECONDS
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        try:
+            if not os.path.isfile(path) or os.path.getmtime(path) >= cutoff:
+                continue
+            job_id = name.removesuffix('.tar.gz')
+            with get_db_conn() as conn:
+                job = conn.execute('SELECT status FROM jobs WHERE job_id = ?', (job_id,)).fetchone()
+            if job and job['status'] in ('pending', 'assigned', 'running'):
+                continue
+            os.remove(path)
+        except OSError:
+            continue
+
+
 def _cleanup_stale_local_results():
     root = os.path.join(REPOS_DIR, "_local_results")
     if not os.path.isdir(root):
@@ -648,10 +668,14 @@ def register_worker():
         )
         prio = HEADNODE_PLACEMENT_PRIORITY if is_hn else DEFAULT_PLACEMENT_PRIORITY
 
+    available_ram_gb = data.get('available_ram_gb')
+    if available_ram_gb is None:
+        available_ram_gb = total_ram_gb
+
     with get_db_conn() as conn:
         cursor = conn.cursor()
-        # available_ram_gb is now a derived state, but we keep the column for backward compatibility
-        # (it will be ignored by the dynamic calculation).
+        # available_ram_gb is dynamically derived in /workers, while the DB column tracks
+        # latest reported physical availability so raw DB inspections never stay stale/negative.
         cursor.execute('''
             INSERT INTO workers (
                 worker_id, hostname, service_url,
@@ -671,6 +695,7 @@ def register_worker():
                 hostname = excluded.hostname,
                 service_url = excluded.service_url,
                 total_ram_gb = excluded.total_ram_gb,
+                available_ram_gb = excluded.available_ram_gb,
                 total_storage_gb = excluded.total_storage_gb,
                 available_storage_gb = excluded.available_storage_gb,
                 total_vram_gb = excluded.total_vram_gb,
@@ -690,7 +715,7 @@ def register_worker():
                 status = 'online'
         ''', (
             worker_id, hostname, service_url,
-            total_ram_gb, total_ram_gb, total_storage_gb, available_storage_gb,
+            total_ram_gb, available_ram_gb, total_storage_gb, available_storage_gb,
             total_vram_gb, gpu_count, gpu_name, available_vram_gb,
             cpus, ram_gb, vram_per_gpu, unified_memory, arch, disk_free_gb, role, prio, docker_images
         ))
@@ -703,14 +728,31 @@ def register_worker():
             cursor.execute('''
                 UPDATE jobs
                 SET status = 'failed', exit_code = COALESCE(exit_code, -98)
-                WHERE worker_id = ? AND status = 'running'
+                WHERE worker_id = ? AND status = 'running' AND (parallel_mode = 0 OR parallel_mode IS NULL)
             ''', (worker_id,))
 
             cursor.execute('''
-                UPDATE jobs
-                SET status = 'pending', worker_id = NULL
-                WHERE worker_id = ? AND status = 'assigned'
+                UPDATE job_nodes
+                SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+                WHERE worker_id = ? AND status IN ('running', 'preempting')
+                AND job_id IN (SELECT job_id FROM jobs WHERE status IN ('pending', 'assigned', 'running'))
             ''', (worker_id,))
+
+            cursor.execute('''
+                UPDATE job_nodes
+                SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+                WHERE status IN ('ready', 'pending', 'running', 'preempting')
+                AND job_id IN (SELECT job_id FROM jobs WHERE status IN ('failed', 'completed'))
+            ''')
+
+            cursor.execute('''
+                UPDATE jobs
+                SET status = 'pending', worker_id = NULL,
+                    home_worker = CASE WHEN home_worker = ? THEN NULL ELSE home_worker END,
+                    active_workers = CASE WHEN home_worker = ? THEN '[]' ELSE active_workers END
+                WHERE worker_id = ? AND status = 'assigned'
+            ''', (worker_id, worker_id, worker_id))
+            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE worker_id = ?', (worker_id,))
         
         conn.commit()
 
@@ -1190,6 +1232,17 @@ def scheduler_status():
 @app.route('/job_status/<job_id>', methods=['GET'])
 def job_status(job_id):
     with get_db_conn() as conn:
+        if job_id == "_legacy_check":
+            from src.runner.registry_recovery import project_has_active_jobs
+            repo_q = request.args.get("repo", "")
+            is_local_q = request.args.get("is_local", "0") == "1"
+            has_active = project_has_active_jobs(conn, repo_q, is_local_q) if repo_q else True
+            return jsonify({
+                "job_id": "_legacy_check",
+                "status": "completed",
+                "project_has_active_jobs": bool(has_active),
+            })
+
         cursor = conn.cursor()
         cursor.execute('''
             SELECT j.*, w.service_url as worker_service_url
@@ -1209,6 +1262,7 @@ def job_status(job_id):
         count_row = cursor.fetchone()
         has_dag_nodes = bool(count_row and count_row["cnt"] > 0)
         if job_dict.get("parallel_mode") == 1 or has_dag_nodes:
+            raw_job_status = job_dict.get("status")
             agg_status = get_aggregated_job_status(job_id)
             if agg_status:
                 job_dict["status"] = agg_status
@@ -1246,6 +1300,12 @@ def job_status(job_id):
                     nd["cas_transfers"] = []
                 nodes_list.append(nd)
             job_dict["nodes"] = nodes_list
+            job_dict["waiting_for_worker"] = bool(
+                job_dict.get("started_at") is None
+                and raw_job_status in ("pending", "assigned")
+                and job_dict.get("status") not in ("completed", "failed")
+                and not any(n["status"] in ("running", "done", "failed") for n in nodes_list)
+            )
             job_dict["nodes_summary"] = [
                 {
                     "name": n["name"],
@@ -1733,6 +1793,11 @@ def update_job_status():
                 ''', (agg_status, exit_code, commit_hash, data.get('error_message'), data.get('failure_reason'), job_id))
                 cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
                 cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                cursor.execute('''
+                    UPDATE job_nodes
+                    SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+                    WHERE job_id = ? AND status IN ('ready', 'pending', 'running', 'preempting')
+                ''', (job_id,))
                 cleanup_local_archive(job_id)
             else:
                 cursor.execute('''
@@ -1858,6 +1923,11 @@ def update_job_status():
                     ''', (agg_status, exit_code, commit_hash, err_msg, failure_reason, job_id))
                     cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
                     cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                    cursor.execute('''
+                        UPDATE job_nodes
+                        SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+                        WHERE job_id = ? AND status IN ('ready', 'pending', 'running', 'preempting')
+                    ''', (job_id,))
                     cleanup_local_archive(job_id)
                 else:
                     cursor.execute('''
@@ -1882,6 +1952,11 @@ def update_job_status():
                 ''', (status, exit_code, commit_hash, err_msg, failure_reason, job_id))
                 cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (job_id,))
                 cursor.execute('DELETE FROM runner_heartbeats WHERE job_id = ?', (job_id,))
+                cursor.execute('''
+                    UPDATE job_nodes
+                    SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+                    WHERE job_id = ? AND status IN ('ready', 'pending', 'running', 'preempting')
+                ''', (job_id,))
                 cleanup_local_archive(job_id)
         else:
             cursor.execute('UPDATE jobs SET status = ? WHERE job_id = ?', (status, job_id))
@@ -1961,13 +2036,13 @@ def clean_ghosts():
 
 @app.route('/check_space', methods=['GET'])
 def check_space():
-    # Use the root of the repositories directory if it exists, else use current dir
     repo_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "repositories")
-    if not os.path.exists(repo_dir):
-        repo_dir = "."
-
-    usage = shutil.disk_usage(repo_dir)
-    free_gb = usage.free / (1024**3)
+    if os.path.exists(repo_dir) and os.name != "nt":
+        from src.runner.gc_orchestrator import get_free_space as gc_get_free_space
+        free_bytes = gc_get_free_space()
+    else:
+        free_bytes = shutil.disk_usage(repo_dir if os.path.exists(repo_dir) else ".").free
+    free_gb = free_bytes / (1024**3)
 
     return jsonify({
         "free_gb": free_gb,
@@ -3012,16 +3087,23 @@ def cleanup_inactive_viewers():
                 remote_viewers.pop(repo_name, None)
 
 def periodic_clean_ghosts():
-    """Background task to periodically clean ghost jobs."""
+    """Background task to periodically clean ghost jobs and stale local artifacts."""
     while True:
         time.sleep(60)
-        try:
-            with app.app_context():
+        with app.app_context():
+            try:
                 clean_ghosts()
-                _cleanup_stale_local_transfers()
-                _cleanup_stale_local_results()
-        except Exception as e:
-            app.logger.error(f"Error in background clean_ghosts: {e}")
+            except Exception as e:
+                app.logger.error(f"Error in background clean_ghosts: {e}")
+            for cleanup_fn in (
+                _cleanup_stale_local_transfers,
+                _cleanup_stale_local_results,
+                _cleanup_stale_local_uploads,
+            ):
+                try:
+                    cleanup_fn()
+                except Exception as e:
+                    app.logger.error(f"Error in {cleanup_fn.__name__}: {e}")
 
 @app.route('/local-view/<owner>/<repo>/')
 @app.route('/local-view/<owner>/<repo>/<path:path>')

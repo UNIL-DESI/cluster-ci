@@ -113,8 +113,40 @@ def safe_docker_rm_f(container_names, timeout=8):
         except Exception as e:
             logger.error(f"❌ Error removing container {container}: {e}")
 
-def prune_all_git_worktrees():
-    """Scans REPOS_DIR and runs `git worktree prune --expire now` on all git repositories."""
+def prune_all_git_worktrees(protected_job_id=None):
+    """Removes orphaned /tmp/cluster-ci-wt-* directories and prunes stale git worktrees in REPOS_DIR."""
+    protected_tokens = set()
+    if protected_job_id:
+        protected_tokens.add(str(protected_job_id).replace('/', '-'))
+    try:
+        with job_lock:
+            for r_id, ex in list(active_executors.items()) + list(preemption_executors.items()):
+                if r_id:
+                    protected_tokens.add(str(r_id).replace('/', '-'))
+                jid = ex.get("job_id")
+                if jid:
+                    protected_tokens.add(str(jid).replace('/', '-'))
+    except Exception:
+        pass
+
+    tmp_root = tempfile.gettempdir()
+    if tmp_root and os.path.isdir(tmp_root):
+        try:
+            for entry in os.listdir(tmp_root):
+                if not entry.startswith("cluster-ci-wt-"):
+                    continue
+                if any(tok and tok in entry for tok in protected_tokens):
+                    continue
+                wt_path = os.path.join(tmp_root, entry)
+                try:
+                    if os.path.isdir(wt_path) and not os.path.islink(wt_path):
+                        logger.info(f"🌿 [PRUNE WORKTREES] Removing orphaned worktree directory {wt_path}...")
+                        shutil.rmtree(wt_path, ignore_errors=True)
+                except Exception as e:
+                    logger.warning(f"Could not remove orphaned worktree {wt_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Error scanning {tmp_root} for orphaned worktrees: {e}")
+
     if not os.path.exists(REPOS_DIR):
         return
 
@@ -149,7 +181,7 @@ def purge_orphan_runners_and_containers(job_id=None):
     purge_ollama_vram_on_host()
     
     # Prune stale git worktrees across all local repositories
-    prune_all_git_worktrees()
+    prune_all_git_worktrees(protected_job_id=job_id)
     
     # 1. Docker JIT Container Purge
     safe_job_id = job_id.replace('/', '-') if job_id else None
@@ -161,6 +193,13 @@ def purge_orphan_runners_and_containers(job_id=None):
     active_pids = {os.getpid()}
     try:
         with job_lock:
+            if periodic_gc_pid:
+                active_pids.add(periodic_gc_pid)
+                try:
+                    for child in psutil.Process(periodic_gc_pid).children(recursive=True):
+                        active_pids.add(child.pid)
+                except Exception:
+                    pass
             for ex in active_executors.values():
                 proc_obj = ex.get("process")
                 if proc_obj and proc_obj.pid:
@@ -335,6 +374,7 @@ preemption_executors = {}  # retained until physical stop and notification succe
 preemption_in_progress = set()
 current_job_id = None
 current_process = None
+periodic_gc_pid = None
 job_lock = threading.Lock()
 startup_heartbeat_event = threading.Event()
 
@@ -350,7 +390,14 @@ def get_storage_info():
     try:
         usage = shutil.disk_usage(target_path)
         total_gb = usage.total / (1024**3)
-        available_gb = usage.free / (1024**3)
+        free_bytes = usage.free
+        try:
+            from src.runner.gc_orchestrator import get_free_space as gc_get_free_space
+            if os.path.exists(REPOS_DIR):
+                free_bytes = min(free_bytes, gc_get_free_space())
+        except Exception:
+            pass
+        available_gb = free_bytes / (1024**3)
         return total_gb, available_gb
     except Exception as e:
         logger.error(f"Error getting storage info for '{target_path}': {e}")
@@ -2586,6 +2633,44 @@ def register_signals():
 
 # Background self-healing loop has been retired and replaced by deterministic JIT purges at job execution and worker startup.
 
+def periodic_worker_gc_loop():
+    """Runs non-invasive Maintenance & System Hygiene GC every 30 minutes when worker is idle."""
+    global periodic_gc_pid
+    if os.environ.get("E2E_TEST") == "1":
+        return
+    gc_script = os.path.join(BASE_DIR, "src", "runner", "gc_orchestrator.py")
+    while not shutdown_requested:
+        time.sleep(1800)
+        if shutdown_requested:
+            break
+        with job_lock:
+            has_active = bool(active_executors or preemption_executors)
+        if has_active or not os.path.isfile(gc_script):
+            continue
+        try:
+            gc_env = os.environ.copy()
+            gc_env["HEADNODE_URL"] = HEADNODE_URL
+            gc_env["CLUSTER_TOKEN"] = CLUSTER_TOKEN or ""
+            proc = subprocess.Popen(
+                [sys.executable, gc_script, "run-transfer-gc"],
+                env=gc_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            with job_lock:
+                periodic_gc_pid = proc.pid
+            try:
+                out, _ = proc.communicate(timeout=600)
+                if proc.returncode != 0:
+                    logger.warning(f"Periodic worker GC exited with code {proc.returncode}: {(out or '')[-500:]}")
+            finally:
+                with job_lock:
+                    periodic_gc_pid = None
+        except Exception as e:
+            logger.error(f"Error in periodic_worker_gc_loop: {e}")
+
+
 def main_loop():
     global current_job_id
     # Enforce single instance lock first
@@ -2607,6 +2692,9 @@ def main_loop():
     # Start heartbeat in background thread
     threading.Thread(target=heartbeat_loop, daemon=True).start()
 
+    # Start periodic worker GC / hygiene loop
+    threading.Thread(target=periodic_worker_gc_loop, daemon=True).start()
+
     # Wait for the first heartbeat to be processed before polling for jobs
     if not startup_heartbeat_event.wait(timeout=300):
         logger.error("Timeout: Failed to synchronize initial heartbeat with headnode after 5 minutes. Shutting down worker.")
@@ -2626,7 +2714,11 @@ def main_loop():
                     _, _, gpu_cnt, _, _, _ = get_gpu_info()
                 except Exception:
                     gpu_cnt = 0
-                max_concurrent = max(1, gpu_cnt) if (gpu_cnt and gpu_cnt > 0) else int(os.environ.get("MAX_CONCURRENT_RUNNERS", "2"))
+                # Packing A11: Scheduler enforces exact CPU/RAM/VRAM/GPU slot admissibility.
+                # Never cap 1-GPU workers (e.g. GB10) at 1 executor, otherwise a home_worker
+                # waiting on a sibling machine (0 GPUs used) deadlocks polling for new jobs.
+                default_max_runners = max(4, int(gpu_cnt or 0))
+                max_concurrent = int(os.environ.get("MAX_CONCURRENT_RUNNERS", str(default_max_runners)))
                 can_accept = active_count < max_concurrent
 
             if not can_accept:

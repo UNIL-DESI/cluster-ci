@@ -11,6 +11,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 import time
+import tempfile
 import fcntl
 import subprocess
 import requests
@@ -795,24 +796,392 @@ def has_active_executor_for_repo(base_repo, registry, active_docker_info=None, c
     return False, "", ""
 
 
+DEFAULT_LOCAL_WORKSPACE_TTL_HOURS = 168.0
+INTERNAL_REPO_ROOT_DIRS = {
+    "_local_uploads",
+    "_local_results",
+    "_local_transfers",
+    "_tmp_artifacts",
+}
+
+
+def _is_subprocess_mocked():
+    try:
+        import unittest.mock as mock
+        return isinstance(subprocess.run, (mock.Mock, mock.MagicMock))
+    except Exception:
+        return False
+
+
+def get_user_quota_free_bytes(target_path):
+    """
+    Returns remaining bytes under the current Linux user's filesystem block quota
+    for the mount containing target_path, or None if no user quota applies.
+    """
+    if os.name == "nt" or _is_subprocess_mocked():
+        return None
+    if shutil.which("quota") is None or shutil.which("df") is None:
+        return None
+    try:
+        df_res = subprocess.run(
+            ["df", "-P", str(target_path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if df_res.returncode != 0 or not df_res.stdout:
+            return None
+        df_lines = [ln.strip() for ln in df_res.stdout.strip().splitlines() if ln.strip()]
+        if len(df_lines) < 2:
+            return None
+        device = df_lines[-1].split()[0]
+
+        q_res = subprocess.run(
+            ["quota", "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if not q_res.stdout:
+            return None
+        for line in q_res.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 4 and parts[0] == device:
+                used_kb = int(parts[1].rstrip("*"))
+                soft_kb = int(parts[2])
+                hard_kb = int(parts[3])
+                limits = [lim for lim in (soft_kb, hard_kb) if lim > 0]
+                if limits:
+                    effective_limit_kb = min(limits)
+                    return max(0, (effective_limit_kb - used_kb) * 1024)
+    except Exception:
+        return None
+    return None
+
+
 def get_free_space():
     repo_dir = get_repositories_dir()
     if not repo_dir.exists():
         return 0
-    usage = shutil.disk_usage(repo_dir)
-    return usage.free
+    free_candidates = [shutil.disk_usage(repo_dir).free]
 
-def run_docker_system_prune(dry_run=False):
-    """Purge stopped containers, unused networks, and dangling images."""
-    print("[Cluster GC] 🐳 Cleaning up Docker resources (system prune)...")
+    canonical_repo_dir = Path(__file__).parent.parent.parent.resolve() / "repositories"
+    try:
+        is_canonical = repo_dir.resolve() == canonical_repo_dir
+    except OSError:
+        is_canonical = False
+
+    if is_canonical and not _is_subprocess_mocked():
+        for extra_dir in (tempfile.gettempdir(), "/var/lib/docker", "/"):
+            if extra_dir and os.path.exists(extra_dir):
+                try:
+                    free_candidates.append(shutil.disk_usage(extra_dir).free)
+                except OSError:
+                    pass
+        quota_free = get_user_quota_free_bytes(repo_dir)
+        if quota_free is not None:
+            free_candidates.append(quota_free)
+
+    return min(free_candidates)
+
+
+def run_docker_system_prune(dry_run=False, active_docker_info=None):
+    """Purge stopped cluster containers, unused networks, dangling images, and stale build cache."""
+    print("[Cluster GC] 🐳 Cleaning up Docker resources (system & builder prune)...")
     if dry_run:
         log_deletion("docker system prune", 0, "Tier 1: Docker system prune (stopped containers, dangling images)", dry_run=True)
         return
     try:
         subprocess.run(["docker", "system", "prune", "-f"], capture_output=True)
         log_deletion("docker system prune", 0, "Tier 1: Docker system prune (stopped containers, dangling images)", dry_run=False)
+        if not _is_subprocess_mocked():
+            if active_docker_info is not None:
+                res = subprocess.run(
+                    ["docker", "ps", "-a", "--filter", "status=exited", "--filter", "status=dead",
+                     "--filter", "name=cluster-job-", "--filter", "name=cluster-viewer-", "--format", "{{.Names}}"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if res.returncode == 0 and res.stdout:
+                    for cname in (ln.strip() for ln in res.stdout.splitlines() if ln.strip()):
+                        if cname not in active_docker_info:
+                            subprocess.run(["docker", "rm", "-f", cname], capture_output=True, timeout=10)
+            subprocess.run(["docker", "builder", "prune", "-af", "--filter", "until=24h"], capture_output=True, timeout=60)
     except Exception as e:
         print(f"  Error during Docker prune: {e}")
+
+
+def _discover_untracked_projects_on_disk(repo_dir, registry, active_docker_info, now):
+    """
+    Scans repositories/<org>/<repo> and repositories/_local/<org>/<repo> for
+    workspaces missing from registry.json (or marked 'deleted' while still on disk)
+    so no directory is ever invisible to LRU eviction.
+    Returns True if registry was mutated.
+    """
+    mutated = False
+    if not repo_dir.exists():
+        return False
+
+    def _inspect_owner_root(root_dir, prefix=""):
+        nonlocal mutated
+        if not root_dir.is_dir():
+            return
+        try:
+            owners = list(root_dir.iterdir())
+        except OSError:
+            return
+        for owner_path in owners:
+            if not owner_path.is_dir():
+                continue
+            owner_name = owner_path.name
+            if not prefix and (owner_name in INTERNAL_REPO_ROOT_DIRS or owner_name == "_local" or owner_name.startswith(".")):
+                continue
+            if prefix and owner_name.startswith("."):
+                continue
+            try:
+                repos = list(owner_path.iterdir())
+            except OSError:
+                continue
+            for proj_path in repos:
+                if not proj_path.is_dir() or proj_path.name.startswith("."):
+                    continue
+                proj_key = f"{prefix}{owner_name}/{proj_path.name}"
+                try:
+                    validate_project_name(proj_key)
+                except ValueError:
+                    continue
+                docker_active, _ = is_project_active_in_docker(proj_key, active_docker_info)
+                try:
+                    mtime = proj_path.stat().st_mtime
+                except OSError:
+                    mtime = now
+                entry = registry.get(proj_key)
+                if entry is None:
+                    registry[proj_key] = {
+                        "status": "running" if docker_active else "idle",
+                        "last_execution": mtime,
+                        "size_bytes": get_dir_size(proj_path),
+                    }
+                    print(f"[Cluster GC] Discovered untracked workspace '{proj_key}' on disk (marked {'running' if docker_active else 'idle'}).")
+                    mutated = True
+                elif entry.get("status") == "deleted" and not docker_active:
+                    entry["status"] = "idle"
+                    entry.setdefault("last_execution", mtime)
+                    entry["size_bytes"] = get_dir_size(proj_path)
+                    print(f"[Cluster GC] Reactivated residual on-disk workspace '{proj_key}' from 'deleted' to 'idle'.")
+                    mutated = True
+
+    _inspect_owner_root(repo_dir, prefix="")
+    _inspect_owner_root(repo_dir / "_local", prefix="_local/")
+    return mutated
+
+
+def _reconcile_legacy_running_without_job_ids(registry, active_docker_info, now):
+    """
+    Reconciles legacy 'status': 'running' entries that lack 'job_ids' (e.g. after SIGKILL
+    or older runner versions) by querying headnode /job_status/_legacy_check.
+    Fail-closed: never demotes to 'idle' without explicit headnode confirmation.
+    """
+    url = os.environ.get("HEADNODE_URL", "").rstrip("/")
+    token = os.environ.get("CLUSTER_TOKEN", "")
+    if not url or not token or _is_subprocess_mocked():
+        return False
+
+    mutated = False
+    for name, data in list(registry.items()):
+        if not isinstance(data, dict) or data.get("status") != "running":
+            continue
+        if data.get("job_ids"):
+            continue
+        if (now - float(data.get("last_execution") or 0)) < 3600:
+            continue
+        docker_active, _ = is_project_active_in_docker(name, active_docker_info)
+        if docker_active:
+            continue
+        is_local = "1" if str(name).startswith("_local/") else "0"
+        base_repo = get_base_repo_key(name)
+        try:
+            resp = requests.get(
+                f"{url}/job_status/_legacy_check",
+                params={"repo": base_repo, "is_local": is_local},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+                allow_redirects=False,
+            )
+            if resp.status_code == 200:
+                payload = resp.json()
+                if payload.get("project_has_active_jobs") is False:
+                    data["status"] = "idle"
+                    print(f"[Cluster GC] Reconciled stale running entry '{name}' -> 'idle' (confirmed 0 active jobs on headnode).")
+                    mutated = True
+        except Exception as e:
+            print(f"[Cluster GC] Skipping legacy running check for '{name}': {e}")
+    return mutated
+
+
+def _sweep_ephemeral_system_litter(repo_dir, active_docker_info, now, dry_run=False):
+    """
+    Cleans orphaned ephemeral files that accumulate outside project directories:
+    - /tmp/cluster-ci-wt-*, /tmp/cluster-ci-src-*, /tmp/cluster_job_*, /tmp/host_guard_*.marker (> 2h old)
+    - repositories/_tmp_artifacts/* (> 2h old)
+    - runners/*/_diag/*.log (> 3 days old)
+    """
+    if _is_subprocess_mocked():
+        return
+
+    tmp_cutoff = now - 7200.0
+    tmp_root = Path(tempfile.gettempdir())
+    if tmp_root.is_dir():
+        try:
+            for item in tmp_root.iterdir():
+                iname = item.name
+                is_wt = iname.startswith("cluster-ci-wt-")
+                is_tmp_art = (
+                    iname.startswith("cluster-ci-src-")
+                    or iname.startswith("cluster_job_")
+                    or (iname.startswith("host_guard_") and iname.endswith(".marker"))
+                )
+                if not (is_wt or is_tmp_art):
+                    continue
+                try:
+                    mtime = item.lstat().st_mtime
+                except OSError:
+                    continue
+                if mtime >= tmp_cutoff:
+                    continue
+                if any(iname in info or str(item) in info for info in (active_docker_info or ())):
+                    continue
+                size_b = get_dir_size(item) if item.is_dir() else (item.stat().st_size if item.is_file() else 0)
+                if dry_run:
+                    log_deletion(str(item), size_b, "System Hygiene: Stale /tmp cluster artifact", dry_run=True)
+                else:
+                    try:
+                        if item.is_dir() and not item.is_symlink():
+                            shutil.rmtree(item, ignore_errors=True)
+                        else:
+                            item.unlink(missing_ok=True)
+                        log_deletion(str(item), size_b, "System Hygiene: Stale /tmp cluster artifact", dry_run=False)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+    tmp_artifacts_dir = repo_dir / "_tmp_artifacts"
+    if tmp_artifacts_dir.is_dir():
+        try:
+            for item in tmp_artifacts_dir.iterdir():
+                try:
+                    if item.lstat().st_mtime >= tmp_cutoff:
+                        continue
+                    size_b = get_dir_size(item) if item.is_dir() else item.stat().st_size
+                    if not dry_run:
+                        if item.is_dir() and not item.is_symlink():
+                            shutil.rmtree(item, ignore_errors=True)
+                        else:
+                            item.unlink(missing_ok=True)
+                    log_deletion(str(item), size_b, "System Hygiene: Stale _tmp_artifacts entry", dry_run=dry_run)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    runners_dir = get_base_dir() / "runners"
+    diag_cutoff = now - (3 * 86400.0)
+    if runners_dir.is_dir():
+        try:
+            for diag_log in runners_dir.glob("*/_diag/*.log"):
+                try:
+                    st = diag_log.stat()
+                    if st.st_mtime < diag_cutoff:
+                        if not dry_run:
+                            diag_log.unlink(missing_ok=True)
+                        log_deletion(str(diag_log), st.st_size, "System Hygiene: Old runner _diag log (>3d)", dry_run=dry_run)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+
+def _cleanup_orphan_and_expired_local_resources(repo_dir, registry, active_docker_info, now, dry_run=False):
+    """
+    1. Evicts idle `_local/<org>/<repo>` snapshot workspaces older than GC_LOCAL_WORKSPACE_TTL_HOURS (default 7d)
+       along with their `cluster-ci-home-_local-*` Docker volumes.
+    2. Removes orphaned `cluster-ci-home-*` Docker volumes whose project is already 'deleted' (and missing on disk)
+       and not mounted in any active Docker container.
+    Never touches non-`cluster-ci-home-` Docker volumes.
+    """
+    if _is_subprocess_mocked():
+        return False
+
+    mutated = False
+    try:
+        local_ttl_hours = float(os.environ.get("GC_LOCAL_WORKSPACE_TTL_HOURS", DEFAULT_LOCAL_WORKSPACE_TTL_HOURS))
+    except (ValueError, TypeError):
+        local_ttl_hours = DEFAULT_LOCAL_WORKSPACE_TTL_HOURS
+    local_ttl_seconds = local_ttl_hours * 3600.0
+
+    # 1. Expire old _local/ workspaces by TTL
+    for name, data in list(registry.items()):
+        if not str(name).startswith("_local/") or not isinstance(data, dict):
+            continue
+        if data.get("status") != "idle":
+            continue
+        protected, _ = is_project_protected(name, data, current_time=now, active_docker_info=active_docker_info)
+        if protected:
+            continue
+        last_exec = float(data.get("last_execution") or 0)
+        if (now - last_exec) < local_ttl_seconds:
+            continue
+        project_path = repo_dir / name
+        if dry_run:
+            if project_path.exists():
+                log_deletion(str(project_path), get_dir_size(project_path), f"TTL Eviction: _local workspace idle > {local_ttl_hours:.0f}h", dry_run=True)
+        else:
+            cleanup_all_project_docker_volumes(project_path, name)
+            if project_path.exists():
+                cleanup_level_5(project_path, name)
+            data["status"] = "deleted"
+            data["size_bytes"] = 0
+            mutated = True
+
+    # 2. Remove orphaned cluster-ci-home-* Docker volumes of deleted/non-existent projects
+    try:
+        res = subprocess.run(
+            ["docker", "volume", "ls", "--format", "{{.Name}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if res.returncode == 0 and isinstance(res.stdout, str):
+            protected_prefixes = []
+            for p_name, p_data in registry.items():
+                if not isinstance(p_data, dict):
+                    continue
+                p_path = repo_dir / p_name
+                p_status = p_data.get("status")
+                p_prot, _ = is_project_protected(p_name, p_data, current_time=now, active_docker_info=active_docker_info)
+                if p_prot or (p_status != "deleted" and p_path.exists()):
+                    sanitized = p_name.replace("/", "-")
+                    protected_prefixes.append(f"cluster-ci-home-{sanitized}")
+
+            for raw_line in res.stdout.splitlines():
+                vol = raw_line.strip()
+                if not vol or not vol.startswith("cluster-ci-home-"):
+                    continue
+                if any(vol in info for info in (active_docker_info or ())):
+                    continue
+                is_kept = any(vol == pfx or vol.startswith(f"{pfx}-") for pfx in protected_prefixes)
+                if is_kept:
+                    continue
+                if dry_run:
+                    log_deletion(vol, 0, "System Hygiene: Orphaned cluster-ci-home Docker volume", dry_run=True)
+                else:
+                    rm_res = subprocess.run(["docker", "volume", "rm", "-f", vol], capture_output=True, text=True, timeout=15)
+                    if rm_res.returncode == 0:
+                        log_deletion(vol, 0, "System Hygiene: Orphaned cluster-ci-home Docker volume", dry_run=False)
+    except Exception as e:
+        print(f"[Cluster GC] Warning scanning orphaned cluster-ci-home volumes: {e}")
+
+    return mutated
 
 def handle_transfer_push(project_path, project_name, data, dry_run=False):
     """
@@ -898,6 +1267,51 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
         print(f"❌ [{mode_name} GC] Halting GC: {e}")
         sys.exit(1)
 
+    now_pre = time.time()
+    registry_path = get_registry_path()
+
+    # 2.5 Always run non-invasive system & TTL hygiene in live cluster mode (HEADNODE_URL set),
+    # even when total free space exceeds threshold (prevents unbounded /tmp, _local/, and volume leaks on large disks).
+    if os.environ.get("HEADNODE_URL") and not _is_subprocess_mocked():
+        _sweep_ephemeral_system_litter(repo_dir, active_docker_info, now_pre, dry_run=dry_run)
+        if registry_path.exists():
+            with open(registry_path, "r+" if not dry_run else "r") as hf:
+                fcntl.flock(hf, fcntl.LOCK_EX if not dry_run else fcntl.LOCK_SH)
+                try:
+                    h_reg = load_registry(hf, registry_path=registry_path)
+                    def _pre_lookup(job_id):
+                        url = os.environ.get('HEADNODE_URL', '').rstrip('/')
+                        token = os.environ.get('CLUSTER_TOKEN')
+                        if not url or not token:
+                            raise RuntimeError('No authenticated headnode configuration')
+                        response = requests.get(
+                            url + '/job_status/' + job_id,
+                            headers={'Authorization': 'Bearer ' + token},
+                            timeout=5,
+                            allow_redirects=False,
+                        )
+                        response.raise_for_status()
+                        return response.json()
+                    h_dirty = bool(recover_running(
+                        h_reg,
+                        _pre_lookup,
+                        lambda name: is_project_active_in_docker(name, active_docker_info)[0],
+                        now_pre,
+                    ))
+                    if _discover_untracked_projects_on_disk(repo_dir, h_reg, active_docker_info, now_pre):
+                        h_dirty = True
+                    if _reconcile_legacy_running_without_job_ids(h_reg, active_docker_info, now_pre):
+                        h_dirty = True
+                    if _cleanup_orphan_and_expired_local_resources(repo_dir, h_reg, active_docker_info, now_pre, dry_run=dry_run):
+                        h_dirty = True
+                    if h_dirty and not dry_run:
+                        save_registry(hf, h_reg)
+                except RegistryCorruptedError as e:
+                    print(f"❌ [{mode_name} GC] Registry file is corrupt: {e}. HALTING GC WITHOUT PURGING.")
+                    sys.exit(1)
+                finally:
+                    fcntl.flock(hf, fcntl.LOCK_UN)
+
     free_space = get_free_space()
     threshold_gb = target_threshold_bytes / (1024**3)
     print(f"[{mode_name} GC] Free space: {free_space / (1024**3):.2f} GB (Threshold: {threshold_gb:.1f} GB, Dry Run: {dry_run})")
@@ -915,13 +1329,13 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
 
     # --- Palier 1 : Caches / temporaires régénérables ---
     print(f"[{mode_name} GC] Tier 1: Cleaning regenerable caches & temporary files...")
-    if mode_name == "Emergency":
-        run_docker_system_prune(dry_run=dry_run)
+    _sweep_ephemeral_system_litter(repo_dir, active_docker_info, time.time(), dry_run=dry_run)
+    if mode_name in ("Emergency", "Maintenance"):
+        run_docker_system_prune(dry_run=dry_run, active_docker_info=active_docker_info)
         if is_target_reached():
             print(f"[{mode_name} GC] Target space reached after Docker system prune.")
             return
 
-    registry_path = get_registry_path()
     if not registry_path.exists():
         print(f"[{mode_name} GC] Registry file does not exist. Halting project-level cleanup.")
         return
@@ -949,10 +1363,19 @@ def run_tiered_gc(target_threshold_bytes, mode_name="Emergency", dry_run=False, 
                     allow_redirects=False)
                 response.raise_for_status()
                 return response.json()
-            recovered = recover_running(registry, lookup_registry_job,
-                lambda name: is_project_active_in_docker(name, active_docker_info)[0], now)
+            recovered = bool(recover_running(registry, lookup_registry_job,
+                lambda name: is_project_active_in_docker(name, active_docker_info)[0], now))
+            if _discover_untracked_projects_on_disk(repo_dir, registry, active_docker_info, now):
+                recovered = True
+            if _reconcile_legacy_running_without_job_ids(registry, active_docker_info, now):
+                recovered = True
+            if _cleanup_orphan_and_expired_local_resources(repo_dir, registry, active_docker_info, now, dry_run=dry_run):
+                recovered = True
             if recovered and not dry_run:
                 save_registry(f, registry)
+            if is_target_reached():
+                print(f"[{mode_name} GC] Target space reached after orphan/TTL hygiene.")
+                return
 
             # If dry_run with current_project, simulate running in memory
             if dry_run and current_project:

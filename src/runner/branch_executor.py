@@ -1112,15 +1112,23 @@ class BranchExecutor:
         watchdog_script = Path(__file__).parent / "gpu_watchdog.sh"
         vram_limit_gb = (resources or {}).get("vram_gb") or 0.0
         marker_file = os.environ.get("HOST_GUARD_MARKER_FILE", "host_guard_killed.marker")
-        from src.runner.host_guard import purge_host_guard_marker
+        from src.runner.host_guard import (
+            executor_host_profile,
+            is_unified_memory_host,
+            purge_host_guard_marker,
+        )
         purge_host_guard_marker(workspace_dir=self.repo_dir, marker_file=marker_file)
+        # On Unified Memory (GB10), Docker --memory already enforces per-container RAM+VRAM.
+        # Pass 0 for soft VRAM limit so host-wide OS + packed sibling containers do not trigger
+        # false kills, while keeping the 12 GiB Host MemAvailable Reserve & 90% Hard Limit active.
+        watchdog_vram_arg = 0 if is_unified_memory_host(executor_host_profile()) else int(vram_limit_gb)
 
         if watchdog_script.exists() and sys.platform != "win32":
             try:
                 w_env = dict(os.environ)
                 w_env["HOST_GUARD_MARKER_FILE"] = marker_file
                 watchdog_proc = subprocess.Popen(
-                    ["bash", str(watchdog_script), self.current_container, str(int(vram_limit_gb))],
+                    ["bash", str(watchdog_script), self.current_container, str(watchdog_vram_arg)],
                     env=w_env,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1166,6 +1174,7 @@ class BranchExecutor:
         cas_transfers_for_req: Optional[List[Dict[str, Any]]] = None
         missing_deps_for_req: Optional[List[str]] = None
         outputs_for_req: Optional[List[Dict[str, Any]]] = None
+        wait_since: Optional[float] = None
 
         try:
             while self.is_running:
@@ -1203,6 +1212,11 @@ class BranchExecutor:
                 )
 
                 if action == "wait":
+                    if wait_since is None:
+                        wait_since = time.time()
+                    elif self.current_container and (time.time() - wait_since) >= 30.0:
+                        logger.info("Idle in action='wait' for >=30s; stopping container %s to free worker resources.", self.current_container)
+                        self.stop_current_container()
                     node_for_req = None
                     status_for_req = None
                     duration_for_req = 0.0
@@ -1211,8 +1225,9 @@ class BranchExecutor:
                     missing_deps_for_req = None
                     time.sleep(self.poll_interval)
                     continue
+                wait_since = None
 
-                elif action == "yield":
+                if action == "yield":
                     logger.info("Machine yielded (yield). Clean shutdown.")
                     self.stop_current_container()
                     return 0
@@ -1352,7 +1367,7 @@ class BranchExecutor:
                 attempt = resp.get("attempt") or 1
                 node_env_vars = resp.get("env_vars") or {}
 
-                node_exit_code, _ = self.execute_node_in_container(
+                node_exit_code, node_output = self.execute_node_in_container(
                     node=target_node,
                     gpu_ids_str=gpu_ids_str,
                     attempt=attempt,
@@ -1430,9 +1445,24 @@ class BranchExecutor:
                             logger.error("❌ %s", err_msg)
                             error_message_for_req = err_msg
                         else:
-                            error_message_for_req = (
-                                f"Node {target_node} failed with exit code {node_exit_code}"
-                            )
+                            ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+                            tail_lines = []
+                            for raw_ln in (node_output or "").splitlines()[-40:]:
+                                clean_ln = ansi_re.sub("", raw_ln).strip()
+                                if not clean_ln:
+                                    continue
+                                if clean_ln.startswith("ERROR: failed to reproduce"):
+                                    continue
+                                tail_lines.append(clean_ln)
+                            detail_tail = " | ".join(tail_lines[-3:]) if tail_lines else ""
+                            if detail_tail:
+                                error_message_for_req = (
+                                    f"Node {target_node} failed with exit code {node_exit_code}: {detail_tail[:600]}"
+                                )
+                            else:
+                                error_message_for_req = (
+                                    f"Node {target_node} failed with exit code {node_exit_code}"
+                                )
                     node_for_req = target_node
                     status_for_req = "failed"
                     duration_for_req = node_duration

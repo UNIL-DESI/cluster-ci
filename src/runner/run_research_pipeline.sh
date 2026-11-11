@@ -284,6 +284,7 @@ function cleanup_job_resources() {
     docker stop "${MAIN_CONTAINER_NAME}" "${VIEWER_CONTAINER_NAME}" 2>/dev/null || true
     docker rm -f "${MAIN_CONTAINER_NAME}" "${VIEWER_CONTAINER_NAME}" 2>/dev/null || true
     rm -f "${HOST_GUARD_MARKER_FILE:-host_guard_killed.marker}" 2>/dev/null || true
+    [ -n "${LOCAL_SOURCE_ARCHIVE:-}" ] && rm -f "$LOCAL_SOURCE_ARCHIVE" 2>/dev/null || true
 
     log_info "Updating metadata (idle status)..."
     if [ -n "$SAFE_JOB_ID" ]; then
@@ -316,7 +317,7 @@ if [ "$IS_LOCAL" = "1" ]; then
     mkdir -p "$BASE_DIR/$REPO_WORK_DIR"
     cd "$BASE_DIR/$REPO_WORK_DIR"
 
-    LOCAL_SOURCE_ARCHIVE=$(mktemp)
+    LOCAL_SOURCE_ARCHIVE=$(mktemp /tmp/cluster-ci-src-XXXXXX.tar.gz)
     log_info "[LOCAL MODE] Downloading code archive from $HEADNODE_URL/api/jobs/$JOB_ID/download_code..."
     if [ -n "$CLUSTER_TOKEN" ]; then
         curl -s -f -H "Authorization: Bearer $CLUSTER_TOKEN" \
@@ -976,9 +977,16 @@ log_info "Starting DVC Watchdog (background)..."
 bash "$BASE_DIR/src/runner/dvc_watchdog.sh" "${MAIN_CONTAINER_NAME}" > dvc_watchdog.log 2>&1 &
 WATCHDOG_PID=$!
 
-# GPU VRAM Watchdog: monitors nvidia-smi and kills container before driver crash
+# GPU VRAM / Host Memory Watchdog:
+# On Unified Memory (GB10), Docker --memory enforces per-container RAM+VRAM, so pass 0 for soft VRAM
+# limit to avoid false-killing stages due to host-wide OS/sibling memory while keeping 12GiB Host Reserve active.
 GPU_WATCHDOG_PID=""
-if [ "$VRAM_LIMIT" != "0" ]; then
+IS_UNIFIED_HOST=$(python3 -c 'import sys; from src.runner.host_guard import executor_host_profile, is_unified_memory_host; print("1" if is_unified_memory_host(executor_host_profile()) else "0")' 2>/dev/null || echo "0")
+if [ "$IS_UNIFIED_HOST" = "1" ]; then
+    log_info "Starting Unified Memory Host Reserve Watchdog (container ceiling enforced via cgroup)..."
+    bash "$BASE_DIR/src/runner/gpu_watchdog.sh" "${MAIN_CONTAINER_NAME}" "0" > >(tee -a gpu_watchdog.log) 2>&1 &
+    GPU_WATCHDOG_PID=$!
+elif [ "$VRAM_LIMIT" != "0" ]; then
     log_info "Starting GPU VRAM Watchdog (limit: ${VRAM_LIMIT}GB)..."
     bash "$BASE_DIR/src/runner/gpu_watchdog.sh" "${MAIN_CONTAINER_NAME}" "$VRAM_LIMIT" > >(tee -a gpu_watchdog.log) 2>&1 &
     GPU_WATCHDOG_PID=$!
@@ -1010,8 +1018,8 @@ fi
 if [ -n "$GPU_WATCHDOG_PID" ]; then
     log_info "Stopping GPU Watchdog..."
     _kill_with_timeout "$GPU_WATCHDOG_PID" 5
-    # Kill the gpu_watchdog.sh process in the pipeline (tee was $GPU_WATCHDOG_PID)
-    timeout 5 pkill -9 -f "gpu_watchdog.sh" 2>/dev/null || true
+    # Scope pkill strictly to this container's watchdog so packed sibling jobs are never affected
+    timeout 5 pkill -9 -f "gpu_watchdog.sh ${MAIN_CONTAINER_NAME}" 2>/dev/null || true
 fi
 
 if [ -n "$EXEC_RET" ] && [ "$EXEC_RET" -ne 0 ]; then

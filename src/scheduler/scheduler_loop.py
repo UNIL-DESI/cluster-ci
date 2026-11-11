@@ -301,7 +301,9 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None, e
             SELECT n.job_id, n.node_name, n.resources, n.gpu_ids, j.repo
             FROM job_nodes n
             LEFT JOIN jobs j ON n.job_id = j.job_id
-            WHERE n.worker_id = ? AND n.status IN ('running', 'preempting') AND NOT (n.job_id = ? AND n.node_name = ?)
+            WHERE n.worker_id = ? AND n.status IN ('running', 'preempting')
+            AND (j.job_id IS NULL OR j.status IN ('pending', 'assigned', 'running'))
+            AND NOT (n.job_id = ? AND n.node_name = ?)
         ''', (worker_id, exclude_node[0], exclude_node[1]))
     else:
         cursor.execute('''
@@ -309,6 +311,7 @@ def _get_worker_allocated_resources_impl(cursor, worker_id, exclude_node=None, e
             FROM job_nodes n
             LEFT JOIN jobs j ON n.job_id = j.job_id
             WHERE n.worker_id = ? AND n.status IN ('running', 'preempting')
+            AND (j.job_id IS NULL OR j.status IN ('pending', 'assigned', 'running'))
         ''', (worker_id,))
     running_nodes = cursor.fetchall()
 
@@ -1758,6 +1761,67 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
     return preempted_any
 
 
+_assigned_unstarted_since = {}
+
+
+def _reconcile_stale_assigned_and_orphan_nodes(cursor, conn):
+    """
+    1. Cleans residual non-terminal job_nodes belonging to failed/completed jobs or offline workers.
+    2. Recovers jobs stuck in 'assigned' (started_at IS NULL, 0 running/done nodes) for > 180s
+       back to 'pending' so a non-polling worker can never deadlock a job for hours.
+    """
+    cursor.execute('''
+        UPDATE job_nodes
+        SET status = 'blocked', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+        WHERE status IN ('ready', 'pending', 'running', 'preempting')
+        AND job_id IN (SELECT job_id FROM jobs WHERE status IN ('failed', 'completed'))
+    ''')
+    cursor.execute('''
+        UPDATE job_nodes
+        SET status = 'ready', worker_id = NULL, runner_id = NULL, gpu_ids = '[]', gpu_indices = '[]'
+        WHERE status IN ('running', 'preempting')
+        AND worker_id IN (
+            SELECT worker_id FROM workers
+            WHERE status = 'offline' OR last_seen < datetime('now', '-300 seconds')
+        )
+        AND job_id IN (SELECT job_id FROM jobs WHERE status IN ('pending', 'assigned', 'running'))
+    ''')
+
+    pickup_timeout_s = float(os.environ.get("CLUSTER_CI_ASSIGNED_PICKUP_TIMEOUT_S", "180"))
+    cursor.execute('''
+        SELECT j.job_id, j.worker_id, j.home_worker
+        FROM jobs j
+        WHERE j.status = 'assigned' AND j.started_at IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM job_nodes n
+            WHERE n.job_id = j.job_id AND n.status IN ('running', 'done')
+        )
+    ''')
+    unstarted_rows = [dict(r) for r in cursor.fetchall()]
+    now_mono = time.monotonic()
+    currently_unstarted = {r["job_id"] for r in unstarted_rows}
+    for old_jid in list(_assigned_unstarted_since.keys()):
+        if old_jid not in currently_unstarted:
+            _assigned_unstarted_since.pop(old_jid, None)
+
+    for row in unstarted_rows:
+        jid = row["job_id"]
+        since = _assigned_unstarted_since.setdefault(jid, now_mono)
+        if (now_mono - since) >= pickup_timeout_s:
+            logger.warning(
+                f"♻️ Job {jid} stuck in 'assigned' without worker pickup for {now_mono - since:.0f}s "
+                f"(worker={row.get('worker_id')}, home={row.get('home_worker')}). Reverting to 'pending'."
+            )
+            cursor.execute('''
+                UPDATE jobs
+                SET status = 'pending', worker_id = NULL, home_worker = NULL, active_workers = '[]'
+                WHERE job_id = ? AND status = 'assigned' AND started_at IS NULL
+            ''', (jid,))
+            cursor.execute('UPDATE workers SET assigned_job_id = NULL WHERE assigned_job_id = ?', (jid,))
+            _assigned_unstarted_since.pop(jid, None)
+    conn.commit()
+
+
 def schedule_iteration():
     """
     Exécute une itération complète de planification avec PACKING (A11) et sélection A13 :
@@ -1795,6 +1859,7 @@ def schedule_iteration():
             )
         ''')
         conn.commit()
+        _reconcile_stale_assigned_and_orphan_nodes(cursor, conn)
 
         # 1.5. Watchdog de durée
         cursor.execute('''
@@ -2238,6 +2303,11 @@ def schedule_iteration():
 def schedule_jobs():
     """Boucle continue d'ordonnancement cadencée toutes les 5 secondes."""
     last_retention_ts = 0.0
+    last_headnode_gc_ts = time.monotonic()
+    headnode_gc_proc = None
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    gc_script = os.path.join(repo_root, "src", "runner", "gc_orchestrator.py")
+
     while True:
         try:
             schedule_iteration()
@@ -2249,6 +2319,27 @@ def schedule_jobs():
                 logger.info(f"Database retention: purged {report.jobs_purged} pathological jobs")
         except Exception as e:
             logger.error(f"Error in retention periodic: {e}")
+        try:
+            if headnode_gc_proc is not None and headnode_gc_proc.poll() is not None:
+                headnode_gc_proc = None
+            now_mono = time.monotonic()
+            if (
+                os.environ.get("E2E_TEST") != "1"
+                and headnode_gc_proc is None
+                and (now_mono - last_headnode_gc_ts) >= 1800.0
+                and os.path.isfile(gc_script)
+            ):
+                last_headnode_gc_ts = now_mono
+                gc_env = os.environ.copy()
+                gc_env.setdefault("HEADNODE_URL", os.environ.get("HEADNODE_URL", "http://127.0.0.1:5000"))
+                headnode_gc_proc = subprocess.Popen(
+                    [sys.executable, gc_script, "run-transfer-gc"],
+                    env=gc_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        except Exception as e:
+            logger.error(f"Error launching periodic headnode GC: {e}")
         time.sleep(5)
 
 if __name__ == '__main__':
