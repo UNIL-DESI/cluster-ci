@@ -1376,7 +1376,7 @@ class BranchExecutor:
                 )
                 node_duration = time.time() - node_start_time
 
-                if os.environ.get('IS_LOCAL') == '1':
+                if os.environ.get('IS_LOCAL') == '1' and node_exit_code == 0:
                     from src.runner.local_workspace import preserve_runner_record
                     preserve_runner_record(record, self.headnode_url, self.cluster_token)
 
@@ -1470,6 +1470,13 @@ class BranchExecutor:
                     cas_transfers_for_req = getattr(self, "last_cas_transfers", None)
                     self.last_cas_transfers = []
                     missing_deps_for_req = None
+                    # docker exec can exit while background descendants remain.
+                    # Physically stop them before reporting failure/releasing the
+                    # reservation, archiving outputs, or starting a retry.
+                    self.stop_current_container()
+                    if os.environ.get('IS_LOCAL') == '1':
+                        from src.runner.local_workspace import preserve_runner_record
+                        preserve_runner_record(record, self.headnode_url, self.cluster_token)
 
                 self.current_node = None
 
