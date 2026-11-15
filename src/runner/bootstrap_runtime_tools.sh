@@ -7,6 +7,11 @@ TOOLS_ROOT="$CLUSTER_CI_TOOLS_ROOT"
 TOOLS_BIN="$TOOLS_ROOT/bin"
 mkdir -p "$TOOLS_BIN"
 
+# Containers of the same project/image share this prefix. Serialize first-time
+# setup, and never replace a healthy tool environment underneath a live process.
+exec 201>"$TOOLS_ROOT/bootstrap.lock"
+flock -w 600 201
+
 # Explicit paths avoid the uv shim and any broken legacy ~/.local/bin launchers.
 if ! "$TOOLS_BIN/uv" --version >/dev/null 2>&1; then
     if ! (curl -LsSf https://astral.sh/uv/install.sh |
@@ -23,9 +28,13 @@ fi
 export UV_TOOL_DIR="$TOOLS_ROOT/venvs"
 export UV_TOOL_BIN_DIR="$TOOLS_BIN"
 
-# --force also recreates missing entry points when a cached tool environment
-# survives a prior user-site cleanup. A failed bootstrap must fail the job.
-"$TOOLS_BIN/uv" tool install --force dvc --with dvc-http
-"$TOOLS_BIN/uv" tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git
-test -x "$TOOLS_BIN/dvc"
-test -x "$TOOLS_BIN/dvc-viewer"
+# Reuse valid cached installations. --force is only for initial setup or repair,
+# not every container start: it removes modules from already-running DVC jobs.
+if ! "$TOOLS_BIN/dvc" --version >/dev/null 2>&1; then
+    "$TOOLS_BIN/uv" tool install --force dvc --with dvc-http
+fi
+if ! "$TOOLS_BIN/dvc-viewer" --help >/dev/null 2>&1; then
+    "$TOOLS_BIN/uv" tool install --force git+https://github.com/UNIL-DESI/dvc-viewer.git
+fi
+"$TOOLS_BIN/dvc" --version >/dev/null
+"$TOOLS_BIN/dvc-viewer" --help >/dev/null

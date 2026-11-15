@@ -262,3 +262,44 @@ sys.exit(subprocess.run(['bash', '-c', command], env=os.environ).returncode)
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert 'VIEWER_OK' in result.stdout
+
+
+def test_new_container_does_not_replace_tools_used_by_live_job(tools_environment):
+    work, base, tools, calls, env = tools_environment
+    run(BOOTSTRAP, work, env)
+    dependency = tools / 'venvs/dvc/live_dependency.py'
+    dependency.write_text('VALUE = 123\n')
+    driver = work / 'fake_uv.py'
+    source = driver.read_text().replace("target = Path(os.environ['UV_TOOL_DIR']) / name / 'bin' / name", "import shutil\nroot = Path(os.environ['UV_TOOL_DIR']) / name\nshutil.rmtree(root, ignore_errors=True)\ntarget = root / 'bin' / name")
+    driver.write_text(source)
+    ready, release = work / 'ready', work / 'release'
+    child = subprocess.Popen([sys.executable, '-c', '''
+import sys,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[1]);Path(sys.argv[2]).touch()
+while not Path(sys.argv[3]).exists():time.sleep(.01)
+from live_dependency import VALUE
+assert VALUE == 123
+''', str(dependency.parent), str(ready), str(release)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        import time
+        until = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < until:time.sleep(.01)
+        assert ready.exists()
+        run(BOOTSTRAP, work, env)
+        release.touch()
+        stdout, stderr = child.communicate(timeout=5)
+        assert child.returncode == 0, stderr
+        assert len(calls.read_text().splitlines()) == 2
+    finally:
+        if child.poll() is None:child.kill();child.wait()
+
+
+def test_two_containers_share_one_serialized_initial_bootstrap(tools_environment):
+    work, base, tools, calls, env = tools_environment
+    processes = [subprocess.Popen(['bash', str(BOOTSTRAP)], cwd=work, env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, stderr
+    assert len(calls.read_text().splitlines()) == 2
