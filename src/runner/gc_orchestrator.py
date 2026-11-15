@@ -81,7 +81,7 @@ def get_active_docker_info():
     """
     try:
         res = subprocess.run(
-            ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Mounts}}"],
+            ["docker", "ps", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}\t{{.Mounts}}"],
             capture_output=True,
             text=True
         )
