@@ -4,21 +4,14 @@ Cluster-CI v3 enables distributed, parallel stage execution across multiple clus
 
 ---
 
-## 1. Enabling Parallel Execution
+## 1. Automatic Parallel Execution
 
-Parallel stage execution is opt-in and controlled via your `.cluster-ci` configuration file.
+Parallel DAG stage execution is **enabled automatically by default** whenever your repository contains a `dvc.yaml` pipeline — no extra flag is required in `.cluster-ci`.
 
-To enable parallel DAG scheduling, add the following flag to `.cluster-ci`:
-
-```ini
-# Enable parallel DAG scheduling across workers
-PARALLEL_STAGES=true
-```
-
-When `PARALLEL_STAGES=true` is set:
+When `dvc.yaml` is present (and `PARALLEL_STAGES` is not set to `false`):
 * The submission engine parses your `dvc.yaml` pipeline and builds an execution graph.
 * Multiple branch executors across the cluster can claim independent ready stages concurrently.
-* If omitted or set to `false`, Cluster-CI runs in legacy sequential mode (one machine per job, running `dvc repro`).
+* To explicitly fall back to legacy single-node sequential execution (`dvc repro`), add `PARALLEL_STAGES=false` to `.cluster-ci`.
 
 ---
 

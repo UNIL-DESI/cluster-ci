@@ -50,7 +50,7 @@ These parameters control resource allocation and job timeout.
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
 | `PRIORITY`<br>*(alias `DEFAULT_PRIORITY`)* | `normal` | Global scheduling priority for the job: `high`, `normal`, or `low`. Can be overridden via `cluster-run --priority` or per-stage via `meta.cluster.priority`. |
-| `PARALLEL_STAGES` | `false` | When set to `true`, enables **Parallel DAG execution** across multiple cluster workers. Independent branches of your `dvc.yaml` pipeline run concurrently on available nodes. See [Parallel DAG Execution](parallel_execution.md). |
+| `PARALLEL_STAGES` | `true` *(when `dvc.yaml` exists)* | **Parallel DAG execution** across multiple cluster workers is enabled automatically whenever `dvc.yaml` is present. Set `PARALLEL_STAGES=false` only to opt out into legacy single-node sequential mode. See [Parallel DAG Execution](parallel_execution.md). |
 | `STAGES` | *(empty — runs full pipeline)* | Comma-separated list of DVC stage names to execute (used in classic sequential mode). If empty or set to `all`, the cluster runs `dvc repro`. |
 | `ALLOWED_WORKERS` | *(empty — all workers eligible)* | Comma-separated list of worker hostnames. Only these workers will be considered for scheduling. Useful for targeting specific GPU architectures (e.g. Blackwell GB10 vs RTX 3090). Overridden by `meta.cluster.workers`. |
 

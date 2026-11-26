@@ -581,8 +581,17 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
             job_priority = "normal"
 
     # Parse PARALLEL_STAGES & execution planificateur W1 (v3)
-    parallel_stages_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
-    parallel_stages_enabled = bool(parallel_stages_match)
+    # Enabled automatically by default whenever dvc.yaml is present; opt-out with PARALLEL_STAGES=false|0.
+    ps_explicit_false = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(false|0)\b', content, re.IGNORECASE | re.MULTILINE)
+    ps_explicit_true = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
+    if ps_explicit_false:
+        parallel_stages_enabled = False
+    elif ps_explicit_true:
+        parallel_stages_enabled = True
+    else:
+        parallel_stages_enabled = bool(
+            target_repo_dir and os.path.isfile(os.path.join(os.path.abspath(target_repo_dir), "dvc.yaml"))
+        )
 
     plan = None
     if parallel_stages_enabled:

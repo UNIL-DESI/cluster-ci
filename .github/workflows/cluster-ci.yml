@@ -47,7 +47,7 @@ jobs:
 
       - name: Setup uv for Parallel Planner
         run: |
-          if [ -f .cluster-ci ] && grep -qi "PARALLEL_STAGES\s*=\s*true" .cluster-ci; then
+          if [ -f dvc.yaml ] && ! { [ -f .cluster-ci ] && grep -qiE "^\s*PARALLEL_STAGES\s*=\s*(false|0)\b" .cluster-ci; }; then
             if ! command -v uv >/dev/null 2>&1; then
               echo "Installing uv for parallel stage planning..."
               curl -LsSf https://astral.sh/uv/install.sh | sh

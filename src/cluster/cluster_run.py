@@ -1812,11 +1812,15 @@ def parse_cluster_ci_config(project_dir="."):
     if storage_match:
         storage_req = float(storage_match.group(1))
 
-    # Parse PARALLEL_STAGES
-    parallel_stages = False
-    ps_match = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
-    if ps_match:
+    # Parse PARALLEL_STAGES: enabled by default whenever dvc.yaml exists (opt-out with PARALLEL_STAGES=false|0)
+    ps_explicit_false = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(false|0)\b', content, re.IGNORECASE | re.MULTILINE)
+    ps_explicit_true = re.search(r'^\s*PARALLEL_STAGES\s*=\s*(true|1)\b', content, re.IGNORECASE | re.MULTILINE)
+    if ps_explicit_false:
+        parallel_stages = False
+    elif ps_explicit_true:
         parallel_stages = True
+    else:
+        parallel_stages = os.path.isfile(os.path.join(repo_dir, "dvc.yaml"))
 
     # Parse PRIORITY / DEFAULT_PRIORITY
     priority_req = "normal"

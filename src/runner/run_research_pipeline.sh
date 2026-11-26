@@ -460,7 +460,11 @@ RAM_LIMIT=$(grep -oE -e 'REQUIRED_RAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head 
 [ -z "$RAM_LIMIT" ] && RAM_LIMIT="2"
 log_info "RAM limit detected (placement constraint): ${RAM_LIMIT}GB"
 
-# Docker cgroups memory enforcement: the container is hard-limited to REQUIRED_RAM.
+# Extract VRAM limit from .cluster-ci (REQUIRED_VRAM=70GB) BEFORE invoking host_guard
+VRAM_LIMIT=$(grep -oE -e 'REQUIRED_VRAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head -n 1)
+[ -z "$VRAM_LIMIT" ] && VRAM_LIMIT="0"
+
+# Docker cgroups memory enforcement: the container is hard-limited to REQUIRED_RAM (or RAM+VRAM on unified memory).
 # If user code exceeds this, Docker OOM-kills the container process — NOT the host.
 # --memory-swap equal to --memory disables swap (prevents silent degradation).
 # Cluster-CI v3 (W11) - Utilisation dynamique de host_guard pour tous les conteneurs
@@ -472,11 +476,6 @@ DOCKER_RESOURCE_FLAGS=$(PYTHONPATH="${BASE_DIR}:${PYTHONPATH}" python3 -m src.ru
     --cpus "${REQUIRED_CPUS:-4}" 2>/dev/null || echo "--memory=${RAM_LIMIT}g --memory-swap=${RAM_LIMIT}g --memory-swappiness=0 --oom-score-adj=500 --cpus=${REQUIRED_CPUS:-4} --pids-limit=4096 --shm-size=2g")
 DOCKER_MEMORY_FLAG="$DOCKER_RESOURCE_FLAGS"
 log_info "Docker resource flags (host_guard enforced): $DOCKER_RESOURCE_FLAGS"
-
-# Extract VRAM limit from .cluster-ci (REQUIRED_VRAM=70GB)
-# This is enforced by the GPU watchdog (nvidia-smi monitoring), not by Docker.
-VRAM_LIMIT=$(grep -oE -e 'REQUIRED_VRAM=[0-9.]+' .cluster-ci | cut -d= -f2 | head -n 1)
-[ -z "$VRAM_LIMIT" ] && VRAM_LIMIT="0"
 
 # On unified memory systems, ALWAYS enable the watchdog even if REQUIRED_VRAM=0.
 # Use REQUIRED_RAM as the VRAM limit since RAM and VRAM share the same pool.
