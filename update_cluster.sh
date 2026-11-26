@@ -4,17 +4,19 @@ set -e
 # Parse flags
 ADD_WORKER=false
 FORCE_MODE=false
+HOT_MODE=false
 QUEUE_MODE=true
 
 for arg in "$@"; do
     case $arg in
         --add-worker) ADD_WORKER=true ;;
-        --force) FORCE_MODE=true; QUEUE_MODE=false ;;
-        --queue) QUEUE_MODE=true; FORCE_MODE=false ;;
+        --hot) HOT_MODE=true; QUEUE_MODE=false; FORCE_MODE=false ;;
+        --force) FORCE_MODE=true; QUEUE_MODE=false; HOT_MODE=false ;;
+        --queue) QUEUE_MODE=true; FORCE_MODE=false; HOT_MODE=false ;;
     esac
 done
 
-# If not in force mode, delegate to Python CLI for sovereign drainage barrier queue
+# Delegate --hot (zero-disruption) or --queue (drainage barrier) to Python CLI
 if [ "$FORCE_MODE" = false ]; then
     if command -v python3 &>/dev/null; then
         PYTHON_BIN="python3"
@@ -26,8 +28,12 @@ if [ "$FORCE_MODE" = false ]; then
 
     SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
     if [ -n "$PYTHON_BIN" ] && [ -f "$SCRIPT_DIR/scripts/cluster_update.py" ]; then
+        if [ "$HOT_MODE" = true ]; then
+            echo "🔥 Running zero-disruption hot update (preserving all running jobs)..."
+            exec "$PYTHON_BIN" "$SCRIPT_DIR/scripts/cluster_update.py" "$@"
+        fi
         echo "📋 Submitting maintenance job to queue (Drainage Barrier Mode)..."
-        echo "💡 (To bypass queue and force immediate SSH update, use: ./update_cluster.sh --force)"
+        echo "💡 (For zero-disruption live update use: ./update_cluster.sh --hot | To force kill & update use: ./update_cluster.sh --force)"
         exec "$PYTHON_BIN" "$SCRIPT_DIR/scripts/cluster_update.py" --queue "$@"
     fi
 fi

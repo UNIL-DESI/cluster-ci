@@ -129,6 +129,15 @@ The `cluster-update` CLI tool is installed into `$HOME/.local/bin/` (with a `.cm
 
 ### Execution Modes
 
+#### Zero-Disruption Hot Update Mode (`--hot`, Recommended for Live Clusters)
+Updates the Headnode control plane and all Workers immediately **without cancelling or interrupting running jobs**:
+```bash
+cluster-update --hot
+```
+*   **Instant Control-Plane Reload (~2s)**: Pulls latest `main` on the Headnode and restarts `cluster-scheduler` and `cluster-scheduler-loop`; the Web Dashboard comes back online in ~2 seconds and resumes live supervision of every running job immediately (runners automatically retry transient `next_node` / `update_job_status` calls during the ~2s blip).
+*   **Seamless Worker Hot-Reload & Re-Adoption**: `cluster-worker.service` uses `KillMode=process` and direct log-file redirection (no fragile stdout pipes, no destructive `ExecStopPost=docker rm -f`). On `--hot`, `worker_agent.py` persists active executor PIDs to `/tmp/cluster-worker-executors.json`, restarts cleanly without touching running containers, and **re-adopts** all live executors on startup before orphan reconciliation. (If upgrading a legacy pre-`KillMode=process` worker mid-job, `--hot` updates code & unit files on disk and defers the worker restart until idle so zero running jobs are killed.)
+*   **Cross-Platform**: Uses `paramiko` over SSH directly (works natively from Windows PowerShell, Linux, and macOS without `sshpass`).
+
 #### Managed Drain Mode (`--queue`, Default)
 The recommended, safe method for rolling out updates across workers:
 ```bash
@@ -151,11 +160,12 @@ cluster-update --force
 ### CLI Options Reference
 
 ```text
-cluster-update [--queue | --force] [--branch BRANCH] [--target-repo REPO] [--headnode-url URL] [--token TOKEN] [--description DESC] [--no-wait] [--add-worker HOST]
+cluster-update [--hot | --queue | --force] [--branch BRANCH] [--target-repo REPO] [--headnode-url URL] [--token TOKEN] [--description DESC] [--no-wait] [--add-worker HOST]
 ```
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
+| `--hot` | `false` | Zero-disruption SSH hot update: restarts Headnode control plane (~2s) and hot-reloads/defers workers while preserving all running jobs and resuming Dashboard supervision immediately. |
 | `--queue` | *(default)* | Submit a queued maintenance job with worker draining. |
 | `--force` | `false` | Bypass queue and execute direct SSH update across all machines. |
 | `--branch` | `main` | Target Git branch of Cluster-CI to deploy. |

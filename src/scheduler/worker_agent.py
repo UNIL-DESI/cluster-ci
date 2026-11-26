@@ -399,6 +399,267 @@ preemption_executors = {}  # retained until physical stop and notification succe
 preemption_in_progress = set()
 current_job_id = None
 current_process = None
+
+# Hot-reload & seamless executor re-adoption markers
+HOT_RELOAD_MARKER = os.environ.get("CLUSTER_WORKER_HOT_RELOAD_MARKER", "/tmp/cluster-worker-hot-reload")
+EXECUTORS_STATE_FILE = os.environ.get("CLUSTER_WORKER_STATE_FILE", "/tmp/cluster-worker-executors.json")
+PENDING_RESTART_MARKER = os.environ.get("CLUSTER_WORKER_PENDING_RESTART_MARKER", "/tmp/cluster-worker-pending-restart")
+
+
+class _AdoptedProcessAdapter:
+    """Minimal subprocess.Popen-compatible wrapper around a re-adopted live psutil.Process."""
+    def __init__(self, proc: psutil.Process):
+        self._proc = proc
+        self.pid = proc.pid
+        self._returncode = None
+
+    def poll(self):
+        if self._returncode is not None:
+            return self._returncode
+        try:
+            if not self._proc.is_running() or self._proc.status() == psutil.STATUS_ZOMBIE:
+                self._returncode = 0
+                return self._returncode
+        except psutil.NoSuchProcess:
+            self._returncode = 0
+            return self._returncode
+        return None
+
+    def terminate(self):
+        try:
+            self._proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+
+    def kill(self):
+        try:
+            self._proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+
+    def wait(self, timeout=None):
+        try:
+            rc = self._proc.wait(timeout=timeout)
+            self._returncode = 0 if rc is None else rc
+            return self._returncode
+        except psutil.NoSuchProcess:
+            self._returncode = 0
+            return 0
+
+
+def _persist_executors_state():
+    """Atomically save active executor metadata so a hot-restarted worker_agent can re-adopt live jobs."""
+    try:
+        snapshot = {}
+        for r_id, ex in active_executors.items():
+            proc = ex.get("process")
+            pid = getattr(proc, "pid", None)
+            if not pid:
+                continue
+            create_time = ex.get("create_time")
+            if create_time is None:
+                try:
+                    create_time = psutil.Process(pid).create_time()
+                except Exception:
+                    create_time = None
+            snapshot[r_id] = {
+                "runner_id": r_id,
+                "job_id": ex.get("job_id"),
+                "pid": pid,
+                "create_time": create_time,
+                "repo": ex.get("repo"),
+                "branch": ex.get("branch"),
+                "is_parallel": bool(ex.get("is_parallel")),
+                "is_local": bool(ex.get("is_local")),
+                "start_time": ex.get("start_time", time.time()),
+                "max_runtime_hours": ex.get("max_runtime_hours", 24.0),
+                "workspace_key": ex.get("workspace_key") or (("_local/" + ex.get("repo", "")) if ex.get("is_local") else ex.get("repo", "")),
+                "secrets_file": ex.get("secrets_file"),
+                "log_path": ex.get("log_path"),
+            }
+        tmp_path = EXECUTORS_STATE_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f)
+        os.replace(tmp_path, EXECUTORS_STATE_FILE)
+    except Exception as e:
+        logger.warning(f"Failed to persist active executors state for hot-reload: {e}")
+
+
+def _watch_adopted_executor(entry, proc_adapter):
+    """Supervise a re-adopted executor after worker_agent hot-reload until completion or cancellation."""
+    global current_job_id, current_process
+    runner_id = entry["runner_id"]
+    job_id = entry["job_id"]
+    is_parallel = bool(entry.get("is_parallel"))
+    workspace_key = entry.get("workspace_key") or entry.get("repo") or ""
+    secrets_file = entry.get("secrets_file")
+    max_runtime_hours = entry.get("max_runtime_hours") or 24.0
+    start_time = entry.get("start_time") or time.time()
+    timeout_seconds = max_runtime_hours * 3600
+    last_db_check = time.time()
+
+    logger.info(f"🔄 [HOT-RELOAD] Resumed supervision of adopted executor {runner_id} (job={job_id}, pid={proc_adapter.pid})")
+    try:
+        while proc_adapter.poll() is None:
+            time.sleep(2)
+            if time.time() - start_time > timeout_seconds:
+                logger.error(f"❌ [WATCHDOG] Adopted job {job_id} exceeded {max_runtime_hours}h limit. Terminating.")
+                safe_job_id = str(job_id).replace('/', '-')
+                safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+                try:
+                    parent = psutil.Process(proc_adapter.pid)
+                    for child in parent.children(recursive=True):
+                        try: child.kill()
+                        except psutil.NoSuchProcess: pass
+                    parent.kill()
+                except psutil.NoSuchProcess:
+                    pass
+                break
+
+            if time.time() - last_db_check > 10:
+                last_db_check = time.time()
+                try:
+                    resp = requests.get(f"{HEADNODE_URL}/job_status/{job_id}", headers=get_headers(), timeout=5, allow_redirects=False)
+                    if resp.status_code == 200:
+                        db_status = resp.json().get("status")
+                        if db_status not in ["running", "assigned", "completed"]:
+                            logger.warning(f"⚠️ [SELF-HEALING] Adopted job {job_id} is '{db_status}' in Headnode DB. Stopping local container/process.")
+                            safe_job_id = str(job_id).replace('/', '-')
+                            safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+                            try:
+                                parent = psutil.Process(proc_adapter.pid)
+                                for child in parent.children(recursive=True):
+                                    try: child.kill()
+                                    except psutil.NoSuchProcess: pass
+                                parent.kill()
+                            except psutil.NoSuchProcess:
+                                pass
+                            break
+                except Exception as e:
+                    logger.debug(f"[HOT-RELOAD] Transient headnode status check error for adopted job {job_id}: {e}")
+
+        # Adopted non-child process exited; inspect Headnode status so we don't clobber a natural parallel completion
+        is_preempted = False
+        with job_lock:
+            if runner_id in preempted_runner_ids:
+                is_preempted = True
+                preempted_runner_ids.discard(runner_id)
+
+        if not is_preempted:
+            # Check if job already reported terminal state (e.g. parallel branch_executor reported via next_node)
+            already_terminal = False
+            try:
+                resp = requests.get(f"{HEADNODE_URL}/job_status/{job_id}", headers=get_headers(), timeout=5, allow_redirects=False)
+                if resp.status_code == 200 and resp.json().get("status") in ("completed", "failed"):
+                    already_terminal = True
+            except Exception:
+                pass
+            if not already_terminal:
+                commit_hash = None
+                commit_file = os.path.join(REPOS_DIR, workspace_key, ".cluster-ci-commit")
+                if os.path.exists(commit_file):
+                    try:
+                        with open(commit_file, "r") as f:
+                            commit_hash = f.read().strip()
+                    except Exception:
+                        pass
+                # Check tail of log file for fatal error signature if classic job
+                exit_status = "completed"
+                exit_code = 0
+                log_path = entry.get("log_path") or os.path.join(LOGS_DIR, f"{job_id}.log")
+                if not is_parallel and os.path.isfile(log_path):
+                    try:
+                        with open(log_path, "r", encoding="utf-8", errors="replace") as lf:
+                            tail = "".join(lf.readlines()[-40:])
+                        if "❌ Error:" in tail or "Traceback (most recent call last):" in tail or "Command exited with non-zero" in tail:
+                            exit_status = "failed"
+                            exit_code = 1
+                    except Exception:
+                        pass
+                update_job_status(job_id, exit_status, exit_code, commit_hash=commit_hash, runner_id=runner_id, worker_id=WORKER_ID)
+    finally:
+        safe_job_id = str(job_id).replace('/', '-')
+        try:
+            safe_docker_rm_f([f"cluster-job-{safe_job_id}", f"cluster-viewer-{safe_job_id}"], timeout=8)
+        except Exception:
+            pass
+        if not is_parallel:
+            try: purge_ollama_vram_on_host()
+            except Exception: pass
+            kill_dvc_viewer_processes()
+        with job_lock:
+            if runner_id not in preemption_executors:
+                active_executors.pop(runner_id, None)
+            _persist_executors_state()
+            if active_executors:
+                first_active = next(iter(active_executors.values()))
+                current_job_id = first_active.get("job_id")
+                current_process = first_active.get("process")
+            else:
+                current_job_id = None
+                current_process = None
+        if secrets_file and os.path.exists(secrets_file):
+            try:
+                os.remove(secrets_file)
+            except Exception:
+                pass
+
+
+def adopt_surviving_executors():
+    """Re-adopt live executor processes persisted across a zero-disruption worker hot-reload."""
+    global current_job_id, current_process
+    if not os.path.isfile(EXECUTORS_STATE_FILE):
+        return 0
+    try:
+        with open(EXECUTORS_STATE_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f) or {}
+    except Exception as e:
+        logger.warning(f"Could not read {EXECUTORS_STATE_FILE}: {e}")
+        return 0
+
+    adopted_count = 0
+    for r_id, entry in saved.items():
+        pid = entry.get("pid")
+        saved_ctime = entry.get("create_time")
+        if not pid:
+            continue
+        try:
+            proc = psutil.Process(int(pid))
+            if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+                continue
+            if saved_ctime is not None and abs(proc.create_time() - float(saved_ctime)) > 2.0:
+                continue
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+            continue
+
+        adapter = _AdoptedProcessAdapter(proc)
+        with job_lock:
+            active_executors[r_id] = {
+                "runner_id": r_id,
+                "job_id": entry.get("job_id"),
+                "repo": entry.get("repo"),
+                "branch": entry.get("branch"),
+                "is_parallel": bool(entry.get("is_parallel")),
+                "is_local": bool(entry.get("is_local")),
+                "start_time": entry.get("start_time", time.time()),
+                "max_runtime_hours": entry.get("max_runtime_hours", 24.0),
+                "workspace_key": entry.get("workspace_key"),
+                "secrets_file": entry.get("secrets_file"),
+                "log_path": entry.get("log_path"),
+                "create_time": saved_ctime,
+                "process": adapter,
+                "adopted": True,
+            }
+            current_job_id = entry.get("job_id")
+            current_process = adapter
+        threading.Thread(target=_watch_adopted_executor, args=(entry, adapter), daemon=True).start()
+        adopted_count += 1
+
+    with job_lock:
+        _persist_executors_state()
+    if adopted_count:
+        logger.info(f"✅ [HOT-RELOAD] Re-adopted {adopted_count} live executor(s) without interruption.")
+    return adopted_count
 periodic_gc_pid = None
 job_lock = threading.Lock()
 startup_heartbeat_event = threading.Event()
@@ -1175,28 +1436,28 @@ def execute_job(job):
 
         # Publish the process atomically with creation so another startup's
         # orphan scan cannot observe an unregistered, already-running process.
+        # Write directly to log_file (no PIPE) + start_new_session so a hot-reload of
+        # worker_agent never triggers SIGPIPE or kills the running executor.
         with job_lock:
-            process = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
             if runner_id in active_executors:
                 active_executors[runner_id]["process"] = process
+                active_executors[runner_id]["max_runtime_hours"] = max_runtime_hours or 24.0
+                active_executors[runner_id]["workspace_key"] = workspace_key
+                active_executors[runner_id]["secrets_file"] = secrets_file
+                active_executors[runner_id]["log_path"] = log_path
+                try:
+                    active_executors[runner_id]["create_time"] = psutil.Process(process.pid).create_time()
+                except Exception:
+                    pass
+                _persist_executors_state()
             current_process = process
-
-        # Launch an unbuffered line-by-line real-time log streamer thread
-        import threading
-        def log_streamer():
-            try:
-                for line in process.stdout:
-                    log_file.write(line)
-                    log_file.flush()
-                    try:
-                        os.fsync(log_file.fileno())
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.error(f"Error in log streamer: {e}")
-
-        streamer_thread = threading.Thread(target=log_streamer, daemon=True)
-        streamer_thread.start()
 
         port_reported = False
         start_time = time.time()
@@ -1303,7 +1564,6 @@ def execute_job(job):
                         logger.error(f"Failed to read/report viewer port: {e}")
 
         exit_code = process.wait()
-        streamer_thread.join(timeout=10)
 
         # Try to extract the commit hash from the job's directory
         commit_hash = None
@@ -1404,6 +1664,7 @@ def execute_job(job):
         with job_lock:
             if runner_id not in preemption_executors:
                 active_executors.pop(runner_id, None)
+            _persist_executors_state()
             if active_executors:
                 first_active = next(iter(active_executors.values()))
                 current_job_id = first_active.get("job_id")
@@ -2628,9 +2889,27 @@ def cleanup_active_jobs_and_containers():
 def signal_handler(signum, frame):
     global shutdown_requested
     signame = signal.Signals(signum).name
-    logger.warning(f"⚠️ Received shutdown signal {signame} ({signum}). Starting graceful shutdown sequence...")
     shutdown_requested = True
-    
+
+    if os.path.exists(HOT_RELOAD_MARKER):
+        logger.info(f"🔄 [HOT-RELOAD] Received {signame} with hot-reload marker present; preserving all active jobs & containers.")
+        try:
+            os.remove(HOT_RELOAD_MARKER)
+        except Exception:
+            pass
+        try:
+            with job_lock:
+                _persist_executors_state()
+        except Exception as e:
+            logger.error(f"Error persisting executor state during hot-reload: {e}")
+        try:
+            release_single_instance_lock()
+        except Exception as e:
+            logger.error(f"Error releasing lock during hot-reload: {e}")
+        # Exit immediately without unwinding active execute_job() finally blocks that would tear down containers
+        os._exit(0)
+
+    logger.warning(f"⚠️ Received shutdown signal {signame} ({signum}). Starting graceful shutdown sequence...")
     try:
         cleanup_active_jobs_and_containers()
     except Exception as e:
@@ -2708,6 +2987,12 @@ def main_loop():
     # Register signal handling for graceful shutdown
     register_signals()
 
+    # Re-adopt any live executors preserved across a zero-disruption hot-reload BEFORE orphan purge
+    try:
+        adopt_surviving_executors()
+    except Exception as e:
+        logger.error(f"Failed to adopt surviving executors: {e}")
+
     # R4. Worker Startup Docker & Process Reconciliation
     logger.info("Executing startup JIT Docker and process reconciliation to clean up any orphan/zombie state...")
     try:
@@ -2739,6 +3024,14 @@ def main_loop():
                     if proc and proc.poll() is not None and r_id not in preemption_executors:
                         active_executors.pop(r_id, None)
                 active_count = len(active_executors)
+                if active_count == 0 and not preemption_executors and os.path.exists(PENDING_RESTART_MARKER):
+                    logger.info("🔄 [HOT-UPDATE] Worker is now idle and pending-restart marker is set; exiting cleanly for systemd restart.")
+                    try:
+                        os.remove(PENDING_RESTART_MARKER)
+                    except Exception:
+                        pass
+                    release_single_instance_lock()
+                    sys.exit(0)
                 try:
                     _, _, gpu_cnt, _, _, _ = get_gpu_info()
                 except Exception:

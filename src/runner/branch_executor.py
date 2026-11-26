@@ -564,9 +564,33 @@ class BranchExecutor:
         if self.cluster_token:
             headers["Authorization"] = f"Bearer {self.cluster_token}"
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with cluster_urlopen(req, timeout=30) as resp:
-            content = resp.read().decode("utf-8")
-            return json.loads(content)
+        # Bounded retry on transient connection/502/503/504 errors (e.g. 2s headnode hot-restart)
+        retry_delays = (2, 4, 6, 8, 10)
+        for attempt in range(len(retry_delays) + 1):
+            try:
+                with cluster_urlopen(req, timeout=30) as resp:
+                    content = resp.read().decode("utf-8")
+                    return json.loads(content)
+            except urllib.error.HTTPError as exc:
+                if exc.code in (502, 503, 504) and attempt < len(retry_delays):
+                    delay = retry_delays[attempt]
+                    logger.warning(
+                        "Transient HTTP %s from headnode on next_node (attempt %d/%d); retrying in %ss...",
+                        exc.code, attempt + 1, len(retry_delays) + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+            except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as exc:
+                if attempt < len(retry_delays):
+                    delay = retry_delays[attempt]
+                    logger.warning(
+                        "Transient connection error to headnode on next_node (attempt %d/%d): %s; retrying in %ss...",
+                        attempt + 1, len(retry_delays) + 1, exc, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
 
     # -----------------------------------------------------------------
     # Gestion des Dépendances Lourdes (W6 CAS Fetcher - Amendement A4)

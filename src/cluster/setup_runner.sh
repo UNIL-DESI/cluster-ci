@@ -245,7 +245,11 @@ EOF
     sudo systemctl enable cluster-scheduler cluster-scheduler-loop cluster-runner-manager
     sudo systemctl restart cluster-scheduler
     sudo systemctl restart cluster-scheduler-loop
-    sudo systemctl restart cluster-runner-manager
+    if [ "${HOT_UPDATE:-0}" = "1" ] && pgrep -f "submit_job.py" >/dev/null 2>&1; then
+        echo "ℹ️ [HOT-UPDATE] Active GHA delegation detected; keeping cluster-runner-manager running uninterrupted."
+    else
+        sudo systemctl restart cluster-runner-manager
+    fi
     if command -v setquota >/dev/null 2>&1 && mountpoint -q /home; then
         sudo setquota -u "$USER" 0 0 0 0 /home 2>/dev/null || true
     fi
@@ -264,6 +268,10 @@ EOF
         sudo systemctl restart systemd-journald 2>/dev/null || true
     fi
 
+    # Snapshot currently loaded cluster-worker unit safety BEFORE overwriting it (for zero-disruption HOT_UPDATE)
+    PREV_KILLMODE=$(systemctl show -p KillMode --value cluster-worker 2>/dev/null || echo "control-group")
+    PREV_STOPPOST=$(systemctl show -p ExecStopPost --value cluster-worker 2>/dev/null || echo "")
+
     # Also install the Worker Agent on the headnode so it can execute jobs too
     echo "⚙️ Also installing Worker Agent on headnode (dual role)..."
     cat <<EOF | sudo tee /etc/systemd/system/cluster-worker.service
@@ -275,14 +283,14 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+KillMode=process
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 Environment="PATH=$BASE_DIR/.venv/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
-ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always
-RestartSec=10
+RestartSec=5
 TimeoutStopSec=30
 
 [Install]
@@ -327,12 +335,27 @@ EOF_CGROUP
 
     sudo systemctl daemon-reload
     sudo systemctl enable cluster-worker
-    sudo systemctl restart cluster-worker
+    ACTIVE_JOB_CONTAINERS=$(docker ps -q --filter name=cluster-job- 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${HOT_UPDATE:-0}" = "1" ] && [ "${ACTIVE_JOB_CONTAINERS:-0}" -gt 0 ]; then
+        if [ "$PREV_KILLMODE" = "process" ] && ! echo "$PREV_STOPPOST" | grep -q "docker rm"; then
+            echo "🔄 [HOT-UPDATE] Hot-reloading headnode cluster-worker while preserving $ACTIVE_JOB_CONTAINERS active container(s)..."
+            touch /tmp/cluster-worker-hot-reload
+            sudo systemctl restart cluster-worker
+        else
+            echo "⏳ [HOT-UPDATE] Legacy headnode cluster-worker has $ACTIVE_JOB_CONTAINERS active container(s); deferring worker restart until idle (unit upgraded to KillMode=process for future hot-reloads)."
+            touch /tmp/cluster-worker-pending-restart
+        fi
+    else
+        sudo systemctl restart cluster-worker
+    fi
     echo "🚀 Worker Agent also started on headnode (dual mode)."
 
 else
     echo "⚙️ Configuring Worker Agent..."
     uv pip install -e $BASE_DIR
+
+    PREV_KILLMODE=$(systemctl show -p KillMode --value cluster-worker 2>/dev/null || echo "control-group")
+    PREV_STOPPOST=$(systemctl show -p ExecStopPost --value cluster-worker 2>/dev/null || echo "")
 
     cat <<EOF | sudo tee /etc/systemd/system/cluster-worker.service
 [Unit]
@@ -343,36 +366,53 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+KillMode=process
 User=$USER
 WorkingDirectory=$BASE_DIR
 EnvironmentFile=$BASE_DIR/.env
 Environment="PATH=$BASE_DIR/.venv/bin:$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 ExecStart=$(uv python find) $BASE_DIR/src/scheduler/worker_agent.py
-ExecStopPost=/bin/bash -c 'docker rm -f \$(docker ps -q --filter name=cluster-job- 2>/dev/null) 2>/dev/null; docker rm -f \$(docker ps -q --filter name=cluster-viewer- 2>/dev/null) 2>/dev/null; exit 0'
 Restart=always
-RestartSec=10
+RestartSec=5
 TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Pre-restart cleanup: kill ALL running cluster containers to avoid orphans
-    echo "🧹 Pre-restart cleanup: Stopping all running cluster containers..."
-    running_jobs=$(docker ps -q --filter name=cluster-job- 2>/dev/null)
-    running_viewers=$(docker ps -q --filter name=cluster-viewer- 2>/dev/null)
-    if [ -n "$running_jobs" ] || [ -n "$running_viewers" ]; then
-        echo "⚠️  Active containers detected. Force-killing before restart..."
-        [ -n "$running_jobs" ] && docker rm -f $running_jobs 2>/dev/null || true
-        [ -n "$running_viewers" ] && docker rm -f $running_viewers 2>/dev/null || true
-        echo "✅ All cluster containers destroyed."
+    ACTIVE_JOB_CONTAINERS=$(docker ps -q --filter name=cluster-job- 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${HOT_UPDATE:-0}" = "1" ]; then
+        sudo systemctl daemon-reload
+        sudo systemctl enable cluster-worker
+        if [ "${ACTIVE_JOB_CONTAINERS:-0}" -eq 0 ]; then
+            sudo systemctl restart cluster-worker
+            echo "🚀 [HOT-UPDATE] Idle worker restarted on updated code."
+        elif [ "$PREV_KILLMODE" = "process" ] && ! echo "$PREV_STOPPOST" | grep -q "docker rm"; then
+            echo "🔄 [HOT-UPDATE] Hot-reloading cluster-worker while preserving $ACTIVE_JOB_CONTAINERS active container(s)..."
+            touch /tmp/cluster-worker-hot-reload
+            sudo systemctl restart cluster-worker
+        else
+            echo "⏳ [HOT-UPDATE] Legacy cluster-worker has $ACTIVE_JOB_CONTAINERS active container(s); deferring worker restart until idle (unit upgraded to KillMode=process for future hot-reloads)."
+            touch /tmp/cluster-worker-pending-restart
+        fi
     else
-        echo "✅ No active cluster containers."
-    fi
+        # Pre-restart cleanup: kill ALL running cluster containers to avoid orphans
+        echo "🧹 Pre-restart cleanup: Stopping all running cluster containers..."
+        running_jobs=$(docker ps -q --filter name=cluster-job- 2>/dev/null)
+        running_viewers=$(docker ps -q --filter name=cluster-viewer- 2>/dev/null)
+        if [ -n "$running_jobs" ] || [ -n "$running_viewers" ]; then
+            echo "⚠️  Active containers detected. Force-killing before restart..."
+            [ -n "$running_jobs" ] && docker rm -f $running_jobs 2>/dev/null || true
+            [ -n "$running_viewers" ] && docker rm -f $running_viewers 2>/dev/null || true
+            echo "✅ All cluster containers destroyed."
+        else
+            echo "✅ No active cluster containers."
+        fi
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable cluster-worker
-    sudo systemctl restart cluster-worker
+        sudo systemctl daemon-reload
+        sudo systemctl enable cluster-worker
+        sudo systemctl restart cluster-worker
+    fi
     echo "🚀 Worker Agent service installed and started."
 fi
 echo "   Useful commands:"
