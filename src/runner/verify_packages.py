@@ -118,7 +118,7 @@ def _run_subprocess_check(
     ensure image packages are not shadowed by user-site in R1, and verify that modules
     can actually be imported without runtime or dependency errors.
     """
-    child_code = """
+    child_code = r"""
 import sys
 import json
 import importlib
@@ -138,27 +138,29 @@ mismatches = []
 
 def get_importable_modules(dist, pkg_name):
     modules = []
-    try:
-        mapping = importlib.metadata.packages_distributions()
-        norm = re.sub(r"[-_.]+", "-", pkg_name).lower()
-        for mod, dists in mapping.items():
-            if not mod or mod.startswith("_"):
-                continue
-            for d in dists:
-                if re.sub(r"[-_.]+", "-", d).lower() == norm:
-                    if mod not in modules:
-                        modules.append(mod)
-    except Exception:
-        pass
-
-    if not modules and dist is not None:
+    if dist is not None:
         try:
             top_level = dist.read_text("top_level.txt")
             if top_level:
                 for line in top_level.splitlines():
-                    name = line.strip().split("/")[0]
+                    name = line.strip().split("/")[0].split("\\")[0]
                     if name and not name.startswith("#") and not name.startswith("_") and name not in modules:
                         modules.append(name)
+        except Exception:
+            pass
+
+    if not modules:
+        try:
+            mapping = importlib.metadata.packages_distributions()
+            norm = re.sub(r"[-_.]+", "-", pkg_name).lower()
+            for mod, dists in mapping.items():
+                if not mod or mod.startswith("_"):
+                    continue
+                clean_mod = mod.split("/")[0].split("\\")[0]
+                for d in dists:
+                    if re.sub(r"[-_.]+", "-", d).lower() == norm:
+                        if clean_mod and not clean_mod.startswith("_") and clean_mod not in modules:
+                            modules.append(clean_mod)
         except Exception:
             pass
 
