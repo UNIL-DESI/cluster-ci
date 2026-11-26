@@ -1820,7 +1820,7 @@ def parse_cluster_ci_config(project_dir="."):
     elif ps_explicit_true:
         parallel_stages = True
     else:
-        parallel_stages = os.path.isfile(os.path.join(repo_dir, "dvc.yaml"))
+        parallel_stages = os.path.isfile(os.path.join(project_dir, "dvc.yaml"))
 
     # Parse PRIORITY / DEFAULT_PRIORITY
     priority_req = "normal"
