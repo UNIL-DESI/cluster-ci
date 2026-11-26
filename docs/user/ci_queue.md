@@ -62,7 +62,7 @@ Cluster-CI supports two scheduling modes depending on the `PARALLEL_STAGES` conf
 Cluster-CI evaluates all pending and ready execution nodes using a deterministic, 6-level hierarchical sort key (`src/scheduler/scheduling_order.py`):
 
 1. **Executable Status**: `ready` nodes (status rank `0`) are evaluated before unready `pending` nodes (status rank `1`).
-2. **Job Priority Level**: `high` priority (rank `0`) > `normal` priority (rank `1`) > `low` priority (rank `2`).
+2. **Job Priority Level**: `high` priority (rank `0`) > `normal` priority (rank `1`) > `low` priority (rank `2`) > `extra_low` priority (rank `3`).
 3. **User Machine Fairness**: A researcher currently holding **0 active physical machines** is prioritized over a researcher already occupying $\ge 1$ machines (`jobs.username` machine count).
 4. **FIFO Arrival Order**: Older submissions are scheduled first based on submission timestamp (`jobs.created_at ASC`).
 5. **Warm Container Affinity & DAG Depth**:
@@ -115,19 +115,27 @@ flowchart TD
    * **Home Worker**: If no node is ready, it waits (`action: "wait"`).
    * **Additional Worker**: If no node is ready, it yields immediately (`action: "yield"`), ensuring no idle workers are hoarded.
 
-### Targeted High-Priority Preemption Engine
-To guarantee urgent turnaround for critical experiments without cluster starvation, Cluster-CI implements an active, targeted preemption engine (`src/scheduler/scheduler_loop.py:1483-1579`):
+### Targeted Priority Preemption Engine (`high`, `normal`, `low`, `extra_low`)
+To guarantee fast turnaround for interactive and urgent experiments while still filling idle GPU time with long checkpointed runs, Cluster-CI implements a 4-level priority and targeted preemption engine (`src/scheduler/scheduler_loop.py`):
 
-* **Trigger Condition**: A `high` priority node is in `ready` state, but no eligible worker machine can accommodate it with the currently available CPU, RAM, or GPU resources.
+| Priority | Queue Rank | Can Preempt | Can Be Preempted By | Ideal Use Case |
+| :--- | :---: | :--- | :--- | :--- |
+| **`high`** | `0` | `extra_low` (first), `low` | *(Immune)* | Urgent deadlines, short validation runs. |
+| **`normal`** *(default)* | `1` | `extra_low` only | *(Immune)* | Standard research pipelines and iterative development. |
+| **`low`** | `2` | *(None)* | `high` *(cross-user only, immune after 5 preemptions)* | Overnight sweeps and secondary experiments. |
+| **`extra_low`** | `3` | *(None)* | Any `normal` or `high` job *(including same user, always preemptible)* | Very long, resilient background jobs with regular checkpoints (`persist: true`). |
+
+* **Trigger Condition**: A `high` or `normal` priority node is in `ready` state (or classic `pending`), but no eligible worker machine can accommodate it with the currently available CPU, RAM, or GPU resources.
 * **Target Victim Selection**:
-    1. **Strict Priority Inversion**: The running stage must have priority strictly equal to `low` (`normal` and `high` running jobs are completely immune to preemption).
-    2. **Cross-User Isolation**: Preemption operates strictly across different researchers: $U_{\text{requester}} \neq U_{\text{victim}}$. A user's high-priority run never preempts their own running low-priority stages.
-    3. **Anti-Starvation Bound**: The candidate stage must have been preempted fewer than 5 times ($N_{\text{preempt}} < 5$). Once a stage reaches 5 preemptions, it gains absolute immunity against further evictions.
-    4. **Minimizing Lost Compute**: Among eligible candidates, the scheduler picks the most recently started job (`started_at DESC`), preserving long-running computation.
-    5. **Hardware Admissibility**: The physical machine released by the victim must satisfy the hardware requirements of the requesting `high` priority node.
+    1. **Priority Matrix**: `high` requesters evict running `extra_low` stages first and `low` stages second; `normal` requesters evict running `extra_low` stages only (`low`, `normal`, and `high` remain completely immune to `normal` jobs).
+    2. **Isolation & Anti-Starvation**:
+        * For `low` victims: strict cross-user isolation ($U_{\text{requester}} \neq U_{\text{victim}}$) and anti-starvation immunity once $N_{\text{preempt}} \ge 5$.
+        * For `extra_low` victims: preemptible by **any** distinct `normal` or `high` job (even owned by the same user) with **no preemption cap**, making `extra_low` ideal for multi-day checkpointed workloads that yield cleanly whenever higher-priority work arrives.
+    3. **Minimizing Lost Compute**: Within the same victim priority level, the scheduler picks the most recently started job (`started_at DESC`), preserving long-running computation.
+    4. **Hardware Admissibility**: The physical machine released by the victim must satisfy the hardware requirements of the requesting node.
 * **Graceful Eviction Protocol**:
     1. The scheduler invokes `POST /api/worker/preempt_runner/<runner_id>`.
-    2. The worker agent sends `SIGTERM` to the container process, granting a **30-second graceful termination window** to checkpoint intermediate artifacts (`src/runner/worker_agent.py:1578-1597`), followed by `SIGKILL` if still unresponsive.
+    2. The worker agent sends `SIGTERM` to the container process, granting a **30-second graceful termination window** to save checkpoints and intermediate artifacts (`src/scheduler/worker_agent.py`), followed by `SIGKILL` if still unresponsive.
     3. The preempted stage is immediately and transparently requeued to `ready` status with `preempt_count += 1`, `preempted_by = "<job_id>:<node_name>"`, and timestamp `preempted_at`.
     4. **Zero Penalty Guarantee**: Preemption is not an error; it incurs no failure status, leaves `retry_count` and `attempt` intact, and leaves zero error codes.
 

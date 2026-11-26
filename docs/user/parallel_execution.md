@@ -77,7 +77,7 @@ When independent stages in a DAG become ready simultaneously and idle worker cap
 
 To guarantee cluster-wide fairness and prevent monopolization, competing jobs requesting extra workers are ranked using the canonical `extra_worker_sort_key` (`src/scheduler/scheduling_order.py:224-245` and `scheduler_loop.py:2095-2121`):
 
-1. **Job Priority Level**: Jobs with `high` priority take precedence over `normal`, which take precedence over `low` (`priority_val`: `high` = 0, `normal` = 1, `low` = 2).
+1. **Job Priority Level**: Jobs with `high` priority take precedence over `normal`, which take precedence over `low`, which take precedence over `extra_low` (`priority_val`: `high` = 0, `normal` = 1, `low` = 2, `extra_low` = 3).
 2. **Machine Allocation Fairness**: Prefers the job holding the fewest active worker machines (`len(current_active_workers)` ASC).
 3. **User Machine Balance**: Prefers the user with fewer total physical machines currently occupied across all their jobs (`user_machine_counts` ASC).
 4. **FIFO Ready Timestamp**: Prefers the job whose oldest ready stage has been waiting the longest (`oldest_ready_node_time ASC`).

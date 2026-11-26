@@ -7,7 +7,7 @@ Remplace queue_helper.py. Utilisé par :
 
 Règles d'ordonnancement unifiées :
 1. Statut exécutable : ready (0) avant pending (1).
-2. Priorité multi-niveaux : high (0) avant normal (1) avant low (2).
+2. Priorité multi-niveaux : high (0) avant normal (1) avant low (2) avant extra_low (3).
 3. Équité utilisateur : un utilisateur détenant 0 machine physique attribuée
    passe avant un utilisateur qui en détient déjà (champ jobs.username).
 4. FIFO : date de création du job (created_at ASC).
@@ -31,11 +31,12 @@ PRIORITY_ORDER = {
     "high": 0,
     "normal": 1,
     "low": 2,
+    "extra_low": 3,
 }
 
 
 def get_priority_rank(priority: Optional[str]) -> int:
-    """Retourne le rang numérique d'une priorité (0=high, 1=normal, 2=low)."""
+    """Retourne le rang numérique d'une priorité (0=high, 1=normal, 2=low, 3=extra_low)."""
     if not priority:
         return 1
     return PRIORITY_ORDER.get(str(priority).strip().lower(), 1)
@@ -116,7 +117,7 @@ def scheduling_node_sort_key(
     """Clé de tri canonique et unifiée pour la sélection des nœuds (ordre ascendant).
 
     1. Statut exécutable : ready (0) avant pending (1).
-    2. Priorité : high (0) avant normal (1) avant low (2).
+    2. Priorité : high (0) avant normal (1) avant low (2) avant extra_low (3).
     3. Équité utilisateur : nombre de machines physiques occupées par l'utilisateur (0 avant >= 1).
     4. FIFO jobs : job_created_at ASC.
     5. Affinité conteneur chaud & profondeur DAG :
@@ -190,7 +191,7 @@ def job_sort_key(
 ) -> Tuple[int, int, str]:
     """Clé de tri canonique pour l'ordonnancement des jobs.
 
-    1. Priorité job : high (0) avant normal (1) avant low (2).
+    1. Priorité job : high (0) avant normal (1) avant low (2) avant extra_low (3).
     2. Équité utilisateur : nombre de machines physiques occupées (0 avant >= 1).
     3. FIFO : created_at ASC.
     """
@@ -229,7 +230,7 @@ def extra_worker_sort_key(
     data_affinity_score: float = 0.0,
 ) -> Tuple[int, int, int, str, float]:
     """Clé de tri canonique pour l'attribution d'une machine supplémentaire à un job parallèle :
-    1. Priorité job (high > normal > low)
+    1. Priorité job (high > normal > low > extra_low)
     2. Équité machine (nombre de machines déjà attribuées au job ASC)
     3. Équité utilisateur (nombre de machines détenues par l'utilisateur ASC)
     4. FIFO / ancienneté du nœud prêt

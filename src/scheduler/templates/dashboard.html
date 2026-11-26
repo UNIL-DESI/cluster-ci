@@ -2573,6 +2573,8 @@
                 return `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size:0.68rem; padding: 1px 6px;"><i class="bi bi-arrow-up-circle-fill me-1"></i>high</span>`;
             } else if (prio === 'low') {
                 return `<span class="badge bg-light text-muted border" style="font-size:0.68rem; padding: 1px 6px;"><i class="bi bi-arrow-down-circle me-1"></i>low</span>`;
+            } else if (prio === 'extra_low') {
+                return `<span class="badge bg-light text-secondary border" style="font-size:0.68rem; padding: 1px 6px; border-style: dashed !important;" title="Lowest priority: always preemptible by normal or high jobs"><i class="bi bi-chevron-double-down me-1"></i>extra_low</span>`;
             }
             return `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle" style="font-size:0.68rem; padding: 1px 6px;">normal</span>`;
         }

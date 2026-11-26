@@ -44,6 +44,7 @@ DEFAULT_RAM_GB: float = float(DEFAULT_RESOURCES["ram_gb"])
 DEFAULT_VRAM_GB: float = float(DEFAULT_RESOURCES["vram_gb"])
 DEFAULT_STORAGE_GB: float = float(DEFAULT_RESOURCES["storage_gb"])
 DEFAULT_SCHEDULING_PRIORITY: str = str(DEFAULT_RESOURCES["priority"])
+VALID_SCHEDULING_PRIORITIES = ("high", "normal", "low", "extra_low")
 ALLOWED_RESOURCE_KEYS = ALLOWED_CLUSTER_KEYS
 
 # Constantes opérationnelles propres à l'ordonnanceur Cluster-CI v3
@@ -164,13 +165,13 @@ def parse_project_cluster_ci(repo_path: str) -> Dict[str, Any]:
     m_priority = re.search(r'^\s*(?:DEFAULT_PRIORITY|PRIORITY)\s*=\s*(.+)', content, re.MULTILINE)
     if m_priority:
         raw_prio = m_priority.group(1).split("#")[0].strip().strip('"\'').lower()
-        if raw_prio in ("high", "normal", "low"):
+        if raw_prio in VALID_SCHEDULING_PRIORITIES:
             overrides["priority"] = raw_prio
         else:
             raise ValueError(
                 f"Fichier .cluster-ci : valeur invalide pour PRIORITY : {raw_prio!r}. "
-                f"Cause : la priorité doit être 'high', 'normal' ou 'low'. "
-                f"Remède : spécifiez PRIORITY=high, normal ou low dans .cluster-ci."
+                f"Cause : la priorité doit être 'high', 'normal', 'low' ou 'extra_low'. "
+                f"Remède : spécifiez PRIORITY=high, normal, low ou extra_low dans .cluster-ci."
             )
 
     return overrides
@@ -258,11 +259,11 @@ def validate_and_resolve_resources(
 
         if "priority" in meta_cluster:
             val = meta_cluster["priority"]
-            if not isinstance(val, str) or val not in ("high", "normal", "low"):
+            if not isinstance(val, str) or val not in VALID_SCHEDULING_PRIORITIES:
                 raise ValueError(
                     f"Fichier dvc.yaml, stage '{stage_name}' : valeur invalide pour 'meta.cluster.priority' : {val!r}. "
-                    f"Cause : la priorité doit être 'high', 'normal' ou 'low'. "
-                    f"Remède : définissez 'priority: high', 'priority: normal' ou 'priority: low' sous meta.cluster dans dvc.yaml (défaut : 'normal')."
+                    f"Cause : la priorité doit être 'high', 'normal', 'low' ou 'extra_low'. "
+                    f"Remède : définissez 'priority: high', 'priority: normal', 'priority: low' ou 'priority: extra_low' sous meta.cluster dans dvc.yaml (défaut : 'normal')."
                 )
 
     resolved: Dict[str, Any] = {}

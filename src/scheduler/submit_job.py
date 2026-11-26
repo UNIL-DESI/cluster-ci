@@ -565,17 +565,17 @@ def submit_job(headnode_url, repo, branch, gh_token=None, env_vars=None, commit_
     job_priority = priority
     if job_priority is not None:
         job_priority = str(job_priority).strip().lower()
-        if job_priority not in ("high", "normal", "low"):
-            print(f"❌ Error: Invalid priority '{priority}'. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+        if job_priority not in ("high", "normal", "low", "extra_low"):
+            print(f"❌ Error: Invalid priority '{priority}'. Must be 'high', 'normal', 'low', or 'extra_low'.", file=sys.stderr)
             sys.exit(1)
     else:
         prio_match = re.search(r'^\s*(?:DEFAULT_PRIORITY|PRIORITY)\s*=\s*(.+)', content, re.MULTILINE)
         if prio_match:
             raw_p = prio_match.group(1).split("#")[0].strip().strip('"\'').lower()
-            if raw_p in ("high", "normal", "low"):
+            if raw_p in ("high", "normal", "low", "extra_low"):
                 job_priority = raw_p
             else:
-                print(f"❌ Error: Invalid PRIORITY in .cluster-ci: {raw_p}. Must be 'high', 'normal', or 'low'.", file=sys.stderr)
+                print(f"❌ Error: Invalid PRIORITY in .cluster-ci: {raw_p}. Must be 'high', 'normal', 'low', or 'extra_low'.", file=sys.stderr)
                 sys.exit(1)
         else:
             job_priority = "normal"
@@ -1324,8 +1324,8 @@ if __name__ == '__main__':
     parser.add_argument("--stages", nargs="*", default=None, help="Target stage(s) to restrict the execution plan to (STAGES)")
     parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
                         help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
-    parser.add_argument("--priority", choices=["high", "normal", "low"], default=None,
-                        help="Scheduling priority for the job (high, normal, low)")
+    parser.add_argument("--priority", choices=["high", "normal", "low", "extra_low"], default=None,
+                        help="Scheduling priority for the job (high, normal, low, extra_low)")
 
     args = parser.parse_args()
 

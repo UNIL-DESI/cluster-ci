@@ -81,6 +81,12 @@ if git log -1 --format=%B 2>/dev/null | grep -q "\[skip-code-invalidation\]"; th
     export SKIP_CODE_INVALIDATION=1
 fi
 
+# Detect commit message tag [priority=<level>] injected by `cluster-run --priority`
+COMMIT_PRIORITY=$(git log -1 --format=%B 2>/dev/null | sed -n 's/.*\[priority=\([a-zA-Z0-9_-]*\)\].*/\1/p' | head -n 1)
+if [ -n "$COMMIT_PRIORITY" ]; then
+    log_info "Detected [priority=${COMMIT_PRIORITY}] in commit message."
+fi
+
 # Go to cluster-ci project root
 SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
 BASE_DIR="$( cd "$( dirname "$SCRIPT_PATH" )/../.." >/dev/null 2>&1 && pwd )"
@@ -199,13 +205,15 @@ if [ "$CLUSTER_CI_MODE" != "executor" ]; then
     trap 'echo "🛑 Bash received termination signal. Waiting for python to gracefully cancel the job..."; cleanup_delegation' TERM INT EXIT
 
     set +e
+    SUBMIT_ARGS=("$TARGET_REPO" "$TARGET_BRANCH" "--repo-dir" "$CALLER_WORKSPACE_DIR")
     if [ -n "$GH_TOKEN" ]; then
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --gh-token "$GH_TOKEN" --repo-dir "$CALLER_WORKSPACE_DIR" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
-        SUBMIT_RET=${PIPESTATUS[0]}
-    else
-        python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "$TARGET_REPO" "$TARGET_BRANCH" --repo-dir "$CALLER_WORKSPACE_DIR" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
-        SUBMIT_RET=${PIPESTATUS[0]}
+        SUBMIT_ARGS+=("--gh-token" "$GH_TOKEN")
     fi
+    if [ -n "$COMMIT_PRIORITY" ]; then
+        SUBMIT_ARGS+=("--priority" "$COMMIT_PRIORITY")
+    fi
+    python3 -u "$BASE_DIR/src/scheduler/submit_job.py" "${SUBMIT_ARGS[@]}" 2>&1 | stdbuf -oL -eL tee "$LOG_FILE"
+    SUBMIT_RET=${PIPESTATUS[0]}
     set -e
 
     cleanup_delegation

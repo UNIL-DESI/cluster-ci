@@ -35,7 +35,8 @@ Tracks jobs currently running on the cluster:
     - **Priority Badges**: Distinct visual badges for job and stage priority:
         * `high`: Red badge with priority arrow icon (`bi-arrow-up-circle-fill`).
         * `normal`: Standard muted grey badge.
-        * `low`: Subtle outlined light badge.
+        * `low`: Subtle outlined light badge (`bi-arrow-down-circle`).
+        * `extra_low`: Dashed outlined muted badge (`bi-chevron-double-down`) indicating lowest priority, preemptible by any `normal` or `high` job.
     - **Preemption Telemetry**: If a stage was evicted to yield resources to a higher-priority job, a prominent yellow badge `⚡ Preempted: N` appears (`templates/dashboard.html:623`), tracking the exact number of times the stage was gracefully requeued.
 *   **Stage Card User Attribution**: Each stage card prominently identifies the owner's `username` alongside `repo @branch` (`dashboard.html:649`), ensuring transparency across multi-tenant cluster activity.
 *   **Control Actions**:

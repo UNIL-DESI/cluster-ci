@@ -1065,8 +1065,8 @@ def submit_job():
         scheduling_priority = raw_prio.strip().lower()
     else:
         scheduling_priority = "normal"
-    if scheduling_priority not in ("high", "normal", "low"):
-        return jsonify({"error": f"Invalid priority: {raw_prio}. Must be 'high', 'normal', or 'low'"}), 400
+    if scheduling_priority not in ("high", "normal", "low", "extra_low"):
+        return jsonify({"error": f"Invalid priority: {raw_prio}. Must be 'high', 'normal', 'low', or 'extra_low'"}), 400
 
     # 2. Insert new job
     plan_json_str = json.dumps(plan) if plan else None
@@ -1566,7 +1566,9 @@ def worker_poll(worker_id):
                 WHEN j.job_id = (SELECT assigned_job_id FROM workers WHERE worker_id = ?) THEN 0
                 WHEN j.scheduling_priority = 'high' THEN 1
                 WHEN j.scheduling_priority = 'normal' OR j.scheduling_priority IS NULL THEN 2
-                ELSE 3
+                WHEN j.scheduling_priority = 'low' THEN 3
+                WHEN j.scheduling_priority = 'extra_low' THEN 4
+                ELSE 2
             END) ASC, j.created_at ASC
         ''', (worker_id, worker_id, f'%"{worker_id}"%', worker_id))
         jobs = cursor.fetchall()

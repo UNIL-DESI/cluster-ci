@@ -117,7 +117,7 @@ Cluster-CI streams logs from the executing container back to your terminal in re
 The `cluster-run` CLI accepts the following arguments according to its command-line specification:
 
 ```text
-cluster-run [command] [run_id] [--local] [--priority {high,normal,low}] [--skip-code-invalidation]
+cluster-run [command] [run_id] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
 ```
 
 | Argument / Flag | Type / Values | Description |
@@ -125,7 +125,7 @@ cluster-run [command] [run_id] [--local] [--priority {high,normal,low}] [--skip-
 | `command` | `list`, `view`, `cancel`, `sync`, `attach` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
 | `run_id` | `string` *(optional)* | Target GitHub Actions run ID or local job ID for `view`, `cancel`, or `attach`. |
 | `--local` | flag | Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits. |
-| `--priority {high,normal,low}` | `high`, `normal`, `low` | Overrides the scheduling priority of the run (default: `normal`). Injects `[priority=<val>]` in the shadow commit. |
+| `--priority {high,normal,low,extra_low}` | `high`, `normal`, `low`, `extra_low` | Overrides the scheduling priority of the run (default: `normal`). Injects `[priority=<val>]` in the shadow commit. |
 | `--skip-code-invalidation`<br>*(alias `--skip-code`)* | flag | Realigns `dvc.lock` for code-only modifications without recomputing stages if data inputs are unchanged. |
 
 ### `cluster-run` (Default Execution)
@@ -137,14 +137,16 @@ cluster-run
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.
 
-### `cluster-run --priority {high,normal,low}`
+### `cluster-run --priority {high,normal,low,extra_low}`
 Defines the queue priority level for the entire run.
 ```bash
 cluster-run --priority high
+cluster-run --priority extra_low
 ```
-*   Marks the job with `high` scheduling rank in the Headnode queue.
-*   Allows the job to activate the targeted preemption engine if cluster resources are fully occupied by `low` priority runs.
-*   Supported values: `high`, `normal` (default), `low`.
+*   **`high`**: Highest queue rank; can preempt running `extra_low` (first) and `low` jobs if no worker is free.
+*   **`normal`** *(default)*: Standard queue rank; can preempt running `extra_low` jobs only.
+*   **`low`**: Lower queue rank; preemptible only by another user's `high` job (immune after 5 preemptions).
+*   **`extra_low`**: Lowest queue rank (always runs after `high`, `normal`, and `low`); always preemptible by any `normal` or `high` job — ideal for very long, resilient workloads with periodic checkpoints.
 
 ### `cluster-run --skip-code-invalidation` (or `--skip-code`)
 Allows code modifications (comments, docstrings, non-algorithmic edits) without triggering full DAG recomputation when data dependencies are identical.

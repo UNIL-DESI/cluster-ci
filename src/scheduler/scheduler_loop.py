@@ -1558,53 +1558,58 @@ def higher_priority_stage_awaits_launch(conn, worker, priority, exclude_job):
 
 
 def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
-    """Moteur de préemption ciblée pour nœuds 'high' bloqués.
+    """Moteur de préemption ciblée pour nœuds 'high' et 'normal' bloqués.
 
     Règles d'or :
-    1. Déclenchement : un nœud 'high' est prêt (ready), mais aucune machine admissible
-       ne peut l'accueillir dans l'état actuel des allocations.
+    1. Déclenchement : un nœud 'high' ou 'normal' est prêt (ready / classic pending),
+       mais aucune machine admissible ne peut l'accueillir dans l'état actuel des allocations.
     2. Sélection de victime :
        - Statut 'running'.
-       - Priorité 'low' (normal et high sont strictement immunisés).
-       - Utilisateur distinct : U_requester != U_victim (jamais au sein du même utilisateur).
-       - Anti-famine : preempt_count < 5 (immunité au-delà).
-       - Le plus récent d'abord : started_at DESC pour minimiser le travail perdu.
-       - La machine exécutant la victime doit être admissible pour le nœud 'high' demandeur.
+       - Pour un demandeur 'high' : victimes 'extra_low' (prioritaires à l'éviction) ou 'low'.
+       - Pour un demandeur 'normal' : victimes 'extra_low' uniquement ('low', 'normal' et 'high' sont immunisés).
+       - Victimes 'low' : inter-utilisateur strict (U_requester != U_victim) et anti-famine (preempt_count < 5).
+       - Victimes 'extra_low' : préemptibles par tout autre job 'normal' ou 'high' (même utilisateur inclus,
+         job_id distinct) sans plafond d'immunité (conçu pour tâches longues avec checkpoints réguliers).
+       - Le plus récent d'abord : started_at DESC au sein d'un même niveau pour minimiser le travail perdu.
+       - La machine exécutant la victime doit être admissible pour le nœud demandeur.
     3. Exécution :
        - Signal gracieux POST /api/worker/preempt_runner/<runner_id> (SIGTERM 30s puis kill).
        - Requeue en 'ready' avec preempt_count + 1, preempted_by, preempted_at.
        - ZÉRO impact sur retry_count ni attempt, sans failure_reason d'échec.
-       - Libération après confirmation de l’arrêt physique par le worker.
+       - Libération après confirmation de l'arrêt physique par le worker.
     """
     cursor = conn.cursor()
 
-    # 1. Identifier les nœuds 'high' prêts (ready)
+    # 1. Identifier les nœuds 'high' et 'normal' prêts (ready) et jobs classiques en attente
     cursor.execute("""
-        SELECT jn.job_id, jn.node_name, jn.resources, jn.image, j.username, j.created_at
+        SELECT jn.job_id, jn.node_name, jn.resources, jn.image, jn.scheduling_priority, j.username, j.created_at
         FROM job_nodes jn
         JOIN jobs j ON jn.job_id = j.job_id
         WHERE jn.status = 'ready'
-          AND jn.scheduling_priority = 'high'
+          AND jn.scheduling_priority IN ('high', 'normal')
           AND j.status IN ('pending', 'assigned', 'running')
-        ORDER BY j.created_at ASC, jn.node_name ASC
+        ORDER BY (CASE jn.scheduling_priority WHEN 'high' THEN 0 ELSE 1 END) ASC, j.created_at ASC, jn.node_name ASC
     """)
-    high_ready_nodes = [dict(r) for r in cursor.fetchall()]
-    classic_high = cursor.execute("""
-        SELECT * FROM jobs j WHERE j.status='pending' AND j.scheduling_priority='high'
+    preempting_ready_nodes = [dict(r) for r in cursor.fetchall()]
+    classic_preemptors = cursor.execute("""
+        SELECT * FROM jobs j WHERE j.status='pending' AND j.scheduling_priority IN ('high', 'normal')
           AND COALESCE(j.parallel_mode, 0)=0 AND COALESCE(j.is_maintenance, 0)=0
           AND COALESCE(j.job_type, 'compute')='compute'
           AND NOT EXISTS (SELECT 1 FROM job_nodes n WHERE n.job_id=j.job_id)
     """).fetchall()
-    for row in classic_high:
+    for row in classic_preemptors:
         job = dict(row)
-        high_ready_nodes.append(dict(job, node_name='job', resources=classic_job_resources(job), classic=True))
+        preempting_ready_nodes.append(dict(job, node_name='job', resources=classic_job_resources(job), classic=True))
     counts = get_user_machine_counts(conn)
-    high_ready_nodes.sort(key=lambda n: (job_sort_key(n, counts), n['node_name']))
+    preempting_ready_nodes.sort(key=lambda n: (job_sort_key(n, counts), n['node_name']))
 
     workers_by_id = {w['worker_id']: w for w in workers}
     preempted_any = False
 
-    for req_node in high_ready_nodes:
+    for req_node in preempting_ready_nodes:
+        req_prio = (req_node.get('scheduling_priority') or 'normal').strip().lower()
+        if req_prio not in ('high', 'normal'):
+            continue
         requester = f"{req_node['job_id']}:{req_node['node_name']}"
         if cursor.execute("""
             SELECT 1 FROM job_nodes WHERE status='preempting' AND preempted_by=?
@@ -1629,41 +1634,50 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
 
         req_user = (req_node.get('username') or '').strip()
 
-        # Chercher une victime 'low' en cours d'exécution
-        # Inter-user strict : j.username != req_user
-        # Anti-famine : preempt_count < 5
-        # Plus récent d'abord : started_at DESC
+        # Chercher une victime éligible en cours d'exécution :
+        # - 'normal' peut préempter uniquement 'extra_low'
+        # - 'high' peut préempter 'extra_low' (en priorité) puis 'low' (preempt_count < 5)
         cursor.execute("""
             SELECT jn.job_id, jn.node_name, jn.worker_id, jn.runner_id, jn.started_at,
-                   jn.preempt_count, j.username
+                   jn.preempt_count, jn.scheduling_priority, j.username
             FROM job_nodes jn
             JOIN jobs j ON jn.job_id = j.job_id
             WHERE jn.status = 'running'
-              AND jn.scheduling_priority = 'low'
-              AND COALESCE(jn.preempt_count, 0) < 5
-            ORDER BY jn.started_at DESC, jn.node_name ASC
-        """)
-        running_low_candidates = [dict(r) for r in cursor.fetchall()]
-        classic_low = cursor.execute("""
+              AND (
+                  jn.scheduling_priority = 'extra_low'
+                  OR (? = 'high' AND jn.scheduling_priority = 'low' AND COALESCE(jn.preempt_count, 0) < 5)
+              )
+            ORDER BY (CASE jn.scheduling_priority WHEN 'extra_low' THEN 0 ELSE 1 END) ASC,
+                     jn.started_at DESC, jn.node_name ASC
+        """, (req_prio,))
+        running_victim_candidates = [dict(r) for r in cursor.fetchall()]
+        classic_victims = cursor.execute("""
             SELECT j.*, 'job' AS node_name FROM jobs j
-            WHERE j.status='running' AND j.scheduling_priority='low'
+            WHERE j.status='running'
+              AND (
+                  j.scheduling_priority = 'extra_low'
+                  OR (? = 'high' AND j.scheduling_priority = 'low' AND COALESCE(j.preempt_count, 0) < 5)
+              )
               AND COALESCE(j.parallel_mode, 0)=0 AND COALESCE(j.preempting, 0)=0
-              AND COALESCE(j.preempt_count, 0)<5
               AND COALESCE(j.is_maintenance, 0)=0
               AND COALESCE(j.job_type, 'compute')='compute'
               AND NOT EXISTS (SELECT 1 FROM job_nodes n WHERE n.job_id=j.job_id)
-        """).fetchall()
-        for row in classic_low:
+        """, (req_prio,)).fetchall()
+        for row in classic_victims:
             victim = dict(row)
             victim['classic'] = True
             victim['runner_id'] = victim.get('runner_id') or 'classic-' + victim['job_id']
-            running_low_candidates.append(victim)
-        running_low_candidates.sort(key=lambda n: (n.get('started_at') or '', n['node_name']), reverse=True)
+            running_victim_candidates.append(victim)
+        # Trier : extra_low avant low, et au sein de chaque niveau le plus récent d'abord (started_at DESC)
+        running_victim_candidates.sort(key=lambda n: (n.get('started_at') or '', n['node_name']), reverse=True)
+        running_victim_candidates.sort(key=lambda n: 0 if (n.get('scheduling_priority') or '').strip().lower() == 'extra_low' else 1)
 
         chosen_victim = None
         victim_worker = None
 
-        for cand_victim in running_low_candidates:
+        for cand_victim in running_victim_candidates:
+            if cand_victim['job_id'] == req_node['job_id']:
+                continue
             if req_node.get('classic'):
                 # Classic branch exclusivity must also become satisfiable after
                 # the stop. A preempted DVC stage leaves its parent job active.
@@ -1672,12 +1686,14 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
                     AND status IN ('assigned','running') AND job_id NOT IN (?,?) LIMIT 1""",
                     (req_node['repo'],req_node.get('branch'),req_node['job_id'],released_job)).fetchone():
                     continue
-            victim_user = (cand_victim.get('username') or '').strip()
-            # Inter-utilisateur strict : jamais de préemption au sein du même utilisateur
-            if req_user and victim_user and req_user == victim_user:
-                continue
-            if not req_user and not victim_user:
-                continue
+            victim_prio = (cand_victim.get('scheduling_priority') or 'low').strip().lower()
+            if victim_prio != 'extra_low':
+                victim_user = (cand_victim.get('username') or '').strip()
+                # Inter-utilisateur strict pour 'low' : jamais de préemption au sein du même utilisateur
+                if req_user and victim_user and req_user == victim_user:
+                    continue
+                if not req_user and not victim_user:
+                    continue
 
             v_wid = cand_victim.get('worker_id')
             if not v_wid or v_wid not in workers_by_id:
@@ -1704,12 +1720,13 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
         v_node_name = chosen_victim['node_name']
         v_runner_id = chosen_victim['runner_id']
         v_wid = victim_worker['worker_id']
+        v_prio = (chosen_victim.get('scheduling_priority') or 'low').strip().lower()
 
         logger.info(
-            "⚡ [PREEMPTION] Preempting low node '%s' (job=%s, user=%s, preempt_count=%d) on worker %s for high node '%s' (job=%s, user=%s)",
-            v_node_name, v_job_id, chosen_victim.get('username'),
+            "⚡ [PREEMPTION] Preempting %s node '%s' (job=%s, user=%s, preempt_count=%d) on worker %s for %s node '%s' (job=%s, user=%s)",
+            v_prio, v_node_name, v_job_id, chosen_victim.get('username'),
             chosen_victim.get('preempt_count', 0), v_wid,
-            req_node['node_name'], req_node['job_id'], req_user
+            req_prio, req_node['node_name'], req_node['job_id'], req_user
         )
 
         preempted_by_str = f"{req_node['job_id']}:{req_node['node_name']}"
@@ -2029,7 +2046,7 @@ def schedule_iteration():
                     cursor = conn.cursor()
                     cursor.execute('''SELECT resources, dep_paths, image FROM job_nodes
                         WHERE job_id = ? AND status = "ready"
-                        ORDER BY CASE scheduling_priority WHEN 'high' THEN 0 WHEN 'low' THEN 2 ELSE 1 END,
+                        ORDER BY CASE scheduling_priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 WHEN 'low' THEN 2 WHEN 'extra_low' THEN 3 ELSE 1 END,
                                  priority DESC, node_name''', (jid,))
                     ready_rows = cursor.fetchall()
 

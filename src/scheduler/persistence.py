@@ -387,7 +387,7 @@ def init_job_nodes_from_plan(job_id, plan_data):
                 status = "pending"
 
             scheduling_prio = node.get("scheduling_priority") or res.get("priority") or defaults.get("priority") or "normal"
-            if str(scheduling_prio).lower() not in ("high", "normal", "low"):
+            if str(scheduling_prio).lower() not in ("high", "normal", "low", "extra_low"):
                 scheduling_prio = "normal"
             else:
                 scheduling_prio = str(scheduling_prio).lower()
