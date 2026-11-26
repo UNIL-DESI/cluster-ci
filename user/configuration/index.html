@@ -1481,7 +1481,7 @@
 <tr>
 <td style="text-align: left;"><code>PRIORITY</code><br><em>(alias <code>DEFAULT_PRIORITY</code>)</em></td>
 <td style="text-align: left;"><code>normal</code></td>
-<td style="text-align: left;">Global scheduling priority for the job: <code>high</code>, <code>normal</code>, or <code>low</code>. Can be overridden via <code>cluster-run --priority</code> or per-stage via <code>meta.cluster.priority</code>.</td>
+<td style="text-align: left;">Global scheduling priority for the job: <code>high</code>, <code>normal</code>, <code>low</code>, or <code>extra_low</code> (runs after all other priorities and can be preempted by any <code>normal</code> or <code>high</code> job). Can be overridden via <code>cluster-run --priority</code> or per-stage via <code>meta.cluster.priority</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>PARALLEL_STAGES</code></td>

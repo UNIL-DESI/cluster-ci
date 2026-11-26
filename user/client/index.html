@@ -634,10 +634,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cluster-run-priority-highnormallow" class="md-nav__link">
+  <a href="#cluster-run-priority-highnormallowextra_low" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cluster-run --priority {high,normal,low}
+        cluster-run --priority {high,normal,low,extra_low}
       
     </span>
   </a>
@@ -1586,10 +1586,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cluster-run-priority-highnormallow" class="md-nav__link">
+  <a href="#cluster-run-priority-highnormallowextra_low" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cluster-run --priority {high,normal,low}
+        cluster-run --priority {high,normal,low,extra_low}
       
     </span>
   </a>
@@ -1854,7 +1854,7 @@
 <hr />
 <h2 id="5-command-reference-cli-syntax">5. Command Reference &amp; CLI Syntax</h2>
 <p>The <code>cluster-run</code> CLI accepts the following arguments according to its command-line specification:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run [command] [run_id] [--local] [--priority {high,normal,low}] [--skip-code-invalidation]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run [command] [run_id] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
 </span></code></pre></div>
 <table>
 <thead>
@@ -1881,8 +1881,8 @@
 <td style="text-align: left;">Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><code>--priority {high,normal,low}</code></td>
-<td style="text-align: left;"><code>high</code>, <code>normal</code>, <code>low</code></td>
+<td style="text-align: left;"><code>--priority {high,normal,low,extra_low}</code></td>
+<td style="text-align: left;"><code>high</code>, <code>normal</code>, <code>low</code>, <code>extra_low</code></td>
 <td style="text-align: left;">Overrides the scheduling priority of the run (default: <code>normal</code>). Injects <code>[priority=&lt;val&gt;]</code> in the shadow commit.</td>
 </tr>
 <tr>
@@ -1899,13 +1899,15 @@
 *   Performs pre-flight checks, packages the shadow commit, and pushes to the cluster draft branch.
 *   Streams logs in real-time.
 *   Automatically pulls back updated metrics and plots on completion.</p>
-<h3 id="cluster-run-priority-highnormallow"><code>cluster-run --priority {high,normal,low}</code></h3>
+<h3 id="cluster-run-priority-highnormallowextra_low"><code>cluster-run --priority {high,normal,low,extra_low}</code></h3>
 <p>Defines the queue priority level for the entire run.
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>cluster-run<span class="w"> </span>--priority<span class="w"> </span>high
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>cluster-run<span class="w"> </span>--priority<span class="w"> </span>extra_low
 </span></code></pre></div>
-*   Marks the job with <code>high</code> scheduling rank in the Headnode queue.
-*   Allows the job to activate the targeted preemption engine if cluster resources are fully occupied by <code>low</code> priority runs.
-*   Supported values: <code>high</code>, <code>normal</code> (default), <code>low</code>.</p>
+*   <strong><code>high</code></strong>: Highest queue rank; can preempt running <code>extra_low</code> (first) and <code>low</code> jobs if no worker is free.
+*   <strong><code>normal</code></strong> <em>(default)</em>: Standard queue rank; can preempt running <code>extra_low</code> jobs only.
+*   <strong><code>low</code></strong>: Lower queue rank; preemptible only by another user's <code>high</code> job (immune after 5 preemptions).
+*   <strong><code>extra_low</code></strong>: Lowest queue rank (always runs after <code>high</code>, <code>normal</code>, and <code>low</code>); always preemptible by any <code>normal</code> or <code>high</code> job — ideal for very long, resilient workloads with periodic checkpoints.</p>
 <h3 id="cluster-run-skip-code-invalidation-or-skip-code"><code>cluster-run --skip-code-invalidation</code> (or <code>--skip-code</code>)</h3>
 <p>Allows code modifications (comments, docstrings, non-algorithmic edits) without triggering full DAG recomputation when data dependencies are identical.
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>cluster-run<span class="w"> </span>--skip-code-invalidation

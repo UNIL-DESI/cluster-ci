@@ -1428,7 +1428,7 @@
 <td style="text-align: left;"><code>priority</code></td>
 <td style="text-align: left;"><code>string</code></td>
 <td style="text-align: left;"><code>"normal"</code></td>
-<td style="text-align: left;">Scheduling priority for this specific stage: <code>"high"</code>, <code>"normal"</code>, or <code>"low"</code>. Overrides job priority.</td>
+<td style="text-align: left;">Scheduling priority for this specific stage: <code>"high"</code>, <code>"normal"</code>, <code>"low"</code>, or <code>"extra_low"</code> (lowest priority, always preemptible by <code>normal</code> or <code>high</code>, ideal for long checkpointed stages). Overrides job priority.</td>
 </tr>
 </tbody>
 </table>
@@ -1436,7 +1436,7 @@
 <p class="admonition-title">Strict Validation &amp; Consistency Rules (Fail-Fast)</p>
 <ul>
 <li><strong>Schema Validation</strong>: Any unrecognized key under <code>meta.cluster</code> causes <strong>immediate job rejection</strong> at submission time (HTTP 400). Valid allowed keys are strictly: <code>image</code>, <code>image_arm64</code>, <code>image_amd64</code>, <code>cpus</code>, <code>gpus</code>, <code>ram_gb</code>, <code>vram_gb</code>, <code>storage_gb</code>, <code>workers</code>, <code>priority</code>.</li>
-<li><strong>Type Validation</strong>: Types are strictly enforced: <code>cpus</code> must be an integer <code>&gt;= 1</code>, <code>gpus</code> an integer <code>&gt;= 0</code>, <code>ram_gb</code>/<code>vram_gb</code>/<code>storage_gb</code> numbers <code>&gt;= 0</code>, <code>workers</code> a list of strings, and <code>priority</code> one of <code>"high"</code>, <code>"normal"</code>, <code>"low"</code>.</li>
+<li><strong>Type Validation</strong>: Types are strictly enforced: <code>cpus</code> must be an integer <code>&gt;= 1</code>, <code>gpus</code> an integer <code>&gt;= 0</code>, <code>ram_gb</code>/<code>vram_gb</code>/<code>storage_gb</code> numbers <code>&gt;= 0</code>, <code>workers</code> a list of strings, and <code>priority</code> one of <code>"high"</code>, <code>"normal"</code>, <code>"low"</code>, <code>"extra_low"</code>.</li>
 <li><strong>GPU Consistency Rule (Fail-Fast)</strong>: Declaring <code>vram_gb &gt; 0</code> strictly requires <code>gpus &gt;= 1</code>. If <code>vram_gb &gt; 0</code> while <code>gpus == 0</code>, Cluster-CI raises an immediate actionable error at submission:
   <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Fichier dvc.yaml, stage '&lt;stage&gt;' : incohérence de ressources entre 'meta.cluster.vram_gb' (X Go) et 'meta.cluster.gpus' (0).
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Cause : vram_gb exige gpus &gt;= 1 (la mémoire vidéo ne peut être allouée sans GPU).

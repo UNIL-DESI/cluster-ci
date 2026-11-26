@@ -1608,7 +1608,7 @@
 <p>When independent stages in a DAG become ready simultaneously and idle worker capacity exists across the cluster, the scheduler dynamically assigns additional workers to burst execution.</p>
 <p>To guarantee cluster-wide fairness and prevent monopolization, competing jobs requesting extra workers are ranked using the canonical <code>extra_worker_sort_key</code> (<code>src/scheduler/scheduling_order.py:224-245</code> and <code>scheduler_loop.py:2095-2121</code>):</p>
 <ol>
-<li><strong>Job Priority Level</strong>: Jobs with <code>high</code> priority take precedence over <code>normal</code>, which take precedence over <code>low</code> (<code>priority_val</code>: <code>high</code> = 0, <code>normal</code> = 1, <code>low</code> = 2).</li>
+<li><strong>Job Priority Level</strong>: Jobs with <code>high</code> priority take precedence over <code>normal</code>, which take precedence over <code>low</code>, which take precedence over <code>extra_low</code> (<code>priority_val</code>: <code>high</code> = 0, <code>normal</code> = 1, <code>low</code> = 2, <code>extra_low</code> = 3).</li>
 <li><strong>Machine Allocation Fairness</strong>: Prefers the job holding the fewest active worker machines (<code>len(current_active_workers)</code> ASC).</li>
 <li><strong>User Machine Balance</strong>: Prefers the user with fewer total physical machines currently occupied across all their jobs (<code>user_machine_counts</code> ASC).</li>
 <li><strong>FIFO Ready Timestamp</strong>: Prefers the job whose oldest ready stage has been waiting the longest (<code>oldest_ready_node_time ASC</code>).</li>
