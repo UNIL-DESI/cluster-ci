@@ -1762,25 +1762,26 @@
 <td style="text-align: left;"><strong><code>low</code></strong></td>
 <td style="text-align: center;"><code>2</code></td>
 <td style="text-align: left;"><em>(None)</em></td>
-<td style="text-align: left;"><code>high</code> <em>(cross-user only, immune after 5 preemptions)</em></td>
+<td style="text-align: left;">Any <code>high</code> job <em>(when no other worker is free; immune after 5 preemptions)</em></td>
 <td style="text-align: left;">Overnight sweeps and secondary experiments.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>extra_low</code></strong></td>
 <td style="text-align: center;"><code>3</code></td>
 <td style="text-align: left;"><em>(None)</em></td>
-<td style="text-align: left;">Any <code>normal</code> or <code>high</code> job <em>(including same user, always preemptible)</em></td>
+<td style="text-align: left;">Any <code>normal</code> or <code>high</code> job <em>(when no other worker is free; always preemptible)</em></td>
 <td style="text-align: left;">Very long, resilient background jobs with regular checkpoints (<code>persist: true</code>).</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>Trigger Condition</strong>: A <code>high</code> or <code>normal</code> priority node is in <code>ready</code> state (or classic <code>pending</code>), but no eligible worker machine can accommodate it with the currently available CPU, RAM, or GPU resources.</li>
+<li><strong>Trigger Condition</strong>: A <code>high</code> or <code>normal</code> priority node is in <code>ready</code> state (or classic <code>pending</code>), and <strong>no other eligible worker machine has available capacity</strong> to run it without preemption.</li>
 <li><strong>Target Victim Selection</strong>:<ol>
 <li><strong>Priority Matrix</strong>: <code>high</code> requesters evict running <code>extra_low</code> stages first and <code>low</code> stages second; <code>normal</code> requesters evict running <code>extra_low</code> stages only (<code>low</code>, <code>normal</code>, and <code>high</code> remain completely immune to <code>normal</code> jobs).</li>
-<li><strong>Isolation &amp; Anti-Starvation</strong>:<ul>
-<li>For <code>low</code> victims: strict cross-user isolation ($U_{\text{requester}} \neq U_{\text{victim}}$) and anti-starvation immunity once $N_{\text{preempt}} \ge 5$.</li>
-<li>For <code>extra_low</code> victims: preemptible by <strong>any</strong> distinct <code>normal</code> or <code>high</code> job (even owned by the same user) with <strong>no preemption cap</strong>, making <code>extra_low</code> ideal for multi-day checkpointed workloads that yield cleanly whenever higher-priority work arrives.</li>
+<li><strong>Same-User &amp; Cross-User Scope + Anti-Starvation</strong>:<ul>
+<li>Any distinct higher-priority job (<code>job_id</code> different — a job never preempts itself) may preempt eligible lower-priority victims, <strong>including jobs owned by the same researcher</strong>.</li>
+<li>For <code>low</code> victims: anti-starvation immunity once $N_{\text{preempt}} \ge 5$.</li>
+<li>For <code>extra_low</code> victims: <strong>no preemption cap</strong>, making <code>extra_low</code> ideal for multi-day checkpointed workloads that yield cleanly whenever higher-priority work arrives.</li>
 </ul>
 </li>
 <li><strong>Minimizing Lost Compute</strong>: Within the same victim priority level, the scheduler picks the most recently started job (<code>started_at DESC</code>), preserving long-running computation.</li>

@@ -678,6 +678,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cluster-run-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-run queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cluster-run-list" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1630,6 +1641,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cluster-run-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-run queue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cluster-run-list" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1854,7 +1876,7 @@
 <hr />
 <h2 id="5-command-reference-cli-syntax">5. Command Reference &amp; CLI Syntax</h2>
 <p>The <code>cluster-run</code> CLI accepts the following arguments according to its command-line specification:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run [command] [run_id] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>cluster-run [command] [run_id] [--job-id ID] [--branch BRANCH] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
 </span></code></pre></div>
 <table>
 <thead>
@@ -1867,13 +1889,23 @@
 <tbody>
 <tr>
 <td style="text-align: left;"><code>command</code></td>
-<td style="text-align: left;"><code>list</code>, <code>view</code>, <code>cancel</code>, <code>sync</code>, <code>attach</code> <em>(optional)</em></td>
+<td style="text-align: left;"><code>queue</code>, <code>list</code>, <code>view</code>, <code>cancel</code>, <code>sync</code>, <code>attach</code> <em>(optional)</em></td>
 <td style="text-align: left;">Action to perform. If omitted, triggers a new execution run.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>run_id</code></td>
 <td style="text-align: left;"><code>string</code> <em>(optional)</em></td>
-<td style="text-align: left;">Target GitHub Actions run ID or local job ID for <code>view</code>, <code>cancel</code>, or <code>attach</code>.</td>
+<td style="text-align: left;">Target GitHub Actions run ID or Headnode job ID (full UUID or short prefix) for <code>view</code>, <code>cancel</code>, or <code>attach</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--job-id ID</code></td>
+<td style="text-align: left;"><code>string</code> <em>(optional)</em></td>
+<td style="text-align: left;">Explicit Headnode job ID (full UUID or prefix) for <code>cancel</code> or <code>attach</code>, working across any branch (<code>main</code>, <code>cluster-draft/*</code>, <code>--local</code>).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--branch BRANCH</code></td>
+<td style="text-align: left;"><code>string</code> <em>(optional)</em></td>
+<td style="text-align: left;">Branch override (e.g. <code>main</code>) when resolving a Headnode job in <code>cancel</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>--local</code></td>
@@ -1906,7 +1938,7 @@
 </span></code></pre></div>
 *   <strong><code>high</code></strong>: Highest queue rank; can preempt running <code>extra_low</code> (first) and <code>low</code> jobs if no worker is free.
 *   <strong><code>normal</code></strong> <em>(default)</em>: Standard queue rank; can preempt running <code>extra_low</code> jobs only.
-*   <strong><code>low</code></strong>: Lower queue rank; preemptible only by another user's <code>high</code> job (immune after 5 preemptions).
+*   <strong><code>low</code></strong>: Lower queue rank; preemptible by any <code>high</code> job if no other worker is free (immune after 5 preemptions).
 *   <strong><code>extra_low</code></strong>: Lowest queue rank (always runs after <code>high</code>, <code>normal</code>, and <code>low</code>); always preemptible by any <code>normal</code> or <code>high</code> job — ideal for very long, resilient workloads with periodic checkpoints.</p>
 <h3 id="cluster-run-skip-code-invalidation-or-skip-code"><code>cluster-run --skip-code-invalidation</code> (or <code>--skip-code</code>)</h3>
 <p>Allows code modifications (comments, docstrings, non-algorithmic edits) without triggering full DAG recomputation when data dependencies are identical.
@@ -1929,25 +1961,32 @@
 *   Runs inside isolated Docker container with real-time local log streaming and direct metrics sync.
 *   <strong>Zero GitHub Upload</strong>: Ideal for sensitive, confidential, or IP-restricted datasets.
 *   For setup and access requirements, see the <strong><a href="../sensitive_data/">Sensitive Data &amp; Local Execution Guide</a></strong>.</p>
+<h3 id="cluster-run-queue"><code>cluster-run queue</code></h3>
+<p>Inspect live cluster workers, active allocations, and the ordered pending queue directly from the Headnode (works from any directory and in <code>--local</code> mode).
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>cluster-run<span class="w"> </span>queue
+</span></code></pre></div>
+*   Displays each worker's GPU/RAM status and currently running job/holder, followed by all pending jobs with their short <code>job_id</code> prefix and priority.</p>
 <h3 id="cluster-run-list"><code>cluster-run list</code></h3>
 <p>List recent runs.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>cluster-run<span class="w"> </span>list
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>cluster-run<span class="w"> </span>list
 </span></code></pre></div>
 *   Displays the run ID, status (Completed, In-Progress, Queued), priority, and completion time.</p>
 <h3 id="cluster-run-view"><code>cluster-run view</code></h3>
 <p>View logs for a run.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>cluster-run<span class="w"> </span>view<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
 </span></code></pre></div>
 *   If <code>run_id</code> is omitted, it targets your last triggered run.</p>
 <h3 id="cluster-run-cancel"><code>cluster-run cancel</code></h3>
-<p>Terminate a running job.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
+<p>Terminate a running or pending job on the cluster across any branch (<code>cluster-draft/*</code>, <code>main</code>, <code>--local</code>).
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span><span class="o">[</span>run_id<span class="o">]</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>--job-id<span class="w"> </span>82b9aa7b<span class="w">   </span><span class="c1"># or simply: cluster-run cancel 82b9aa7b</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>cluster-run<span class="w"> </span>cancel<span class="w"> </span>--branch<span class="w"> </span>main
 </span></code></pre></div>
-*   If <code>run_id</code> is omitted, it targets your latest active run.
-*   Sends a cancellation request (<code>POST /api/jobs/{id}/stop</code>) to the cluster and cleans up local tracking files.</p>
+*   Accepts a GitHub Actions <code>run_id</code> <strong>or</strong> a Headnode <code>job_id</code> (full UUID or short hex prefix from <code>cluster-run queue</code>).
+*   Automatically resolves <code>HEADNODE_URL</code> and <code>CLUSTER_TOKEN</code> from environment variables, the current <code>.env</code>, <code>~/.cluster-ci/.env</code>, or the installed <code>cluster-ci</code> <code>.env</code>, sends <code>POST /api/jobs/{id}/stop</code>, and cancels any matching GHA run.</p>
 <h3 id="cluster-run-sync"><code>cluster-run sync</code></h3>
 <p>Manually synchronize remote results.
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>cluster-run<span class="w"> </span>sync
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>cluster-run<span class="w"> </span>sync
 </span></code></pre></div>
 *   Fetches the latest metrics, plots, and <code>dvc.lock</code> from the remote branch and applies them to your local directory.
 *   Useful if log streaming was interrupted or if you want to pull results from an older run.</p>
@@ -1959,11 +1998,11 @@
 <p>If your terminal crashes or you force-kill <code>cluster-run</code>, the active job continues on the cluster. The next time you run any <code>cluster-run</code> command, the CLI detects the orphaned run and automatically sends a termination request, freeing cluster resources.</p>
 <h3 id="line-ending-protection">Line-Ending Protection</h3>
 <p>When sharing code between Windows and Linux, line-ending differences can corrupt binary files (models, images). The <code>cluster-run</code> CLI automatically configures <code>.gitattributes</code> to prevent this:
-<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>*.pt binary
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>*.pkl binary
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>*.png binary
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>*.csv text eol=lf
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>*.yaml text eol=lf
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>*.pt binary
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>*.pkl binary
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>*.png binary
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>*.csv text eol=lf
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>*.yaml text eol=lf
 </span></code></pre></div></p>
 <h3 id="pre-commit-validation">Pre-commit Validation</h3>
 <p>The installation injects a Git pre-commit hook that validates your <code>pyproject.toml</code> before each commit:</p>
