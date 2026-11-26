@@ -248,8 +248,9 @@ if systemctl is-enabled cluster-worker >/dev/null 2>&1 || systemctl is-active cl
     ACTIVE_RUNNERS=$( (pgrep -f "branch_executor\\.py|CLUSTER_CI_MODE=executor|run_research_pipeline\\.sh" 2>/dev/null || true) | wc -l | tr -d ' ')
     if [ "${{ACTIVE_CONTAINERS:-0}}" -eq 0 ] && [ "${{ACTIVE_RUNNERS:-0}}" -eq 0 ]; then
         echo "🚀 [HOT-UPDATE] Worker is idle; restarting cluster-worker immediately..."
+        rm -f /tmp/cluster-worker-pending-restart
         sudo_run systemctl restart cluster-worker
-    elif [ "$PREV_KILLMODE" = "process" ] && ! echo "$PREV_STOPPOST" | grep -q "docker rm"; then
+    elif [ ! -f /tmp/cluster-worker-pending-restart ] && [ "$PREV_KILLMODE" = "process" ] && ! echo "$PREV_STOPPOST" | grep -q "docker rm"; then
         echo "🔄 [HOT-UPDATE] Hot-reloading cluster-worker while preserving $ACTIVE_CONTAINERS container(s) / $ACTIVE_RUNNERS runner(s)..."
         touch /tmp/cluster-worker-hot-reload
         sudo_run systemctl restart cluster-worker
