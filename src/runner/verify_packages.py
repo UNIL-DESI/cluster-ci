@@ -309,9 +309,29 @@ def verify_packages(
     # 3. Detect runtime mode: R1 (Specialized) vs R2 (Generic)
     is_r1 = any(k in image_distributions for k in ("vllm", "nemo_automodel", "nemo"))
 
-    # 4. Parse declared dependencies of the submitted repository
+    # 4. Parse declared dependencies of the submitted repository (respecting PEP 508 environment markers)
     project_dep_names: Set[str] = set()
     project_pkg_norm: Optional[str] = None
+
+    def _marker_applies(dep_spec: str) -> bool:
+        """Evaluate PEP 508 environment marker (e.g. '; platform_machine == \"aarch64\"') if present."""
+        if ";" not in dep_spec:
+            return True
+        try:
+            from packaging.requirements import Requirement
+            req = Requirement(dep_spec)
+            return True if req.marker is None else bool(req.marker.evaluate())
+        except Exception:
+            # Fallback evaluation when packaging is unavailable
+            marker_part = dep_spec.split(";", 1)[1].strip()
+            import platform
+            if "platform_machine" in marker_part:
+                cur_arch = platform.machine().lower()
+                if "aarch64" in marker_part and cur_arch not in ("aarch64", "arm64"):
+                    return False
+                if "x86_64" in marker_part and cur_arch not in ("x86_64", "amd64"):
+                    return False
+            return True
 
     if target_work_dir:
         pyproj_path = os.path.join(target_work_dir, "pyproject.toml")
@@ -324,6 +344,8 @@ def verify_packages(
                 if p_name:
                     project_pkg_norm = re.sub(r"[-_.]+", "_", p_name).lower()
                 for d in data.get("project", {}).get("dependencies", []):
+                    if not _marker_applies(d):
+                        continue
                     m = re.match(r"^([a-zA-Z0-9_\-\.]+)", d.strip())
                     if m:
                         project_dep_names.add(m.group(1).lower().replace("-", "_"))
@@ -339,6 +361,8 @@ def verify_packages(
                         if not line_s or line_s.startswith("#") or line_s.startswith("-"):
                             continue
                         line_s = line_s.split("#")[0].strip()
+                        if not _marker_applies(line_s):
+                            continue
                         m = re.match(r"^([a-zA-Z0-9_\-\.]+)", line_s)
                         if m:
                             project_dep_names.add(m.group(1).lower().replace("-", "_"))
