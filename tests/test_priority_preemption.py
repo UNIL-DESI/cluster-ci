@@ -204,12 +204,12 @@ def test_immunity_for_normal_and_high_nodes(prem_db):
     alice_node = get_job_node("job-alice", "stage-high")
     assert alice_node["status"] == "ready"
 
-def test_strict_inter_user_no_intra_user_preemption(prem_db):
+def test_intra_user_preemption_allowed_between_distinct_jobs(prem_db):
     conn, _ = prem_db
     setup_single_worker(conn, "worker-1", total_ram=32.0)
     cursor = conn.cursor()
 
-    # Même utilisateur Alice pour les deux jobs (intra-user)
+    # Même utilisateur Alice pour deux jobs distincts (intra-user)
     cursor.execute("""
         INSERT INTO jobs (job_id, username, status, parallel_mode, home_worker, active_workers)
         VALUES ('job-alice-1', 'alice', 'running', 1, 'worker-1', '["worker-1"]')
@@ -226,7 +226,7 @@ def test_strict_inter_user_no_intra_user_preemption(prem_db):
     conn.commit()
     record_runner_heartbeat('job-alice-1', 'runner-alice-1', 'worker-1', 'stage-low')
 
-    # Alice lance un job high
+    # Alice lance un job high distinct sans autre worker disponible
     cursor.execute("""
         INSERT INTO jobs (job_id, username, status, parallel_mode)
         VALUES ('job-alice-2', 'alice', 'pending', 1)
@@ -242,9 +242,10 @@ def test_strict_inter_user_no_intra_user_preemption(prem_db):
 
     schedule_iteration()
 
-    # Jamais de préemption entre jobs du même utilisateur
+    # Tout job high peut préempter un job low distinct (même utilisateur inclus) si aucune autre machine n'est libre
     alice_node_1 = get_job_node("job-alice-1", "stage-low")
-    assert alice_node_1["status"] == "running"
+    assert alice_node_1["status"] == "preempting"
+    assert alice_node_1["preempted_by"] == "job-alice-2:stage-high"
 
 def test_most_recent_victim_selected_first(prem_db):
     conn, _ = prem_db

@@ -77,14 +77,30 @@ def test_all_four_modes_preempt_and_requeue_only_after_shutdown(client,monkeypat
 
 
 @pytest.mark.parametrize('mode',['classic','dvc'])
-@pytest.mark.parametrize('case',['normal','high','same_user','immune','wrong_worker','impossible'])
+@pytest.mark.parametrize('case',['normal','high','immune','wrong_worker','impossible'])
 def test_preemption_protections(client,monkeypatch,mode,case):
     w=worker();job('low',mode,case if case in ('normal','high') else 'low','running',
-                   user='same' if case=='same_user' else None,count=5 if case=='immune' else 0)
-    job('high','classic','high',user='same' if case=='same_user' else None)
+                   count=5 if case=='immune' else 0)
+    job('high','classic','high')
     with persistence.get_db_conn() as c:
         if case=='wrong_worker':c.execute("UPDATE jobs SET allowed_workers='[\"different\"]' WHERE job_id='high'")
         if case=='impossible':c.execute("UPDATE jobs SET ram_required_gb=200 WHERE job_id='high'")
+        c.commit()
+    result,post=preempt(w,monkeypatch);assert not result;post.assert_not_called()
+
+
+@pytest.mark.parametrize('mode',['classic','dvc'])
+def test_same_user_distinct_job_preempts_when_no_free_worker(client,monkeypatch,mode):
+    w=worker();job('low',mode,'low','running',user='same');job('high','classic','high',user='same')
+    result,post=preempt(w,monkeypatch);assert result;post.assert_called_once()
+
+
+def test_same_job_never_self_preempts(client,monkeypatch):
+    w=worker();job('low','dvc','low','running',user='same')
+    with persistence.get_db_conn() as c:
+        c.execute("""INSERT INTO job_nodes(job_id,node_name,status,scheduling_priority,resources)
+            VALUES ('low','urgent','ready','high',?)""",
+            (json.dumps(dict(cpus=4,ram_gb=10,vram_gb=100,gpus=1,workers=['HEC45803'])),))
         c.commit()
     result,post=preempt(w,monkeypatch);assert not result;post.assert_not_called()
 

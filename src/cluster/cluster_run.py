@@ -2561,21 +2561,19 @@ def main():
 
     args = parser.parse_args()
 
-    if args.local and args.command not in (None, "attach", "queue", "cancel"):
-        parser.error("--local supports submission, attach, queue, and cancel; this command uses GitHub and is not available in local mode")
+    has_explicit_headnode_job = bool(args.job_id) or (args.run_id is not None and not str(args.run_id).isdigit())
+
+    if args.local and (
+        args.command not in (None, "attach", "queue", "cancel")
+        or (args.command == "cancel" and not has_explicit_headnode_job)
+    ):
+        parser.error("--local supports submission, attach, queue, and cancel <job_id>; GitHub commands are not available in local mode")
 
     # Commands that talk directly to the Headnode do not require being inside a .cluster-ci repository
     is_direct_headnode_cmd = (
         args.command == "queue"
         or args.command == "attach"
-        or (
-            args.command == "cancel"
-            and (
-                bool(args.job_id)
-                or (args.run_id is not None and not str(args.run_id).isdigit())
-                or args.local
-            )
-        )
+        or (args.command == "cancel" and has_explicit_headnode_job)
     )
     if not is_direct_headnode_cmd:
         check_and_redirect_cwd()
@@ -2681,7 +2679,7 @@ def main():
             resolved_jid = resolve_headnode_job_id(headnode_url, explicit_job_id, cluster_token=cluster_token)
             print(f"🔌 Stopping job {resolved_jid[:12]}... on cluster headnode ({headnode_url})...")
             stopped = _headnode_stop_job(resolved_jid, headnode_url, cluster_token)
-            if run_id and str(run_id).isdigit():
+            if not args.local and run_id and str(run_id).isdigit():
                 print(f"🛑 Cancelling GHA run {run_id}...")
                 subprocess.run(["gh", "run", "cancel", str(run_id)])
             if not stopped:
