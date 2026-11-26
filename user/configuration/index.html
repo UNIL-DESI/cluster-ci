@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1485,8 +1485,8 @@
 </tr>
 <tr>
 <td style="text-align: left;"><code>PARALLEL_STAGES</code></td>
-<td style="text-align: left;"><code>false</code></td>
-<td style="text-align: left;">When set to <code>true</code>, enables <strong>Parallel DAG execution</strong> across multiple cluster workers. Independent branches of your <code>dvc.yaml</code> pipeline run concurrently on available nodes. See <a href="../parallel_execution/">Parallel DAG Execution</a>.</td>
+<td style="text-align: left;"><code>true</code> <em>(when <code>dvc.yaml</code> exists)</em></td>
+<td style="text-align: left;"><strong>Parallel DAG execution</strong> across multiple cluster workers is enabled automatically whenever <code>dvc.yaml</code> is present. Set <code>PARALLEL_STAGES=false</code> only to opt out into legacy single-node sequential mode. See <a href="../parallel_execution/">Parallel DAG Execution</a>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>STAGES</code></td>

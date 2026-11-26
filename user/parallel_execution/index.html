@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -668,10 +668,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-enabling-parallel-execution" class="md-nav__link">
+  <a href="#1-automatic-parallel-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Enabling Parallel Execution
+        1. Automatic Parallel Execution
       
     </span>
   </a>
@@ -1347,10 +1347,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-enabling-parallel-execution" class="md-nav__link">
+  <a href="#1-automatic-parallel-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Enabling Parallel Execution
+        1. Automatic Parallel Execution
       
     </span>
   </a>
@@ -1549,31 +1549,27 @@
 <h1 id="parallel-dag-execution">Parallel DAG Execution</h1>
 <p>Cluster-CI v3 enables distributed, parallel stage execution across multiple cluster workers directly from your DVC pipeline DAG. Instead of running an entire pipeline sequentially on a single node, independent branches execute concurrently across available cluster machines.</p>
 <hr />
-<h2 id="1-enabling-parallel-execution">1. Enabling Parallel Execution</h2>
-<p>Parallel stage execution is opt-in and controlled via your <code>.cluster-ci</code> configuration file.</p>
-<p>To enable parallel DAG scheduling, add the following flag to <code>.cluster-ci</code>:</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Enable parallel DAG scheduling across workers</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="na">PARALLEL_STAGES</span><span class="o">=</span><span class="s">true</span>
-</span></code></pre></div>
-<p>When <code>PARALLEL_STAGES=true</code> is set:
+<h2 id="1-automatic-parallel-execution">1. Automatic Parallel Execution</h2>
+<p>Parallel DAG stage execution is <strong>enabled automatically by default</strong> whenever your repository contains a <code>dvc.yaml</code> pipeline — no extra flag is required in <code>.cluster-ci</code>.</p>
+<p>When <code>dvc.yaml</code> is present (and <code>PARALLEL_STAGES</code> is not set to <code>false</code>):
 * The submission engine parses your <code>dvc.yaml</code> pipeline and builds an execution graph.
 * Multiple branch executors across the cluster can claim independent ready stages concurrently.
-* If omitted or set to <code>false</code>, Cluster-CI runs in legacy sequential mode (one machine per job, running <code>dvc repro</code>).</p>
+* To explicitly fall back to legacy single-node sequential execution (<code>dvc repro</code>), add <code>PARALLEL_STAGES=false</code> to <code>.cluster-ci</code>.</p>
 <hr />
 <h2 id="2-pipeline-analysis-and-stale-node-detection">2. Pipeline Analysis and Stale Node Detection</h2>
 <p>Before dispatching tasks, the Cluster-CI v3 planner determines which nodes must be executed:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[Repository Push] 
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>       │
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>       ▼
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>[Planner: Git Analysis] 
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>       │
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>       ├─► Read dvc.yaml &amp; resolve foreach stages
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>       ├─► Inspect dvc.lock, code diffs, parameters
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>       └─► Flag 'stale' nodes (code, param, or upstream changed)
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>       │
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>       ▼
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>[Headnode: DAG State Engine]
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>       └─► Ready queue populated (nodes whose parents are done/skipped)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[Repository Push] 
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>       │
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>       ▼
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>[Planner: Git Analysis] 
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>       │
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>       ├─► Read dvc.yaml &amp; resolve foreach stages
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>       ├─► Inspect dvc.lock, code diffs, parameters
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>       └─► Flag 'stale' nodes (code, param, or upstream changed)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>       │
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>       ▼
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>[Headnode: DAG State Engine]
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>       └─► Ready queue populated (nodes whose parents are done/skipped)
 </span></code></pre></div>
 <ol>
 <li><strong>Pure Git Analysis</strong>: The planner evaluates changed stage code, parameter files, and <code>dvc.lock</code> hashes <strong>strictly from Git history</strong>. No heavy datasets or DVC cache downloads are required on the headnode.</li>
@@ -1583,22 +1579,22 @@
 <hr />
 <h2 id="3-branch-executor-lifecycle">3. Branch Executor Lifecycle</h2>
 <p>Each participating worker runs a dedicated <strong>Branch Executor</strong> managing the containerized execution environment.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>flowchart TD
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    A["Boot: POST /api/jobs/{id}/next_node"] --&gt; B{Action ?}
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    B --&gt;|"run"| D["Execute Node"]
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    B --&gt;|"switch_image"| C["Stop old container&lt;br/&gt;Launch new container with image-specific /home/user volume"]
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    C --&gt; D
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    B --&gt;|"wait"| W["Sleep 5s -&gt; poll next_node"] --&gt; A
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    B --&gt;|"yield / finish"| Z["Stop container &amp; release worker"]
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    subgraph Node_Execution ["Node Execution Step"]
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        D --&gt; E["1. git pull --rebase"]
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        E --&gt; F["2. Check &amp; transfer missing dep_paths"]
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        F --&gt; G["3. dvc repro -s {node}"]
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        G --&gt; H["4. Commit &amp; push results (dvc.lock merge driver)"]
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        H --&gt; I["5. POST next_node(status=done)"]
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    end
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    I --&gt; B
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>flowchart TD
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    A["Boot: POST /api/jobs/{id}/next_node"] --&gt; B{Action ?}
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    B --&gt;|"run"| D["Execute Node"]
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    B --&gt;|"switch_image"| C["Stop old container&lt;br/&gt;Launch new container with image-specific /home/user volume"]
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    C --&gt; D
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    B --&gt;|"wait"| W["Sleep 5s -&gt; poll next_node"] --&gt; A
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    B --&gt;|"yield / finish"| Z["Stop container &amp; release worker"]
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    subgraph Node_Execution ["Node Execution Step"]
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        D --&gt; E["1. git pull --rebase"]
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        E --&gt; F["2. Check &amp; transfer missing dep_paths"]
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        F --&gt; G["3. dvc repro -s {node}"]
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        G --&gt; H["4. Commit &amp; push results (dvc.lock merge driver)"]
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        H --&gt; I["5. POST next_node(status=done)"]
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    end
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    I --&gt; B
 </span></code></pre></div>
 <h3 id="persistent-containers-image-switching">Persistent Containers &amp; Image Switching</h3>
 <ul>
@@ -1680,7 +1676,7 @@
 </table>
 <h3 id="diagnosing-and-resolving-oomkilled-exit-code-137">Diagnosing and Resolving <code>OOMKilled</code> (Exit Code 137)</h3>
 <p>When a stage exceeds its allocated physical memory, the Linux kernel terminates the container immediately. Cluster-CI catches this event and emits the following actionable error message:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>OOMKilled: Stage '&lt;stage_name&gt;' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>OOMKilled: Stage '&lt;stage_name&gt;' exceeded allocated memory and was killed by system OOM Killer (Exit code 137)
 </span></code></pre></div>
 <p><strong>Cause</strong>: The execution process in <code>&lt;stage_name&gt;</code> allocated more memory than declared in <code>meta.cluster.ram_gb</code> (or <code>vram_gb</code> on Grace Blackwell GB10 unified memory).</p>
 <p><strong>Remedy</strong>:
@@ -1693,7 +1689,7 @@
 <ol>
 <li><strong>Pre-Execution Pull</strong>: Before running a stage, the executor performs a <code>git pull --rebase origin {branch}</code> to pull upstream changes committed by parallel workers.</li>
 <li><strong>Single-Stage Repro</strong>: The worker executes only the designated stage:
-   <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>dvc<span class="w"> </span>repro<span class="w"> </span>-s<span class="w"> </span>&lt;stage_name&gt;
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>dvc<span class="w"> </span>repro<span class="w"> </span>-s<span class="w"> </span>&lt;stage_name&gt;
 </span></code></pre></div></li>
 <li><strong>Atomic Commit &amp; Resilient Push</strong>: Stage metrics, plots, and updated stage sections in <code>dvc.lock</code> are committed with retry mechanisms:</li>
 <li>If a concurrent worker pushed in the meantime, the executor rebases with exponential backoff.</li>
@@ -1713,7 +1709,7 @@
 <h3 id="resilient-recovery-on-purged-artifacts">Resilient Recovery on Purged Artifacts</h3>
 <ul>
 <li>If an input artifact was purged by the local garbage collector on all machines, the worker reports:
-  <div class="language-json highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing_deps"</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_paths"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"data/features.parquet"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+  <div class="language-json highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing_deps"</span><span class="p">,</span><span class="w"> </span><span class="nt">"missing_paths"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"data/features.parquet"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </span></code></pre></div></li>
 <li><strong>Automatic Producer Rerun</strong>: The headnode automatically resets the producer node back to <code>ready</code> with reason <code>outputs_missing</code>. The downstream node returns to <code>pending</code> until the producer re-generates the output.</li>
 <li><strong>Safety Guard</strong>: Cluster-CI allows at most 1 forced replay per producer node per job to prevent infinite rerun loops.</li>
@@ -1722,10 +1718,10 @@
 <h2 id="10-aggregated-real-time-logging">10. Aggregated Real-Time Logging</h2>
 <p>When multiple stages run across distinct machines in parallel, their logs are unified and multiplexed.</p>
 <p>Every log line emitted by an executor container is tagged with its stage name and worker hostname:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>[preprocess@HEC45801] Processing batch 1/50...
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>[eval_baseline@HEC45803] Loaded checkpoint models/baseline.pt
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>[preprocess@HEC45801] Processing batch 2/50...
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>[eval_baseline@HEC45803] Test accuracy: 0.942
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>[preprocess@HEC45801] Processing batch 1/50...
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>[eval_baseline@HEC45803] Loaded checkpoint models/baseline.pt
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>[preprocess@HEC45801] Processing batch 2/50...
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>[eval_baseline@HEC45803] Test accuracy: 0.942
 </span></code></pre></div>
 <p>Both the local CLI (<code>cluster-run</code>) and the <a href="../dashboard/">Web Dashboard</a> stream these tagged logs in real time, with the ability to filter logs by stage or worker.</p>
 
