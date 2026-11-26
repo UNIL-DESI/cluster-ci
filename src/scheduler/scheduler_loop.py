@@ -1564,12 +1564,12 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
     1. Déclenchement : un nœud 'high' ou 'normal' est prêt (ready / classic pending),
        mais aucune machine admissible ne peut l'accueillir dans l'état actuel des allocations.
     2. Sélection de victime :
-       - Statut 'running'.
-       - Pour un demandeur 'high' : victimes 'extra_low' (prioritaires à l'éviction) ou 'low'.
-       - Pour un demandeur 'normal' : victimes 'extra_low' uniquement ('low', 'normal' et 'high' sont immunisés).
-       - Victimes 'low' : inter-utilisateur strict (U_requester != U_victim) et anti-famine (preempt_count < 5).
-       - Victimes 'extra_low' : préemptibles par tout autre job 'normal' ou 'high' (même utilisateur inclus,
-         job_id distinct) sans plafond d'immunité (conçu pour tâches longues avec checkpoints réguliers).
+       - Déclenchée uniquement s'il n'existe aucune autre machine admissible libre.
+       - Statut 'running' et job_id distinct (un job ne se préempte jamais lui-même).
+       - Pour un demandeur 'high' : victimes 'extra_low' (prioritaires à l'éviction) ou 'low' (preempt_count < 5),
+         tous utilisateurs confondus (même utilisateur inclus).
+       - Pour un demandeur 'normal' : victimes 'extra_low' uniquement ('low', 'normal' et 'high' sont immunisés),
+         tous utilisateurs confondus sans plafond d'immunité (tâches longues avec checkpoints réguliers).
        - Le plus récent d'abord : started_at DESC au sein d'un même niveau pour minimiser le travail perdu.
        - La machine exécutant la victime doit être admissible pour le nœud demandeur.
     3. Exécution :
@@ -1685,14 +1685,6 @@ def check_and_preempt_for_high_priority_nodes(conn, workers, allocated_map):
                 if cursor.execute("""SELECT 1 FROM jobs WHERE repo=? AND branch=?
                     AND status IN ('assigned','running') AND job_id NOT IN (?,?) LIMIT 1""",
                     (req_node['repo'],req_node.get('branch'),req_node['job_id'],released_job)).fetchone():
-                    continue
-            victim_prio = (cand_victim.get('scheduling_priority') or 'low').strip().lower()
-            if victim_prio != 'extra_low':
-                victim_user = (cand_victim.get('username') or '').strip()
-                # Inter-utilisateur strict pour 'low' : jamais de préemption au sein du même utilisateur
-                if req_user and victim_user and req_user == victim_user:
-                    continue
-                if not req_user and not victim_user:
                     continue
 
             v_wid = cand_victim.get('worker_id')

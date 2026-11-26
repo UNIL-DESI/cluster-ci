@@ -117,13 +117,15 @@ Cluster-CI streams logs from the executing container back to your terminal in re
 The `cluster-run` CLI accepts the following arguments according to its command-line specification:
 
 ```text
-cluster-run [command] [run_id] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
+cluster-run [command] [run_id] [--job-id ID] [--branch BRANCH] [--local] [--priority {high,normal,low,extra_low}] [--skip-code-invalidation]
 ```
 
 | Argument / Flag | Type / Values | Description |
 | :--- | :--- | :--- |
-| `command` | `list`, `view`, `cancel`, `sync`, `attach` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
-| `run_id` | `string` *(optional)* | Target GitHub Actions run ID or local job ID for `view`, `cancel`, or `attach`. |
+| `command` | `queue`, `list`, `view`, `cancel`, `sync`, `attach` *(optional)* | Action to perform. If omitted, triggers a new execution run. |
+| `run_id` | `string` *(optional)* | Target GitHub Actions run ID or Headnode job ID (full UUID or short prefix) for `view`, `cancel`, or `attach`. |
+| `--job-id ID` | `string` *(optional)* | Explicit Headnode job ID (full UUID or prefix) for `cancel` or `attach`, working across any branch (`main`, `cluster-draft/*`, `--local`). |
+| `--branch BRANCH` | `string` *(optional)* | Branch override (e.g. `main`) when resolving a Headnode job in `cancel`. |
 | `--local` | flag | Submit local workspace directly on Headnode without pushing to GitHub or creating shadow commits. |
 | `--priority {high,normal,low,extra_low}` | `high`, `normal`, `low`, `extra_low` | Overrides the scheduling priority of the run (default: `normal`). Injects `[priority=<val>]` in the shadow commit. |
 | `--skip-code-invalidation`<br>*(alias `--skip-code`)* | flag | Realigns `dvc.lock` for code-only modifications without recomputing stages if data inputs are unchanged. |
@@ -145,7 +147,7 @@ cluster-run --priority extra_low
 ```
 *   **`high`**: Highest queue rank; can preempt running `extra_low` (first) and `low` jobs if no worker is free.
 *   **`normal`** *(default)*: Standard queue rank; can preempt running `extra_low` jobs only.
-*   **`low`**: Lower queue rank; preemptible only by another user's `high` job (immune after 5 preemptions).
+*   **`low`**: Lower queue rank; preemptible by any `high` job if no other worker is free (immune after 5 preemptions).
 *   **`extra_low`**: Lowest queue rank (always runs after `high`, `normal`, and `low`); always preemptible by any `normal` or `high` job — ideal for very long, resilient workloads with periodic checkpoints.
 
 ### `cluster-run --skip-code-invalidation` (or `--skip-code`)
@@ -175,6 +177,13 @@ cluster-run --local
 *   **Zero GitHub Upload**: Ideal for sensitive, confidential, or IP-restricted datasets.
 *   For setup and access requirements, see the **[Sensitive Data & Local Execution Guide](sensitive_data.md)**.
 
+### `cluster-run queue`
+Inspect live cluster workers, active allocations, and the ordered pending queue directly from the Headnode (works from any directory and in `--local` mode).
+```bash
+cluster-run queue
+```
+*   Displays each worker's GPU/RAM status and currently running job/holder, followed by all pending jobs with their short `job_id` prefix and priority.
+
 ### `cluster-run list`
 List recent runs.
 ```bash
@@ -190,12 +199,14 @@ cluster-run view [run_id]
 *   If `run_id` is omitted, it targets your last triggered run.
 
 ### `cluster-run cancel`
-Terminate a running job.
+Terminate a running or pending job on the cluster across any branch (`cluster-draft/*`, `main`, `--local`).
 ```bash
 cluster-run cancel [run_id]
+cluster-run cancel --job-id 82b9aa7b   # or simply: cluster-run cancel 82b9aa7b
+cluster-run cancel --branch main
 ```
-*   If `run_id` is omitted, it targets your latest active run.
-*   Sends a cancellation request (`POST /api/jobs/{id}/stop`) to the cluster and cleans up local tracking files.
+*   Accepts a GitHub Actions `run_id` **or** a Headnode `job_id` (full UUID or short hex prefix from `cluster-run queue`).
+*   Automatically resolves `HEADNODE_URL` and `CLUSTER_TOKEN` from environment variables, the current `.env`, `~/.cluster-ci/.env`, or the installed `cluster-ci` `.env`, sends `POST /api/jobs/{id}/stop`, and cancels any matching GHA run.
 
 ### `cluster-run sync`
 Manually synchronize remote results.

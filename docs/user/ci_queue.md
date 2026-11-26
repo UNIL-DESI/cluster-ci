@@ -122,15 +122,16 @@ To guarantee fast turnaround for interactive and urgent experiments while still 
 | :--- | :---: | :--- | :--- | :--- |
 | **`high`** | `0` | `extra_low` (first), `low` | *(Immune)* | Urgent deadlines, short validation runs. |
 | **`normal`** *(default)* | `1` | `extra_low` only | *(Immune)* | Standard research pipelines and iterative development. |
-| **`low`** | `2` | *(None)* | `high` *(cross-user only, immune after 5 preemptions)* | Overnight sweeps and secondary experiments. |
-| **`extra_low`** | `3` | *(None)* | Any `normal` or `high` job *(including same user, always preemptible)* | Very long, resilient background jobs with regular checkpoints (`persist: true`). |
+| **`low`** | `2` | *(None)* | Any `high` job *(when no other worker is free; immune after 5 preemptions)* | Overnight sweeps and secondary experiments. |
+| **`extra_low`** | `3` | *(None)* | Any `normal` or `high` job *(when no other worker is free; always preemptible)* | Very long, resilient background jobs with regular checkpoints (`persist: true`). |
 
-* **Trigger Condition**: A `high` or `normal` priority node is in `ready` state (or classic `pending`), but no eligible worker machine can accommodate it with the currently available CPU, RAM, or GPU resources.
+* **Trigger Condition**: A `high` or `normal` priority node is in `ready` state (or classic `pending`), and **no other eligible worker machine has available capacity** to run it without preemption.
 * **Target Victim Selection**:
     1. **Priority Matrix**: `high` requesters evict running `extra_low` stages first and `low` stages second; `normal` requesters evict running `extra_low` stages only (`low`, `normal`, and `high` remain completely immune to `normal` jobs).
-    2. **Isolation & Anti-Starvation**:
-        * For `low` victims: strict cross-user isolation ($U_{\text{requester}} \neq U_{\text{victim}}$) and anti-starvation immunity once $N_{\text{preempt}} \ge 5$.
-        * For `extra_low` victims: preemptible by **any** distinct `normal` or `high` job (even owned by the same user) with **no preemption cap**, making `extra_low` ideal for multi-day checkpointed workloads that yield cleanly whenever higher-priority work arrives.
+    2. **Same-User & Cross-User Scope + Anti-Starvation**:
+        * Any distinct higher-priority job (`job_id` different — a job never preempts itself) may preempt eligible lower-priority victims, **including jobs owned by the same researcher**.
+        * For `low` victims: anti-starvation immunity once $N_{\text{preempt}} \ge 5$.
+        * For `extra_low` victims: **no preemption cap**, making `extra_low` ideal for multi-day checkpointed workloads that yield cleanly whenever higher-priority work arrives.
     3. **Minimizing Lost Compute**: Within the same victim priority level, the scheduler picks the most recently started job (`started_at DESC`), preserving long-running computation.
     4. **Hardware Admissibility**: The physical machine released by the victim must satisfy the hardware requirements of the requesting node.
 * **Graceful Eviction Protocol**:

@@ -306,41 +306,193 @@ def print_log_summary():
         print(f"{'='*80}")
 
 
-def discover_headnode_url():
-    """Discover the headnode URL from environment or local .env file."""
-    # 1. Direct env var
-    url = os.environ.get("HEADNODE_URL")
-    if url:
-        return url
-    # 2. Parse .env file in repo root for HEADNODE_IP
-    env_file = os.path.join(os.getcwd(), ".env")
-    if os.path.exists(env_file):
+def _iter_env_candidate_files():
+    """Yield candidate .env files in precedence order: CWD, user home, installed cluster-ci root."""
+    candidates = [
+        os.path.join(os.getcwd(), ".env"),
+        os.path.expanduser("~/.cluster-ci/.env"),
+        os.path.expanduser("~/.cluster-ci.env"),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
+    ]
+    seen = set()
+    for path in candidates:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm not in seen and os.path.isfile(path):
+            seen.add(norm)
+            yield path
+
+
+def _discover_env_value(keys):
+    """Find first non-empty value for any key in process env or candidate .env files."""
+    for key in keys:
+        val = os.environ.get(key)
+        if val and val.strip():
+            return val.strip().strip('"').strip("'")
+    for env_file in _iter_env_candidate_files():
         try:
             with open(env_file, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("HEADNODE_IP="):
-                        ip = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        return f"http://{ip}:5000"
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    if k.strip() in keys:
+                        cleaned = v.strip().strip('"').strip("'")
+                        if cleaned:
+                            return cleaned
         except Exception:
             pass
     return None
 
-def find_job_id_from_headnode(headnode_url, repo, branch):
-    """Query the headnode to find the active job_id for a given repo+branch."""
+
+def discover_headnode_url():
+    """Discover the headnode URL from env vars, project .env, home config, or cluster-ci .env."""
+    url = _discover_env_value(("HEADNODE_URL",))
+    if url:
+        return url.rstrip("/")
+    ip = _discover_env_value(("HEADNODE_IP",))
+    if ip:
+        return f"http://{ip}:5000"
+    return None
+
+
+def discover_cluster_token():
+    """Discover CLUSTER_TOKEN from env vars, project .env, home config, or cluster-ci .env."""
+    token = _discover_env_value(("CLUSTER_TOKEN", "CLUSTER_CI_TOKEN"))
+    if token:
+        os.environ["CLUSTER_TOKEN"] = token
+    return token
+
+
+def _fetch_scheduler_status(headnode_url, cluster_token=None):
+    """Fetch GET /scheduler_status JSON from headnode."""
     if not headnode_url:
         return None
+    req = urllib.request.Request(f"{headnode_url.rstrip('/')}/scheduler_status")
+    if cluster_token:
+        req.add_header("Authorization", f"Bearer {cluster_token}")
+    with cluster_urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def resolve_headnode_job_id(headnode_url, query_id, cluster_token=None):
+    """Resolve a full job_id or short hex prefix against active/pending jobs on the headnode."""
+    if not headnode_url or not query_id:
+        return query_id
+    q = str(query_id).strip().lower()
     try:
-        url = f"{headnode_url}/api/projects/{repo}/runs"
+        data = _fetch_scheduler_status(headnode_url, cluster_token=cluster_token) or {}
+    except Exception:
+        return query_id
+    matches = []
+    for item in data.get("queue", []) or []:
+        jid = str(item.get("job_id") or "")
+        if jid.lower() == q:
+            return jid
+        if jid.lower().startswith(q):
+            matches.append(jid)
+    for w in data.get("workers", []) or []:
+        aj = w.get("active_job")
+        if isinstance(aj, dict):
+            jid = str(aj.get("job_id") or "")
+            if jid.lower() == q:
+                return jid
+            if jid.lower().startswith(q) and jid not in matches:
+                matches.append(jid)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        print(f"❌ Ambiguous job ID prefix '{query_id}': matches {', '.join(matches)}", file=sys.stderr)
+        sys.exit(1)
+    return query_id
+
+
+def find_job_id_from_headnode(headnode_url, repo, branch=None, username=None, cluster_token=None):
+    """Query the headnode to find an active/pending job_id for a repo (exact branch, or fallback by user)."""
+    if not headnode_url:
+        return None
+    # 1. Check /scheduler_status first (covers pending queue & running workers across all branches including main)
+    try:
+        status_data = _fetch_scheduler_status(headnode_url, cluster_token=cluster_token) or {}
+        all_active = list(status_data.get("queue", []) or [])
+        for w in status_data.get("workers", []) or []:
+            if isinstance(w.get("active_job"), dict):
+                all_active.append(w["active_job"])
+        if branch:
+            for item in all_active:
+                if item.get("repo") == repo and item.get("branch") == branch:
+                    return item.get("job_id")
+        if username:
+            for item in all_active:
+                if item.get("repo") == repo and item.get("username") == username:
+                    return item.get("job_id")
+    except Exception:
+        pass
+    # 2. Fallback to project runs endpoint
+    try:
+        url = f"{headnode_url.rstrip('/')}/api/projects/{repo}/runs"
         req = urllib.request.Request(url)
+        if cluster_token:
+            req.add_header("Authorization", f"Bearer {cluster_token}")
         with cluster_urlopen(req, timeout=5) as resp:
             runs = json.loads(resp.read().decode())
-            for run in runs:
-                if run.get("status") in ("running", "assigned", "pending") and run.get("branch") == branch:
-                    return run.get("job_id")
+            if branch:
+                for run in runs:
+                    if run.get("status") in ("running", "assigned", "pending") and run.get("branch") == branch:
+                        return run.get("job_id")
+            if username:
+                for run in runs:
+                    if run.get("status") in ("running", "assigned", "pending") and run.get("username") == username:
+                        return run.get("job_id")
     except Exception:
         pass
     return None
+
+
+def print_cluster_queue(headnode_url, cluster_token=None):
+    """Print live cluster workers and pending queue from headnode /scheduler_status."""
+    data = _fetch_scheduler_status(headnode_url, cluster_token=cluster_token)
+    workers = data.get("workers", []) or []
+    queue_items = data.get("queue", []) or []
+
+    print(f"🖥️  Cluster Workers ({len(workers)}) — {headnode_url}")
+    print("=" * 88)
+    if not workers:
+        print("  (no workers registered)")
+    for w in workers:
+        host = w.get("hostname") or w.get("worker_id", "?")[:8]
+        st = w.get("status", "?")
+        gpu_name = w.get("gpu_name") or "CPU"
+        gpus_alloc = w.get("gpus_allocated", 0)
+        gpus_tot = w.get("gpus_total", w.get("gpu_count", 0))
+        ram_tot = w.get("total_ram_gb") or 0
+        holders = w.get("gpu_holders") or {}
+        aj = w.get("active_job")
+        if aj:
+            aj_desc = f"RUNNING {str(aj.get('job_id',''))[:8]} | {aj.get('username','?')} | {aj.get('repo','?')}@{aj.get('branch','?')}"
+        elif holders:
+            flat_holders = [h for vals in holders.values() for h in (vals if isinstance(vals, list) else [vals])]
+            aj_desc = f"GPU HELD: {', '.join(str(x) for x in flat_holders)}"
+        else:
+            aj_desc = "IDLE"
+        print(f"  {host:<10} [{st}] {gpu_name:<26} GPU {gpus_alloc}/{gpus_tot} | RAM {ram_tot:.0f}GB | {aj_desc}")
+
+    print(f"\n📋 Pending Queue ({len(queue_items)})")
+    print("=" * 88)
+    if not queue_items:
+        print("  (queue is empty)")
+    else:
+        for idx, item in enumerate(queue_items, 1):
+            jid = str(item.get("job_id") or "")[:8]
+            prio = item.get("scheduling_priority") or item.get("priority") or "normal"
+            user = item.get("username") or "?"
+            repo = item.get("repo") or "?"
+            br = item.get("branch") or "?"
+            ram = item.get("ram_required_gb") or 0
+            created = item.get("created_at") or ""
+            m_tag = " [MAINTENANCE]" if item.get("is_maintenance") or item.get("job_type") == "maintenance" else ""
+            print(f"  #{idx:<2} {jid} [{prio:<9}] {user:<12} {repo}@{br} (RAM {ram:.0f}GB, {created}){m_tag}")
+    print("\n💡 Cancel a job: cluster-run cancel --job-id <job_id_prefix>")
 
 def should_skip_line(line):
     """Determine if a log line should be filtered out from displays and logs."""
@@ -531,11 +683,11 @@ def update_run_state_job_id(job_id):
         pass
 
 def _headnode_stop_job(job_id, headnode_url, cluster_token):
-    """Contact the headnode to stop a job (kills Docker containers, releases RAM)."""
+    """Contact the headnode to stop a job (kills Docker containers, releases RAM). Returns True on success."""
     if not job_id or not headnode_url:
-        return
+        return False
     try:
-        url = f"{headnode_url}/api/jobs/{job_id}/stop"
+        url = f"{headnode_url.rstrip('/')}/api/jobs/{job_id}/stop"
         data = json.dumps({}).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Content-Type", "application/json")
@@ -544,12 +696,18 @@ def _headnode_stop_job(job_id, headnode_url, cluster_token):
         with cluster_urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read().decode())
             print(f"   Headnode: {result.get('message', 'Job stopped')}")
+            return True
     except urllib.error.HTTPError as e:
-        # 404 means job already cleaned up — that's fine
-        if e.code != 404:
-            print(f"   Headnode stop failed (HTTP {e.code}): {e.reason}")
+        if e.code == 404:
+            print(f"   Headnode: job {job_id[:12]} not found or already inactive (HTTP 404)")
+            return False
+        print(f"   ❌ Headnode stop failed (HTTP {e.code}): {e.reason}", file=sys.stderr)
+        if e.code == 401:
+            print("   💡 Hint: configure CLUSTER_TOKEN in env, .env, or ~/.cluster-ci/.env.", file=sys.stderr)
+        return False
     except Exception as e:
-        print(f"   Could not reach headnode: {e}")
+        print(f"   ❌ Could not reach headnode: {e}", file=sys.stderr)
+        return False
 
 def cancel_and_cleanup_run(run_id, branch, commit_sha=None, job_id=None, headnode_url=None, cluster_token=None, is_local=False):
     """Cancel a run, sync partial results. Branch is preserved for artifact access.
@@ -1460,23 +1618,8 @@ def shadow_run(skip_code: bool = False, priority: str = None):
 
     # Persist run state so orphan recovery works if we are force-killed
     headnode_url = discover_headnode_url()
-    job_id = find_job_id_from_headnode(headnode_url, REPO_FULL_NAME, BRANCH) if headnode_url else None
-    cluster_token = os.environ.get("CLUSTER_TOKEN")
-    # Read CLUSTER_TOKEN from .env if not in environment
-    if not cluster_token:
-        env_file = os.path.join(os.getcwd(), ".env")
-        if os.path.exists(env_file):
-            try:
-                with open(env_file, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith("CLUSTER_TOKEN="):
-                            cluster_token = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-            except Exception:
-                pass
-    if cluster_token:
-        os.environ["CLUSTER_TOKEN"] = cluster_token
+    cluster_token = discover_cluster_token()
+    job_id = find_job_id_from_headnode(headnode_url, REPO_FULL_NAME, BRANCH, cluster_token=cluster_token) if headnode_url else None
     save_run_state(run_id, BRANCH, commit_sha, job_id=job_id, headnode_url=headnode_url)
 
     print(f"📺 Streaming logs for run {run_id} (Ctrl+C to cancel)...")
@@ -2235,21 +2378,7 @@ def local_run(skip_code: bool = False, priority: str = None):
         print("❌ Error: HEADNODE_URL could not be discovered. Please set HEADNODE_URL environment variable or configure .env.", file=sys.stderr)
         sys.exit(1)
 
-    cluster_token = os.environ.get("CLUSTER_TOKEN")
-    if not cluster_token:
-        env_file = os.path.join(os.getcwd(), ".env")
-        if os.path.exists(env_file):
-            try:
-                with open(env_file, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith("CLUSTER_TOKEN="):
-                            cluster_token = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-            except Exception as e:
-                print(f"⚠️  Could not read CLUSTER_TOKEN from .env: {e}", file=sys.stderr)
-    if cluster_token:
-        os.environ["CLUSTER_TOKEN"] = cluster_token
+    cluster_token = discover_cluster_token()
 
     config = parse_cluster_ci_config(".")
     repo = get_repo_full_name()
@@ -2408,8 +2537,6 @@ def main():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-    check_and_redirect_cwd()
-
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -2418,10 +2545,14 @@ def main():
     atexit.register(cleanup)
 
     parser = argparse.ArgumentParser(description="Cluster-CI Command Line Interface")
-    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync", "attach"],
+    parser.add_argument("command", nargs="?", default=None, choices=["list", "view", "cancel", "sync", "attach", "queue"],
                         help="Action to perform (default: submit a new shadow run or local run)")
     parser.add_argument("run_id", nargs="?", default=None,
-                        help="Target GHA run ID for 'view'/'cancel' or job ID for 'attach'")
+                        help="Target GHA run ID for 'view'/'cancel', or Headnode job ID (full or prefix) for 'cancel'/'attach'")
+    parser.add_argument("--job-id", dest="job_id", default=None,
+                        help="Explicit Headnode job ID (full UUID or short prefix) for 'cancel' or 'attach'")
+    parser.add_argument("--branch", default=None,
+                        help="Target branch override (e.g. main) when resolving a Headnode job in 'cancel'")
     parser.add_argument("--local", action="store_true", help="Submit local workspace without Git push")
     parser.add_argument("--skip-code-invalidation", "--skip-code", action="store_true",
                         help="Realign dvc.lock for code-only changes without invalidating pipeline stages")
@@ -2430,15 +2561,43 @@ def main():
 
     args = parser.parse_args()
 
-    if args.local and args.command not in (None, 'attach'):
-        parser.error('--local supports submission and attach; this command uses GitHub and is not available in local mode')
+    if args.local and args.command not in (None, "attach", "queue", "cancel"):
+        parser.error("--local supports submission, attach, queue, and cancel; this command uses GitHub and is not available in local mode")
 
-    check_dependencies(require_gh=False if (args.local or args.command == "attach") else (True if args.command else not args.local))
+    # Commands that talk directly to the Headnode do not require being inside a .cluster-ci repository
+    is_direct_headnode_cmd = (
+        args.command == "queue"
+        or args.command == "attach"
+        or (
+            args.command == "cancel"
+            and (
+                bool(args.job_id)
+                or (args.run_id is not None and not str(args.run_id).isdigit())
+                or args.local
+            )
+        )
+    )
+    if not is_direct_headnode_cmd:
+        check_and_redirect_cwd()
+        check_dependencies(require_gh=not args.local)
 
-    # Recover any orphaned run from a previously force-killed session
-    recover_orphaned_run()
+    # Recover any orphaned run ONLY before launching a new run (never destroy unrelated active jobs on queue/view/cancel)
+    if args.command is None:
+        recover_orphaned_run()
 
-    if args.command == "list":
+    if args.command == "queue":
+        headnode_url = discover_headnode_url()
+        if not headnode_url:
+            print("❌ Error: HEADNODE_URL could not be discovered. Set HEADNODE_URL or configure .env.", file=sys.stderr)
+            sys.exit(1)
+        cluster_token = discover_cluster_token()
+        try:
+            print_cluster_queue(headnode_url, cluster_token=cluster_token)
+        except Exception as e:
+            print(f"❌ Error querying cluster queue at {headnode_url}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif args.command == "list":
         subprocess.run(["gh", "run", "list", "--workflow", "Cluster-CI Execution"])
     
     elif args.command == "view":
@@ -2505,11 +2664,43 @@ def main():
             sys.exit(1)
 
     elif args.command == "cancel":
+        headnode_url = discover_headnode_url()
+        cluster_token = discover_cluster_token()
+        explicit_job_id = args.job_id
         run_id = args.run_id
+
+        # If positional argument is a UUID or non-numeric hex prefix (e.g. 82b9aa7b), treat it as a Headnode job_id
+        if not explicit_job_id and run_id and not str(run_id).isdigit():
+            explicit_job_id = run_id
+            run_id = None
+
+        if explicit_job_id:
+            if not headnode_url:
+                print("❌ Error: HEADNODE_URL could not be discovered. Set HEADNODE_URL or configure .env.", file=sys.stderr)
+                sys.exit(1)
+            resolved_jid = resolve_headnode_job_id(headnode_url, explicit_job_id, cluster_token=cluster_token)
+            print(f"🔌 Stopping job {resolved_jid[:12]}... on cluster headnode ({headnode_url})...")
+            stopped = _headnode_stop_job(resolved_jid, headnode_url, cluster_token)
+            if run_id and str(run_id).isdigit():
+                print(f"🛑 Cancelling GHA run {run_id}...")
+                subprocess.run(["gh", "run", "cancel", str(run_id)])
+            if not stopped:
+                sys.exit(1)
+            clear_run_state()
+            return
+
         check_gh_auth()
         user = get_current_user()
-        branch = f"cluster-draft/{user}"
-        
+        draft_branch = f"cluster-draft/{user}"
+        current_branch = args.branch
+        if not current_branch:
+            try:
+                br_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+                if br_res.returncode == 0 and br_res.stdout.strip() and br_res.stdout.strip() != "HEAD":
+                    current_branch = br_res.stdout.strip()
+            except Exception:
+                pass
+
         if not run_id:
             try:
                 res = subprocess.run(["gh", "run", "list", "--branch", "cluster-run", "--limit", "1", "--json", "databaseId"], capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -2518,42 +2709,36 @@ def main():
                     run_id = str(runs[0].get("databaseId"))
             except Exception:
                 pass
-                
+
             if not run_id:
-                print("Usage: cluster-run cancel <run_id>", file=sys.stderr)
+                print("Usage: cluster-run cancel [run_id] | cluster-run cancel --job-id <job_id>", file=sys.stderr)
                 sys.exit(1)
 
-        # 0. Stop job on headnode FIRST (kills Docker, releases resources)
-        headnode_url = discover_headnode_url()
+        # 0. Stop job on headnode FIRST (searches state file, requested/current branch, draft branch, and active user jobs)
         repo = get_repo_full_name()
         if headnode_url:
             job_id = None
-            # Try to read job_id from state file
             try:
                 if os.path.exists(STATE_FILE):
                     with open(STATE_FILE, "r", encoding="utf-8") as f:
                         state = json.load(f)
-                        job_id = state.get("job_id")
+                        if not run_id or str(state.get("run_id")) == str(run_id):
+                            job_id = state.get("job_id")
             except Exception:
                 pass
-            # Fallback: query headnode by branch
+            if not job_id and args.branch:
+                job_id = find_job_id_from_headnode(headnode_url, repo, branch=args.branch, cluster_token=cluster_token)
             if not job_id:
-                job_id = find_job_id_from_headnode(headnode_url, repo, branch)
+                job_id = find_job_id_from_headnode(headnode_url, repo, branch=draft_branch, cluster_token=cluster_token)
+            if not job_id and current_branch and current_branch != draft_branch:
+                job_id = find_job_id_from_headnode(headnode_url, repo, branch=current_branch, cluster_token=cluster_token)
+            if not job_id:
+                job_id = find_job_id_from_headnode(headnode_url, repo, username=user, cluster_token=cluster_token)
             if job_id:
                 print(f"🔌 Stopping job {job_id[:12]}... on cluster headnode...")
-                cluster_token = os.environ.get("CLUSTER_TOKEN")
-                if not cluster_token:
-                    try:
-                        if os.path.exists(".env"):
-                            with open(".env", "r", encoding="utf-8", errors="replace") as f:
-                                for line in f:
-                                    if line.strip().startswith("CLUSTER_TOKEN="):
-                                        cluster_token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-                    except Exception:
-                        pass
                 _headnode_stop_job(job_id, headnode_url, cluster_token)
             else:
-                print("⚠️  Could not find job_id to stop on headnode. Proceeding with GHA cancel only.")
+                print("⚠️  Could not find matching active job_id on headnode. Proceeding with GHA cancel only.")
         else:
             print("⚠️  Headnode URL not found. Proceeding with GHA cancel only.")
 
@@ -2564,13 +2749,13 @@ def main():
         # NOTE: Draft branch is intentionally preserved.
         # Its results remain accessible via the cross-branch artifact viewer.
         # The next cluster-run will overwrite it via --force push.
-        print(f"ℹ️  Branch origin/{branch} preserved (results accessible via dashboard).")
+        print(f"ℹ️  Branch origin/{draft_branch} preserved (results accessible via dashboard).")
 
         # 3. Clear state file
         clear_run_state()
 
     elif args.command == "attach":
-        job_id = args.run_id
+        job_id = args.job_id or args.run_id
         if not job_id:
             print("Usage: cluster-run attach <job_id>", file=sys.stderr)
             sys.exit(1)
@@ -2578,15 +2763,8 @@ def main():
         if not headnode_url:
             print("❌ Error: HEADNODE_URL could not be discovered. Please set HEADNODE_URL environment variable or configure .env.", file=sys.stderr)
             sys.exit(1)
-        cluster_token = os.environ.get("CLUSTER_TOKEN")
-        if not cluster_token and os.path.exists(".env"):
-            try:
-                with open(".env", "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        if line.strip().startswith("CLUSTER_TOKEN="):
-                            cluster_token = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-            except Exception:
-                pass
+        cluster_token = discover_cluster_token()
+        job_id = resolve_headnode_job_id(headnode_url, job_id, cluster_token=cluster_token)
         print(f"📺 Attaching to local job {job_id[:12]} on {headnode_url}... (Ctrl+C to detach)")
         try:
             ret_code = stream_local_job_logs_and_wait(job_id, headnode_url, cluster_token)
