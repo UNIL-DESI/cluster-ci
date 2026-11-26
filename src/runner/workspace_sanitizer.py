@@ -78,46 +78,86 @@ def _get_declared_dvc_outputs(workspace_dir: str) -> Dict[str, Dict[str, Any]]:
     """
     outputs: Dict[str, Dict[str, Any]] = {}
 
-    # 1. Parse dvc.yaml to discover flags (cache, persist)
+    # 1. Parse dvc.yaml to discover flags (cache, persist) across outs, metrics, and plots
+    #    including foreach/do stage templates expanded from params.yaml.
     yaml_path = os.path.join(workspace_dir, "dvc.yaml")
     if os.path.isfile(yaml_path):
         try:
             with open(yaml_path, "r", encoding="utf-8", errors="replace") as f:
                 y_data = yaml.safe_load(f)
+            params_data: Dict[str, Any] = {}
+            params_path = os.path.join(workspace_dir, "params.yaml")
+            if os.path.isfile(params_path):
+                with open(params_path, "r", encoding="utf-8", errors="replace") as pf:
+                    params_data = yaml.safe_load(pf) or {}
+
+            def _resolve_foreach_items(foreach_spec: Any) -> List[str]:
+                if isinstance(foreach_spec, list):
+                    return [str(x) for x in foreach_spec]
+                if isinstance(foreach_spec, dict):
+                    return [str(k) for k in foreach_spec.keys()]
+                if isinstance(foreach_spec, str):
+                    s = foreach_spec.strip()
+                    if s.startswith("${") and s.endswith("}"):
+                        key_path = s[2:-1].strip().split(".")
+                        cur: Any = params_data
+                        for part in key_path:
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                cur = None
+                                break
+                        if isinstance(cur, list):
+                            return [str(x) for x in cur]
+                        if isinstance(cur, dict):
+                            return [str(k) for k in cur.keys()]
+                return []
+
             if isinstance(y_data, dict):
                 stages = y_data.get("stages", {}) or {}
                 for stage_name, stage_data in stages.items():
                     if not isinstance(stage_data, dict):
                         continue
-                    outs = stage_data.get("outs", []) or []
-                    for out_entry in outs:
-                        out_p = None
-                        out_cache = True
-                        out_persist = False
-                        if isinstance(out_entry, str):
-                            out_p = out_entry
-                        elif isinstance(out_entry, dict):
-                            # Formats: {'path': '...', 'cache': False} or {'data/out.csv': {'cache': False}}
-                            if "path" in out_entry:
-                                out_p = out_entry.get("path")
-                                out_cache = out_entry.get("cache", True)
-                                out_persist = out_entry.get("persist", False)
-                            else:
-                                for k, v in out_entry.items():
-                                    out_p = k
-                                    if isinstance(v, dict):
-                                        out_cache = v.get("cache", True)
-                                        out_persist = v.get("persist", False)
-                                    break
-                        if out_p:
-                            norm_p = _norm(out_p)
-                            outputs[norm_p] = {
-                                "md5": None,
-                                "stage": str(stage_name),
-                                "is_dir": False,
-                                "cache": bool(out_cache),
-                                "persist": bool(out_persist),
-                            }
+                    if "foreach" in stage_data and isinstance(stage_data.get("do"), dict):
+                        items = _resolve_foreach_items(stage_data["foreach"])
+                        expanded = [
+                            (f"{stage_name}@{it}", stage_data["do"], it) for it in items
+                        ]
+                    else:
+                        expanded = [(str(stage_name), stage_data, None)]
+
+                    for eff_stage, body, item_val in expanded:
+                        for section in ("outs", "metrics", "plots"):
+                            entries = body.get(section, []) or []
+                            for out_entry in entries:
+                                out_p = None
+                                out_cache = True
+                                out_persist = False
+                                if isinstance(out_entry, str):
+                                    out_p = out_entry
+                                elif isinstance(out_entry, dict):
+                                    if "path" in out_entry:
+                                        out_p = out_entry.get("path")
+                                        out_cache = out_entry.get("cache", True)
+                                        out_persist = out_entry.get("persist", False)
+                                    else:
+                                        for k, v in out_entry.items():
+                                            out_p = k
+                                            if isinstance(v, dict):
+                                                out_cache = v.get("cache", True)
+                                                out_persist = v.get("persist", False)
+                                            break
+                                if out_p:
+                                    if item_val is not None:
+                                        out_p = str(out_p).replace("${item}", item_val)
+                                    norm_p = _norm(out_p)
+                                    outputs[norm_p] = {
+                                        "md5": None,
+                                        "stage": eff_stage,
+                                        "is_dir": False,
+                                        "cache": bool(out_cache),
+                                        "persist": bool(out_persist),
+                                    }
         except Exception:
             pass
 
