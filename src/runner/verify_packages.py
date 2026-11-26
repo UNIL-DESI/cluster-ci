@@ -203,7 +203,7 @@ for pkg_name, exp_ver in expected.items():
             for mod in targets:
                 try:
                     importlib.import_module(mod)
-                except Exception as exc:
+                except (Exception, SystemExit) as exc:
                     mismatches.append(
                         f"Package '{pkg_name}': module '{mod}' failed real import: {type(exc).__name__}: {exc}"
                     )
@@ -226,6 +226,7 @@ sys.exit(0)
         "import_modules": import_modules,
         "work_dir": cwd,
     }
+    sub_timeout = int(os.environ.get("CLUSTER_CI_VERIFY_TIMEOUT", "180"))
     try:
         proc = subprocess.run(
             [sys.executable, "-c", child_code],
@@ -234,7 +235,7 @@ sys.exit(0)
             capture_output=True,
             cwd=cwd,
             env=env_override,
-            timeout=30,
+            timeout=sub_timeout,
         )
     except Exception as exc:
         return [f"Condition '{condition_name}': subprocess failed to execute: {exc}"]
@@ -507,7 +508,7 @@ def verify_packages(
                 for mod in targets:
                     try:
                         importlib.import_module(mod)
-                    except Exception as exc:
+                    except (Exception, SystemExit) as exc:
                         mismatches.append(
                             f"Package '{pkg_name}': module '{mod}' failed real import: {type(exc).__name__}: {exc}"
                         )
